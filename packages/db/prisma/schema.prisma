@@ -23,6 +23,7 @@ model Tenant {
   auditLogs          AuditLog[]
   outboxes           Outbox[] // FP-009: Event sourcing
   jobs               Jobs[] // FP-009: Durable task queue
+  posInbox           PosOperationInbox[] @relation("PosInboxTenant")
 
   @@map("tenants")
 }
@@ -827,6 +828,59 @@ model POSCashOp {
 enum CashOpType {
   IN
   OUT
+}
+
+// ─── FP-005: SERVER INBOX FOR POS (Stable operation identity) ──────────────
+
+model PosOperationInbox {
+  id               String   @id @default(uuid())
+  tenantId         String   @map("tenant_id")
+  organizationId   String   @map("organization_id")
+  operationId      String   @map("operation_id")
+
+  deviceId         String   @map("device_id")
+  terminalId       String?  @map("terminal_id")
+  shiftId          String?  @map("shift_id")
+
+  operationType    String   @map("operation_type") // SALE, RETURN, REFUND, MIXED_PAYMENT
+  payloadHash      String   @map("payload_hash") // SHA256 immutable
+
+  // FP-005: Inbox state machine
+  status           String   @default("RECEIVED") // RECEIVED, PROCESSING, CONFIRMED, FAILED
+  processingError  String?  @map("processing_error")
+
+  // Server ACK sent back to device
+  ackSentAt        DateTime? @map("ack_sent_at")
+  ackToken         String?   @map("ack_token") // idempotency for ACK message
+
+  receivedAt       DateTime @default(now()) @map("received_at")
+  processedAt      DateTime? @map("processed_at")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  // Relations
+  tenant           Tenant   @relation("PosInboxTenant", fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, organizationId, operationId]) // FP-005: Stable identity
+  @@index([status])
+  @@index([deviceId, terminalId])
+  @@index([receivedAt])
+  @@map("pos_operation_inbox")
+}
+
+model DeviceMigration {
+  id               String   @id @default(uuid())
+  tenantId         String   @map("tenant_id")
+  organizationId   String   @map("organization_id")
+
+  oldDeviceId      String   @map("old_device_id")
+  newDeviceId      String   @map("new_device_id")
+
+  migratedAt       DateTime @default(now()) @map("migrated_at")
+  migrationReason  String?  @map("migration_reason") // DEVICE_REPLACEMENT | UPGRADE | RELOCATION
+
+  @@unique([tenantId, organizationId, oldDeviceId])
+  @@index([newDeviceId])
+  @@map("device_migrations")
 }
 
 // ─── FP-003: DURABLE PAYMENT & FISCAL STATE MACHINES ─────────────────────────
