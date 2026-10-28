@@ -14,6 +14,7 @@ export interface PageResult<T> {
 }
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
+// FP-008: JWT payload with tenantId and grants (action-based RBAC)
 
 export const LoginSchema = z.object({
   email: z.string().email(),
@@ -21,26 +22,39 @@ export const LoginSchema = z.object({
 });
 export type LoginDto = z.infer<typeof LoginSchema>;
 
-export interface TokenPayload {
-  sub: string;
-  email: string;
+export interface Grant {
   organizationId: string;
-  roles: string[];
+  action: string; // read, draft, approve, send, reconcile, etc.
+  scope: string; // organization, department, project
+}
+
+// FP-008: JWT payload (15min access token)
+export interface TokenPayload {
+  sub: string; // user ID
+  email: string;
+  tenantId: string; // Immutable from JWT, cannot be overridden by client
+  organizationId: string; // Default org (can switch via header)
+  grants: Grant[]; // Action-based RBAC per organization
+  iat: number;
+  exp: number;
 }
 
 export interface AuthResponse {
   accessToken: string;
+  refreshToken: string;
   user: UserProfile;
 }
 
+// FP-008: User profile with grants (not roles)
 export interface UserProfile {
   id: string;
   email: string;
   firstName: string;
   lastName: string;
+  tenantId: string;
   organizationId: string;
-  roles: string[];
-  permissions: string[];
+  organization?: any; // Organization object
+  grants: Grant[]; // List of action+org+scope
 }
 
 // ─── Sync ────────────────────────────────────────────────────────────────────
