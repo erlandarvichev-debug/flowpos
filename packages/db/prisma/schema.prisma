@@ -2287,15 +2287,22 @@ model Jobs {
   data          Json
   result        Json?
   error         String?
-  
+
+  // FP-021: Lease fencing — prevent stale worker confirmation
   leaseUntil    DateTime? @map("lease_until")
   leaseOwner    String?   @map("lease_owner")
+  leaseWorkerId String?   @map("lease_worker_id") // which worker claimed this lease
+  leaseVersion  Int       @default(1) @map("lease_version") // for fencing check
+  fencedAt      DateTime? @map("fenced_at") // when lease was recovered
+
   attempt       Int      @default(0)
   maxAttempts   Int      @default(3) @map("max_attempts")
-  
+
   nextRunAt     DateTime @default(now()) @map("next_run_at")
   startedAt     DateTime? @map("started_at")
   completedAt   DateTime? @map("completed_at")
+  deadLetterReason String? @map("dead_letter_reason") // why moved to DLQ
+
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
 
