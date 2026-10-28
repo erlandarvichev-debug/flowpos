@@ -3,11 +3,8 @@ import { Reflector } from '@nestjs/core';
 import { JwtPayload } from '../../modules/auth/jwt.strategy';
 
 // FP-008: Action-based RBAC decorator
-export const RequireAction = (action: string) => {
-  return (target: any, propertyKey: string, descriptor: PropertyDescriptor) => {
-    Reflector.createDecorator()(target, propertyKey, descriptor);
-  };
-};
+export const RequireAction = (action: string) =>
+  Reflect.metadata('action', action);
 
 /**
  * FP-008: RBAC Guard — checks grants for required action
