@@ -38,6 +38,10 @@ model Organization {
   email     String?
   legalForm String   @default("TOO") @map("legal_form") // TOO | IP | AO | OTHER
   nameKk    String?  @map("name_kk")
+
+  // FP-004: Backoffice system selection
+  backofficeSystem String @default("internal") @map("backoffice_system") // internal | onec | moysklad | other
+
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
