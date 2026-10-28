@@ -1,7 +1,8 @@
-import { Controller, Post, Body, Get, UseGuards, Request, Res } from '@nestjs/common';
+import { Controller, Post, Get, UseGuards, Request, Res, Query } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { Response } from 'express';
 import { AuthService } from './auth.service';
+import { OidcService } from './oidc.service';
 import { LoginDto } from './dto/login.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 
@@ -17,7 +18,7 @@ const COOKIE_OPTS = {
 @ApiTags('auth')
 @Controller('auth')
 export class AuthController {
-  constructor(private auth: AuthService) {}
+  constructor(private auth: AuthService, private oidc: OidcService) {}
 
   @Post('login')
   async login(@Body() dto: LoginDto, @Res({ passthrough: true }) res: Response) {
@@ -49,5 +50,25 @@ export class AuthController {
   @ApiBearerAuth()
   me(@Request() req) {
     return this.auth.me(req.user.sub);
+  }
+
+  // FP-008: OIDC endpoints (Phase 2)
+  @Get('oidc/authorize')
+  oidcAuthorize() {
+    try {
+      const url = this.oidc.getAuthorizationUrl();
+      return { redirectUrl: url };
+    } catch (error) {
+      return { error: 'OIDC not configured' };
+    }
+  }
+
+  @Post('oidc/callback')
+  async oidcCallback(@Query('code') code: string, @Query('state') state: string) {
+    const result = await this.oidc.handleCallback(code, state);
+    // TODO: Map OIDC user to local User/Tenant/Grant
+    // TODO: Create/update user in DB
+    // TODO: Generate JWT from OIDC tokens
+    return result;
   }
 }
