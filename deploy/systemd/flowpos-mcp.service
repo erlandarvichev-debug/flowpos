@@ -1,0 +1,23 @@
+[Unit]
+Description=FlowPOS MCP для клиентов (Claude, OAuth)
+After=network.target flowpos-api.service
+Wants=flowpos-api.service
+
+[Service]
+Type=simple
+User=flowpos
+Group=flowpos
+WorkingDirectory=/opt/flowpos/current/apps/mcp
+EnvironmentFile=/opt/flowpos/shared/mcp.env
+ExecStart=/usr/bin/node dist/http.js
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/flowpos/shared/data
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

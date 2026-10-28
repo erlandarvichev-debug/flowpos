@@ -1,0 +1,26 @@
+{
+  "name": "@flowpos/db",
+  "version": "1.0.0",
+  "scripts": {
+    "generate": "prisma generate",
+    "migrate": "prisma migrate dev",
+    "migrate:deploy": "prisma migrate deploy",
+    "seed": "ts-node prisma/seed.ts",
+    "studio": "prisma studio",
+    "sql": "node scripts/apply-sql.js",
+    "push": "prisma db push && node scripts/apply-sql.js"
+  },
+  "dependencies": {
+    "@prisma/client": "5.22.0"
+  },
+  "devDependencies": {
+    "prisma": "5.22.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3",
+    "bcryptjs": "^2.4.3",
+    "@types/bcryptjs": "^2.4.6"
+  },
+  "exports": {
+    ".": "./node_modules/.prisma/client/index.js"
+  }
+}

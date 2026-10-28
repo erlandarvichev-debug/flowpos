@@ -1,0 +1,27 @@
+{
+  "name": "@flowpos/mcp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MCP-сервер FlowPOS для ИИ-агентов: локальный (stdio) и удалённый для клиентов (HTTP + OAuth). Права = права пользователя.",
+  "type": "module",
+  "bin": {
+    "flowpos-mcp": "dist/index.js",
+    "flowpos-mcp-http": "dist/http.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "start:http": "node dist/http.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "express": "^5.3.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^20.11.0",
+    "typescript": "^5.3.3"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "@flowpos/shared-types",
+  "version": "1.0.0",
+  "main": "src/index.ts",
+  "devDependencies": {
+    "typescript": "^5.3.3",
+    "zod": "^3.22.4"
+  },
+  "dependencies": {
+    "zod": "^3.22.4"
+  }
+}

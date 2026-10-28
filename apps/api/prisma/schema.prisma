@@ -1,0 +1,1226 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── CORE ───────────────────────────────────────────────────────────────────
+
+model Organization {
+  id        String   @id @default(uuid())
+  name      String
+  inn       String?
+  kpp       String?
+  address   String?
+  phone     String?
+  email     String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users        User[]
+  warehouses   Warehouse[]
+  posTerminals POSTerminal[]
+  onecInstances OnecInstance[]
+
+  @@map("organizations")
+}
+
+model User {
+  id             String    @id @default(uuid())
+  email          String    @unique
+  passwordHash   String
+  firstName      String
+  lastName       String
+  middleName     String?
+  phone          String?
+  isActive       Boolean   @default(true)
+  lastLoginAt    DateTime?
+  organizationId String
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  organization  Organization   @relation(fields: [organizationId], references: [id])
+  userRoles     UserRole[]
+  employee      Employee?
+  auditLogs     AuditLog[]
+  refreshTokens RefreshToken[]
+
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid())
+  userId    String
+  token     String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+model Role {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  displayName String
+  description String?
+  isSystem    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  userRoles       UserRole[]
+  rolePermissions RolePermission[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id          String   @id @default(uuid())
+  module      String
+  action      String
+  resource    String
+  description String?
+
+  rolePermissions RolePermission[]
+
+  @@unique([module, action, resource])
+  @@map("permissions")
+}
+
+model UserRole {
+  userId String
+  roleId String
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+  @@map("user_roles")
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  userId     String?
+  action     String
+  entity     String
+  entityId   String?
+  oldValues  Json?
+  newValues  Json?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([entity, entityId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// ─── CATALOG ────────────────────────────────────────────────────────────────
+
+model ItemGroup {
+  id          String   @id @default(uuid())
+  name        String
+  code        String?
+  parentId    String?
+  description String?
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  parent   ItemGroup?  @relation("GroupTree", fields: [parentId], references: [id])
+  children ItemGroup[] @relation("GroupTree")
+  items    Item[]
+
+  @@map("item_groups")
+}
+
+model Unit {
+  id           String   @id @default(uuid())
+  name         String
+  shortName    String
+  code         String?
+  isBase       Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  items Item[]
+
+  @@map("units")
+}
+
+model Item {
+  id              String    @id @default(uuid())
+  code            String    @unique
+  name            String
+  fullName        String?
+  groupId         String?
+  unitId          String
+  itemType        ItemType  @default(PRODUCT)
+  description     String?
+  weight          Float?
+  volume          Float?
+  vatRate         Float?
+  isArchived      Boolean   @default(false)
+  onecGuid        String?   @unique
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  group            ItemGroup?          @relation(fields: [groupId], references: [id])
+  unit             Unit                @relation(fields: [unitId], references: [id])
+  barcodes         ItemBarcode[]
+  prices           ItemPrice[]
+  characteristics  ItemCharacteristic[]
+  images           ItemImage[]
+  customFieldValues CustomFieldValue[]
+
+  purchaseOrderItems   PurchaseOrderItem[]
+  goodsReceiptItems    GoodsReceiptItem[]
+  salesOrderItems      SalesOrderItem[]
+  shipmentItems        ShipmentItem[]
+  transferItems        TransferItem[]
+  writeOffItems        WriteOffItem[]
+  adjustmentItems      StockAdjustmentItem[]
+  inventoryItems       InventoryItem[]
+  receiptItems         ReceiptItem[]
+  stocks               Stock[]
+
+  @@index([name])
+  @@index([code])
+  @@map("items")
+}
+
+enum ItemType {
+  PRODUCT
+  SERVICE
+  KIT
+}
+
+model ItemBarcode {
+  id        String   @id @default(uuid())
+  itemId    String
+  barcode   String
+  barcodeType String @default("EAN13")
+
+  item Item @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@unique([barcode])
+  @@index([barcode])
+  @@map("item_barcodes")
+}
+
+model ItemCharacteristic {
+  id     String @id @default(uuid())
+  itemId String
+  name   String
+  value  String
+
+  item Item @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@map("item_characteristics")
+}
+
+model ItemImage {
+  id        String   @id @default(uuid())
+  itemId    String
+  url       String
+  isPrimary Boolean  @default(false)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  item Item @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@map("item_images")
+}
+
+model PriceType {
+  id        String   @id @default(uuid())
+  name      String
+  currency  String   @default("KZT")
+  isDefault Boolean  @default(false)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  prices ItemPrice[]
+
+  @@map("price_types")
+}
+
+model ItemPrice {
+  id          String   @id @default(uuid())
+  itemId      String
+  priceTypeId String
+  price       Float
+  currency    String   @default("KZT")
+  validFrom   DateTime @default(now())
+  validTo     DateTime?
+  updatedAt   DateTime @updatedAt
+
+  item      Item      @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  priceType PriceType @relation(fields: [priceTypeId], references: [id])
+
+  @@unique([itemId, priceTypeId])
+  @@map("item_prices")
+}
+
+model Warehouse {
+  id             String   @id @default(uuid())
+  name           String
+  code           String?
+  address        String?
+  organizationId String
+  isActive       Boolean  @default(true)
+  isRetail       Boolean  @default(false)
+  onecGuid       String?  @unique
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  cells        WarehouseCell[]
+  stocks       Stock[]
+  posTerminals POSTerminal[]
+  transfersFrom Transfer[] @relation("TransferFrom")
+  transfersTo   Transfer[] @relation("TransferTo")
+
+  @@map("warehouses")
+}
+
+model WarehouseCell {
+  id          String  @id @default(uuid())
+  warehouseId String
+  name        String
+  code        String?
+  row         String?
+  section     String?
+  level       String?
+
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id])
+  stocks    Stock[]
+
+  @@map("warehouse_cells")
+}
+
+model Stock {
+  id          String   @id @default(uuid())
+  itemId      String
+  warehouseId String
+  cellId      String?
+  quantity    Float    @default(0)
+  reserved    Float    @default(0)
+  updatedAt   DateTime @updatedAt
+
+  item      Item           @relation(fields: [itemId], references: [id])
+  warehouse Warehouse      @relation(fields: [warehouseId], references: [id])
+  cell      WarehouseCell? @relation(fields: [cellId], references: [id])
+
+  @@unique([itemId, warehouseId, cellId])
+  @@index([itemId])
+  @@index([warehouseId])
+  @@map("stocks")
+}
+
+model CounterpartyGroup {
+  id       String @id @default(uuid())
+  name     String
+  parentId String?
+
+  parent       CounterpartyGroup?  @relation("CPGroupTree", fields: [parentId], references: [id])
+  children     CounterpartyGroup[] @relation("CPGroupTree")
+  counterparties Counterparty[]
+
+  @@map("counterparty_groups")
+}
+
+model Counterparty {
+  id              String            @id @default(uuid())
+  code            String?           @unique
+  name            String
+  fullName        String?
+  type            CounterpartyType  @default(CUSTOMER)
+  groupId         String?
+  inn             String?
+  kpp             String?
+  ogrn            String?
+  phone           String?
+  email           String?
+  address         String?
+  bankAccount     String?
+  bankName        String?
+  bankBik         String?
+  creditLimit     Float?
+  paymentDelay    Int?
+  isArchived      Boolean           @default(false)
+  onecGuid        String?           @unique
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  group          CounterpartyGroup? @relation(fields: [groupId], references: [id])
+  contacts       ContactPerson[]
+  contracts      Contract[]
+  purchaseOrders PurchaseOrder[]
+  salesOrders    SalesOrder[]
+  shipments      Shipment[]
+
+  @@index([name])
+  @@map("counterparties")
+}
+
+enum CounterpartyType {
+  CUSTOMER
+  SUPPLIER
+  BOTH
+}
+
+model ContactPerson {
+  id             String  @id @default(uuid())
+  counterpartyId String
+  name           String
+  position       String?
+  phone          String?
+  email          String?
+  isPrimary      Boolean @default(false)
+
+  counterparty Counterparty @relation(fields: [counterpartyId], references: [id], onDelete: Cascade)
+
+  @@map("contact_persons")
+}
+
+model Contract {
+  id             String       @id @default(uuid())
+  counterpartyId String
+  number         String
+  name           String?
+  type           ContractType @default(PURCHASE)
+  startDate      DateTime?
+  endDate        DateTime?
+  amount         Float?
+  currency       String       @default("KZT")
+  isActive       Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+
+  counterparty Counterparty @relation(fields: [counterpartyId], references: [id])
+
+  @@map("contracts")
+}
+
+enum ContractType {
+  PURCHASE
+  SALE
+  BOTH
+}
+
+model CustomField {
+  id         String          @id @default(uuid())
+  entity     String
+  fieldKey   String
+  label      String
+  fieldType  CustomFieldType @default(TEXT)
+  isRequired Boolean         @default(false)
+  sortOrder  Int             @default(0)
+
+  values CustomFieldValue[]
+
+  @@unique([entity, fieldKey])
+  @@map("custom_fields")
+}
+
+enum CustomFieldType {
+  TEXT
+  NUMBER
+  DATE
+  BOOLEAN
+  SELECT
+}
+
+model CustomFieldValue {
+  id            String @id @default(uuid())
+  customFieldId String
+  entityId      String
+  value         String?
+
+  customField CustomField @relation(fields: [customFieldId], references: [id])
+  item        Item?       @relation(fields: [entityId], references: [id])
+
+  @@unique([customFieldId, entityId])
+  @@map("custom_field_values")
+}
+
+// ─── TRADE: PURCHASES ───────────────────────────────────────────────────────
+
+model PurchaseOrder {
+  id             String              @id @default(uuid())
+  number         String              @unique
+  date           DateTime
+  counterpartyId String?
+  contractId     String?
+  warehouseId    String?
+  status         PurchaseOrderStatus @default(DRAFT)
+  comment        String?
+  totalAmount    Float               @default(0)
+  currency       String              @default("KZT")
+  onecGuid       String?             @unique
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+
+  counterparty Counterparty?      @relation(fields: [counterpartyId], references: [id])
+  items        PurchaseOrderItem[]
+  receipts     GoodsReceipt[]
+
+  @@index([date])
+  @@index([status])
+  @@map("purchase_orders")
+}
+
+enum PurchaseOrderStatus {
+  DRAFT
+  CONFIRMED
+  PARTIALLY_RECEIVED
+  RECEIVED
+  CANCELLED
+}
+
+model PurchaseOrderItem {
+  id              String  @id @default(uuid())
+  purchaseOrderId String
+  itemId          String
+  quantity        Float
+  price           Float
+  amount          Float
+  vat             Float?
+  vatAmount       Float?
+
+  purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  item          Item          @relation(fields: [itemId], references: [id])
+
+  @@map("purchase_order_items")
+}
+
+model GoodsReceipt {
+  id              String             @id @default(uuid())
+  number          String             @unique
+  date            DateTime
+  purchaseOrderId String?
+  counterpartyId  String?
+  warehouseId     String
+  status          GoodsReceiptStatus @default(DRAFT)
+  comment         String?
+  totalAmount     Float              @default(0)
+  currency        String             @default("KZT")
+  onecGuid        String?            @unique
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  purchaseOrder PurchaseOrder?    @relation(fields: [purchaseOrderId], references: [id])
+  items         GoodsReceiptItem[]
+
+  @@index([date])
+  @@map("goods_receipts")
+}
+
+enum GoodsReceiptStatus {
+  DRAFT
+  POSTED
+  CANCELLED
+}
+
+model GoodsReceiptItem {
+  id             String @id @default(uuid())
+  goodsReceiptId String
+  itemId         String
+  quantity       Float
+  price          Float
+  amount         Float
+  vat            Float?
+  vatAmount      Float?
+
+  goodsReceipt GoodsReceipt @relation(fields: [goodsReceiptId], references: [id], onDelete: Cascade)
+  item         Item         @relation(fields: [itemId], references: [id])
+
+  @@map("goods_receipt_items")
+}
+
+// ─── TRADE: SALES ───────────────────────────────────────────────────────────
+
+model SalesOrder {
+  id             String           @id @default(uuid())
+  number         String           @unique
+  date           DateTime
+  counterpartyId String?
+  contractId     String?
+  priceTypeId    String?
+  status         SalesOrderStatus @default(DRAFT)
+  comment        String?
+  totalAmount    Float            @default(0)
+  discount       Float?
+  currency       String           @default("KZT")
+  deliveryDate   DateTime?
+  onecGuid       String?          @unique
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  counterparty Counterparty?   @relation(fields: [counterpartyId], references: [id])
+  items        SalesOrderItem[]
+  shipments    Shipment[]
+
+  @@index([date])
+  @@index([status])
+  @@map("sales_orders")
+}
+
+enum SalesOrderStatus {
+  DRAFT
+  CONFIRMED
+  PARTIALLY_SHIPPED
+  SHIPPED
+  CANCELLED
+}
+
+model SalesOrderItem {
+  id           String  @id @default(uuid())
+  salesOrderId String
+  itemId       String
+  quantity     Float
+  price        Float
+  amount       Float
+  discount     Float?
+  vat          Float?
+  vatAmount    Float?
+
+  salesOrder SalesOrder @relation(fields: [salesOrderId], references: [id], onDelete: Cascade)
+  item       Item       @relation(fields: [itemId], references: [id])
+
+  @@map("sales_order_items")
+}
+
+model Shipment {
+  id             String         @id @default(uuid())
+  number         String         @unique
+  date           DateTime
+  salesOrderId   String?
+  counterpartyId String?
+  warehouseId    String?
+  status         ShipmentStatus @default(DRAFT)
+  comment        String?
+  totalAmount    Float          @default(0)
+  currency       String         @default("KZT")
+  onecGuid       String?        @unique
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  salesOrder   SalesOrder?   @relation(fields: [salesOrderId], references: [id])
+  counterparty Counterparty? @relation(fields: [counterpartyId], references: [id])
+  items        ShipmentItem[]
+
+  @@index([date])
+  @@map("shipments")
+}
+
+enum ShipmentStatus {
+  DRAFT
+  POSTED
+  CANCELLED
+}
+
+model ShipmentItem {
+  id         String @id @default(uuid())
+  shipmentId String
+  itemId     String
+  quantity   Float
+  price      Float
+  amount     Float
+  discount   Float?
+  vat        Float?
+  vatAmount  Float?
+
+  shipment Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  item     Item     @relation(fields: [itemId], references: [id])
+
+  @@map("shipment_items")
+}
+
+// ─── TRADE: WAREHOUSE OPS ───────────────────────────────────────────────────
+
+model Transfer {
+  id          String         @id @default(uuid())
+  number      String         @unique
+  date        DateTime
+  fromId      String
+  toId        String
+  status      TransferStatus @default(DRAFT)
+  comment     String?
+  onecGuid    String?        @unique
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  from  Warehouse      @relation("TransferFrom", fields: [fromId], references: [id])
+  to    Warehouse      @relation("TransferTo", fields: [toId], references: [id])
+  items TransferItem[]
+
+  @@map("transfers")
+}
+
+enum TransferStatus {
+  DRAFT
+  POSTED
+  CANCELLED
+}
+
+model TransferItem {
+  id         String @id @default(uuid())
+  transferId String
+  itemId     String
+  quantity   Float
+
+  transfer Transfer @relation(fields: [transferId], references: [id], onDelete: Cascade)
+  item     Item     @relation(fields: [itemId], references: [id])
+
+  @@map("transfer_items")
+}
+
+model WriteOff {
+  id          String        @id @default(uuid())
+  number      String        @unique
+  date        DateTime
+  warehouseId String?
+  reason      String?
+  status      WriteOffStatus @default(DRAFT)
+  onecGuid    String?       @unique
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  items WriteOffItem[]
+
+  @@map("write_offs")
+}
+
+enum WriteOffStatus {
+  DRAFT
+  POSTED
+  CANCELLED
+}
+
+model WriteOffItem {
+  id         String @id @default(uuid())
+  writeOffId String
+  itemId     String
+  quantity   Float
+  price      Float?
+  amount     Float?
+
+  writeOff WriteOff @relation(fields: [writeOffId], references: [id], onDelete: Cascade)
+  item     Item     @relation(fields: [itemId], references: [id])
+
+  @@map("write_off_items")
+}
+
+model StockAdjustment {
+  id          String                @id @default(uuid())
+  number      String                @unique
+  date        DateTime
+  warehouseId String?
+  comment     String?
+  status      StockAdjustmentStatus @default(DRAFT)
+  onecGuid    String?               @unique
+  createdAt   DateTime              @default(now())
+  updatedAt   DateTime              @updatedAt
+
+  items StockAdjustmentItem[]
+
+  @@map("stock_adjustments")
+}
+
+enum StockAdjustmentStatus {
+  DRAFT
+  POSTED
+  CANCELLED
+}
+
+model StockAdjustmentItem {
+  id                String @id @default(uuid())
+  stockAdjustmentId String
+  itemId            String
+  quantity          Float
+  price             Float?
+  amount            Float?
+
+  stockAdjustment StockAdjustment @relation(fields: [stockAdjustmentId], references: [id], onDelete: Cascade)
+  item            Item            @relation(fields: [itemId], references: [id])
+
+  @@map("stock_adjustment_items")
+}
+
+model Inventory {
+  id          String          @id @default(uuid())
+  number      String          @unique
+  date        DateTime
+  warehouseId String?
+  status      InventoryStatus @default(DRAFT)
+  comment     String?
+  onecGuid    String?         @unique
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  items InventoryItem[]
+
+  @@map("inventories")
+}
+
+enum InventoryStatus {
+  DRAFT
+  IN_PROGRESS
+  POSTED
+  CANCELLED
+}
+
+model InventoryItem {
+  id           String  @id @default(uuid())
+  inventoryId  String
+  itemId       String
+  expectedQty  Float
+  actualQty    Float?
+  difference   Float?
+
+  inventory Inventory @relation(fields: [inventoryId], references: [id], onDelete: Cascade)
+  item      Item      @relation(fields: [itemId], references: [id])
+
+  @@map("inventory_items")
+}
+
+// ─── POS ────────────────────────────────────────────────────────────────────
+
+model POSTerminal {
+  id             String    @id @default(uuid())
+  name           String
+  code           String    @unique
+  organizationId String
+  warehouseId    String?
+  priceTypeId    String?
+  isActive       Boolean   @default(true)
+  apiKey         String    @unique @default(uuid())
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  warehouse    Warehouse?   @relation(fields: [warehouseId], references: [id])
+  shifts       CashShift[]
+
+  @@map("pos_terminals")
+}
+
+model CashShift {
+  id          String         @id @default(uuid())
+  terminalId  String
+  number      String
+  openedAt    DateTime
+  closedAt    DateTime?
+  status      CashShiftStatus @default(OPEN)
+  openBalance Float          @default(0)
+  closeBalance Float?
+  totalSales  Float          @default(0)
+  totalReturns Float         @default(0)
+  cashIn      Float          @default(0)
+  cashOut     Float          @default(0)
+  onecGuid    String?        @unique
+  createdAt   DateTime       @default(now())
+
+  terminal POSTerminal @relation(fields: [terminalId], references: [id])
+  receipts Receipt[]
+  cashOperations CashOperation[]
+
+  @@map("cash_shifts")
+}
+
+enum CashShiftStatus {
+  OPEN
+  CLOSED
+}
+
+model Receipt {
+  id          String        @id @default(uuid())
+  number      String        @unique
+  shiftId     String
+  type        ReceiptType   @default(SALE)
+  status      ReceiptStatus @default(PENDING)
+  totalAmount Float
+  discount    Float?
+  paid        Float?
+  change      Float?
+  paymentType PaymentType   @default(CASH)
+  onecGuid    String?       @unique
+  createdAt   DateTime      @default(now())
+
+  shift CashShift    @relation(fields: [shiftId], references: [id])
+  items ReceiptItem[]
+
+  @@index([shiftId])
+  @@map("receipts")
+}
+
+enum ReceiptType {
+  SALE
+  RETURN
+}
+
+enum ReceiptStatus {
+  PENDING
+  COMPLETED
+  CANCELLED
+}
+
+enum PaymentType {
+  CASH
+  CARD
+  MIXED
+  QR
+}
+
+model ReceiptItem {
+  id        String  @id @default(uuid())
+  receiptId String
+  itemId    String
+  quantity  Float
+  price     Float
+  amount    Float
+  discount  Float?
+  vat       Float?
+
+  receipt Receipt @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  item    Item    @relation(fields: [itemId], references: [id])
+
+  @@map("receipt_items")
+}
+
+model CashOperation {
+  id        String            @id @default(uuid())
+  shiftId   String
+  type      CashOperationType
+  amount    Float
+  comment   String?
+  createdAt DateTime          @default(now())
+
+  shift CashShift @relation(fields: [shiftId], references: [id])
+
+  @@map("cash_operations")
+}
+
+enum CashOperationType {
+  IN
+  OUT
+}
+
+// ─── 1C SYNC ────────────────────────────────────────────────────────────────
+
+model OnecInstance {
+  id             String     @id @default(uuid())
+  organizationId String
+  name           String
+  baseUrl        String
+  infobase       String
+  username       String
+  passwordHash   String
+  instanceType   OnecType   @default(LOCAL)
+  isActive       Boolean    @default(true)
+  lastSyncAt     DateTime?
+  syncCursor     String?
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  mappings     OnecMapping[]
+  syncLogs     SyncLog[]
+
+  @@map("onec_instances")
+}
+
+enum OnecType {
+  LOCAL
+  FRESH
+}
+
+model OnecMapping {
+  id           String   @id @default(uuid())
+  instanceId   String
+  entity       String
+  localId      String
+  onecGuid     String
+  syncedAt     DateTime @default(now())
+
+  instance OnecInstance @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+
+  @@unique([instanceId, entity, localId])
+  @@unique([instanceId, entity, onecGuid])
+  @@index([instanceId, entity])
+  @@map("onec_mappings")
+}
+
+model SyncQueue {
+  id              String          @id @default(uuid())
+  instanceId      String?
+  operation       String
+  entity          String
+  entityId        String
+  payload         Json
+  status          SyncQueueStatus @default(PENDING)
+  idempotencyKey  String          @unique
+  attempts        Int             @default(0)
+  maxAttempts     Int             @default(5)
+  lastError       String?
+  nextRetryAt     DateTime?
+  processedAt     DateTime?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  @@index([status, nextRetryAt])
+  @@index([entity, entityId])
+  @@map("sync_queue")
+}
+
+enum SyncQueueStatus {
+  PENDING
+  PROCESSING
+  SENT
+  FAILED
+  CANCELLED
+}
+
+model SyncLog {
+  id         String   @id @default(uuid())
+  instanceId String
+  direction  SyncDir
+  entity     String
+  count      Int      @default(0)
+  errors     Int      @default(0)
+  details    Json?
+  startedAt  DateTime
+  finishedAt DateTime?
+  createdAt  DateTime @default(now())
+
+  instance OnecInstance @relation(fields: [instanceId], references: [id])
+
+  @@index([instanceId, createdAt])
+  @@map("sync_logs")
+}
+
+enum SyncDir {
+  FROM_1C
+  TO_1C
+}
+
+// ─── HR ─────────────────────────────────────────────────────────────────────
+
+model Employee {
+  id             String         @id @default(uuid())
+  userId         String?        @unique
+  firstName      String
+  lastName       String
+  middleName     String?
+  birthDate      DateTime?
+  hireDate       DateTime?
+  fireDate       DateTime?
+  position       String?
+  department     String?
+  employmentType EmploymentType @default(FULL_TIME)
+  salary         Float?
+  hourlyRate     Float?
+  phone          String?
+  email          String?
+  inn            String?
+  isActive       Boolean        @default(true)
+  onecGuid       String?        @unique
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  user          User?           @relation(fields: [userId], references: [id])
+  timeRecords   TimeRecord[]
+  shiftAssignments ShiftAssignment[]
+  payrolls      Payroll[]
+
+  @@index([lastName, firstName])
+  @@map("employees")
+}
+
+enum EmploymentType {
+  FULL_TIME
+  PART_TIME
+  CONTRACTOR
+  SELF_EMPLOYED
+}
+
+model TimeRecord {
+  id         String           @id @default(uuid())
+  employeeId String
+  type       TimeRecordType
+  recordedAt DateTime
+  source     String?
+  comment    String?
+  createdAt  DateTime         @default(now())
+
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@index([employeeId, recordedAt])
+  @@map("time_records")
+}
+
+enum TimeRecordType {
+  CHECK_IN
+  CHECK_OUT
+}
+
+model ShiftTemplate {
+  id        String   @id @default(uuid())
+  name      String
+  startTime String
+  endTime   String
+  duration  Float
+  breakTime Float    @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  assignments ShiftAssignment[]
+
+  @@map("shift_templates")
+}
+
+model ShiftAssignment {
+  id              String               @id @default(uuid())
+  employeeId      String
+  shiftTemplateId String?
+  date            DateTime
+  startTime       DateTime
+  endTime         DateTime
+  status          ShiftAssignmentStatus @default(PLANNED)
+  isOvertime      Boolean              @default(false)
+  actualStart     DateTime?
+  actualEnd       DateTime?
+  comment         String?
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+
+  employee      Employee       @relation(fields: [employeeId], references: [id])
+  shiftTemplate ShiftTemplate? @relation(fields: [shiftTemplateId], references: [id])
+
+  @@index([employeeId, date])
+  @@index([date])
+  @@map("shift_assignments")
+}
+
+enum ShiftAssignmentStatus {
+  PLANNED
+  CONFIRMED
+  IN_PROGRESS
+  COMPLETED
+  ABSENT
+  CANCELLED
+}
+
+model Timesheet {
+  id         String          @id @default(uuid())
+  month      Int
+  year       Int
+  status     TimesheetStatus @default(DRAFT)
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
+
+  rows TimesheetRow[]
+
+  @@unique([month, year])
+  @@map("timesheets")
+}
+
+enum TimesheetStatus {
+  DRAFT
+  APPROVED
+  SENT_TO_1C
+}
+
+model TimesheetRow {
+  id           String  @id @default(uuid())
+  timesheetId  String
+  employeeId   String
+  daysWorked   Float   @default(0)
+  hoursWorked  Float   @default(0)
+  sickDays     Float   @default(0)
+  vacationDays Float   @default(0)
+  absenceDays  Float   @default(0)
+
+  timesheet Timesheet @relation(fields: [timesheetId], references: [id], onDelete: Cascade)
+
+  @@unique([timesheetId, employeeId])
+  @@map("timesheet_rows")
+}
+
+model Payroll {
+  id             String        @id @default(uuid())
+  employeeId     String
+  month          Int
+  year           Int
+  baseSalary     Float
+  bonuses        Float         @default(0)
+  deductions     Float         @default(0)
+  taxes          Float         @default(0)
+  netAmount      Float
+  status         PayrollStatus @default(DRAFT)
+  onecGuid       String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@unique([employeeId, month, year])
+  @@map("payrolls")
+}
+
+enum PayrollStatus {
+  DRAFT
+  APPROVED
+  PAID
+  SENT_TO_1C
+}
+
+// ─── OUTBOX (Transactional Outbox Pattern) ───────────────────────────────────
+
+model Outbox {
+  id              String        @id @default(uuid())
+  idempotencyKey  String        @unique @map("idempotency_key")
+  entity          String
+  localId         String        @map("local_id")
+  connectionId    String?       @map("connection_id")
+  operation       String
+  payload         Json
+  status          OutboxStatus  @default(PENDING)
+  attempts        Int           @default(0)
+  nextAttemptAt   DateTime      @default(now()) @map("next_attempt_at")
+  lastError       String?       @map("last_error")
+  processedAt     DateTime?     @map("processed_at")
+  createdAt       DateTime      @default(now()) @map("created_at")
+
+  @@index([status, nextAttemptAt])
+  @@index([entity, localId])
+  @@map("outbox")
+}
+
+enum OutboxStatus {
+  PENDING
+  SENDING
+  DONE
+  ERROR
+  DEAD
+}

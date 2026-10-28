@@ -1,0 +1,25 @@
+# Необязательные воркеры обмена (включать только используемые):
+#   systemctl enable --now flowpos-worker@moysklad-worker
+#   systemctl enable --now flowpos-worker@sync-worker   (1С)
+#   systemctl enable --now flowpos-worker@push-worker
+#   systemctl enable --now flowpos-worker@analytics-worker
+[Unit]
+Description=FlowPOS воркер %i
+After=network.target flowpos-api.service redis-server.service
+
+[Service]
+Type=simple
+User=flowpos
+Group=flowpos
+WorkingDirectory=/opt/flowpos/current/apps/%i
+EnvironmentFile=/opt/flowpos/shared/api.env
+ExecStart=/usr/bin/npm run start --silent
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

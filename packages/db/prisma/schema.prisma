@@ -1,0 +1,2031 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../../../node_modules/.prisma/client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── CORE: Auth & RBAC ───────────────────────────────────────────────────────
+
+model Organization {
+  id        String   @id @default(uuid())
+  name      String
+  inn       String?  // БИН/ИИН
+  kpp       String?
+  address   String?
+  phone     String?
+  email     String?
+  legalForm String   @default("TOO") @map("legal_form") // TOO | IP | AO | OTHER
+  nameKk    String?  @map("name_kk")
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  users               User[]
+  documents           Document[]
+  posTerminals        POSTerminal[]
+  onecConnections     OnecConnection[]
+  moyskladConnections MoyskladConnection[]
+
+  @@map("organizations")
+}
+
+model User {
+  id             String    @id @default(uuid())
+  email          String    @unique
+  passwordHash   String    @map("password_hash")
+  firstName      String    @map("first_name")
+  lastName       String    @map("last_name")
+  middleName     String?   @map("middle_name")
+  phone          String?
+  isActive       Boolean   @default(true) @map("is_active")
+  lastLoginAt    DateTime? @map("last_login_at")
+  organizationId String    @map("organization_id")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  organization  Organization       @relation(fields: [organizationId], references: [id])
+  refreshTokens RefreshToken[]
+  userRoles     UserRole[]
+  auditLogs     AuditLog[]
+  employee      Employee?
+
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  token     String   @unique
+  expiresAt DateTime @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+model Role {
+  id          String @id @default(uuid())
+  name        String @unique
+  displayName String @map("display_name")
+  description String?
+  isSystem    Boolean @default(false) @map("is_system")
+
+  userRoles   UserRole[]
+  permissions RolePermission[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id       String @id @default(uuid())
+  module   String
+  action   String
+  resource String
+
+  rolePermissions RolePermission[]
+
+  @@unique([module, action, resource])
+  @@map("permissions")
+}
+
+model UserRole {
+  userId String @map("user_id")
+  roleId String @map("role_id")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+  @@map("user_roles")
+}
+
+model RolePermission {
+  roleId       String @map("role_id")
+  permissionId String @map("permission_id")
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String?  @map("user_id")
+  action    String
+  entity    String
+  entityId  String?  @map("entity_id")
+  before    Json?
+  after     Json?
+  ipAddress String?  @map("ip_address")
+  organizationId String? @map("organization_id")
+  reason    String?
+  ts        DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([entity, entityId])
+  @@index([ts])
+  @@map("audit_log")
+}
+
+// ─── 1С CONNECTIONS ──────────────────────────────────────────────────────────
+
+model OnecConnection {
+  id             String     @id @default(uuid())
+  organizationId String     @map("organization_id")
+  name           String
+  baseCode       String     @map("base_code")
+  baseUrl        String     @map("base_url")
+  instanceType   OnecType   @default(ONPREM) @map("instance_type")
+  username       String
+  passwordEnc    String     @map("password_enc")
+  isActive       Boolean    @default(true) @map("is_active")
+  createdAt      DateTime   @default(now()) @map("created_at")
+  updatedAt      DateTime   @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  syncCursors  SyncCursor[]
+  syncLogs     SyncLog[]
+  idMaps       IdMap[]
+  outboxEntries Outbox[]
+
+  @@unique([organizationId, baseCode])
+  @@map("onec_connections")
+}
+
+enum OnecType {
+  ONPREM
+  FRESH
+}
+
+// ─── MOYSKLAD CONNECTIONS ─────────────────────────────────────────────────────
+
+model MoyskladConnection {
+  id             String   @id @default(uuid())
+  organizationId String   @map("organization_id")
+  name           String
+  accountId      String   @map("account_id")
+  tokenEnc       String   @map("token_enc")
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  organization Organization         @relation(fields: [organizationId], references: [id])
+  syncCursors  MoyskladSyncCursor[]
+  syncLogs     MoyskladSyncLog[]
+
+  @@unique([organizationId, accountId])
+  @@map("moysklad_connections")
+}
+
+model MoyskladSyncCursor {
+  entity       String    @map("entity")
+  connectionId String    @map("connection_id")
+  lastUpdated  DateTime? @map("last_updated")
+
+  connection MoyskladConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@id([entity, connectionId])
+  @@map("moysklad_sync_cursor")
+}
+
+model MoyskladSyncLog {
+  id           BigInt    @id @default(autoincrement())
+  direction    SyncDir
+  entity       String?
+  connectionId String?   @map("connection_id")
+  ok           Boolean
+  count        Int       @default(0)
+  error        String?
+  startedAt    DateTime  @map("started_at")
+  finishedAt   DateTime? @map("finished_at")
+
+  connection MoyskladConnection? @relation(fields: [connectionId], references: [id])
+
+  @@index([connectionId, startedAt])
+  @@map("moysklad_sync_log")
+}
+
+// ─── SYNC INFRASTRUCTURE ─────────────────────────────────────────────────────
+
+model SyncCursor {
+  entity      String    @map("entity")
+  connectionId String   @map("connection_id")
+  lastTs      DateTime? @map("last_ts")
+  lastGuid    String?   @map("last_guid")
+
+  connection OnecConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@id([entity, connectionId])
+  @@map("sync_cursor")
+}
+
+model IdMap {
+  entity       String @map("entity")
+  localId      String @map("local_id")
+  connectionId String @map("connection_id")
+  onecGuid     String @map("onec_guid")
+  syncedAt     DateTime @default(now()) @map("synced_at")
+
+  connection OnecConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@id([entity, localId])
+  @@unique([entity, connectionId, onecGuid])
+  @@index([entity, connectionId])
+  @@map("id_map")
+}
+
+model Outbox {
+  id              String      @id @default(uuid())
+  idempotencyKey  String      @unique @map("idempotency_key")
+  entity          String
+  localId         String      @map("local_id")
+  connectionId    String?     @map("connection_id")
+  operation       String
+  payload         Json
+  status          OutboxStatus @default(PENDING)
+  attempts        Int         @default(0)
+  nextAttemptAt   DateTime    @default(now()) @map("next_attempt_at")
+  lastError       String?     @map("last_error")
+  processedAt     DateTime?   @map("processed_at")
+  createdAt       DateTime    @default(now()) @map("created_at")
+  updatedAt       DateTime    @updatedAt @map("updated_at")
+
+  connection OnecConnection? @relation(fields: [connectionId], references: [id])
+
+  @@index([status, nextAttemptAt])
+  @@index([entity, localId])
+  @@map("outbox")
+}
+
+enum OutboxStatus {
+  PENDING
+  SENDING
+  DONE
+  ERROR
+  DEAD
+}
+
+model SyncLog {
+  id           BigInt    @id @default(autoincrement())
+  direction    SyncDir
+  entity       String?
+  connectionId String?   @map("connection_id")
+  ok           Boolean
+  count        Int       @default(0)
+  error        String?
+  startedAt    DateTime  @map("started_at")
+  finishedAt   DateTime? @map("finished_at")
+
+  connection OnecConnection? @relation(fields: [connectionId], references: [id])
+
+  @@index([connectionId, startedAt])
+  @@map("sync_log")
+}
+
+enum SyncDir {
+  PULL
+  PUSH
+}
+
+// ─── CATALOG (mirror from 1С) ─────────────────────────────────────────────────
+
+// Sync mixin fields are embedded directly on each model
+
+model ProductGroup {
+  id         String   @id @default(uuid())
+  name       String
+  code       String?
+  parentId   String?  @map("parent_id")
+  // sync fields — 1С
+  onecGuid   String?  @map("onec_guid")
+  onecBase   String   @default("default") @map("onec_base")
+  onecVersion String? @map("onec_version")
+  // sync fields — МойСклад
+  msId           String?  @map("ms_id")
+  msAccountId    String?  @map("ms_account_id")
+  msConnectionId String?  @map("ms_connection_id")
+  msUpdated      DateTime? @map("ms_updated")
+  syncStatus SyncStatus @default(SYNCED) @map("sync_status")
+  owner      Owner      @default(C1) @map("owner")
+  deleted    Boolean  @default(false)
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  parent   ProductGroup?  @relation("GroupTree", fields: [parentId], references: [id])
+  children ProductGroup[] @relation("GroupTree")
+  products Product[]
+
+  @@unique([onecBase, onecGuid])
+  @@unique([msAccountId, msId])
+  @@index([syncStatus])
+  @@map("product_groups")
+}
+
+model Uom {
+  id         String  @id @default(uuid())
+  name       String
+  shortName  String  @map("short_name")
+  code       String?
+  isBase     Boolean @default(false) @map("is_base")
+  // sync fields — 1С
+  onecGuid   String? @map("onec_guid")
+  onecBase   String  @default("default") @map("onec_base")
+  // sync fields — МойСклад
+  msId           String?  @map("ms_id")
+  msAccountId    String?  @map("ms_account_id")
+  msConnectionId String?  @map("ms_connection_id")
+  msUpdated      DateTime? @map("ms_updated")
+  syncStatus SyncStatus @default(SYNCED) @map("sync_status")
+  deleted    Boolean @default(false)
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  products Product[]
+
+  @@map("uoms")
+}
+
+model Product {
+  id         String      @id @default(uuid())
+  kind       ProductKind @default(PRODUCT)
+  code       String?
+  article    String?
+  name       String
+  groupId    String?     @map("group_id")
+  uomId      String      @map("uom_id")
+  vatRate    Decimal?    @map("vat_rate") @db.Decimal(5,2)
+  barcode    String?
+  parentId   String?     @map("parent_id")
+  attributes Json?
+  // sync fields — 1С
+  onecGuid   String?     @map("onec_guid") @db.Uuid
+  onecBase   String      @default("default") @map("onec_base")
+  onecVersion String?    @map("onec_version")
+  // sync fields — МойСклад
+  msId           String?  @map("ms_id")
+  msAccountId    String?  @map("ms_account_id")
+  msConnectionId String?  @map("ms_connection_id")
+  msUpdated      DateTime? @map("ms_updated")
+  syncStatus SyncStatus  @default(SYNCED) @map("sync_status")
+  owner      Owner       @default(C1) @map("owner")
+  deleted    Boolean     @default(false)
+  organizationId String?  @map("organization_id") // null — общий справочник
+  createdAt  DateTime    @default(now()) @map("created_at")
+  updatedAt  DateTime    @updatedAt @map("updated_at")
+  updatedBy  String?     @map("updated_by")
+
+  group      ProductGroup? @relation(fields: [groupId], references: [id])
+  uom        Uom           @relation(fields: [uomId], references: [id])
+  parent     Product?      @relation("ProductVariants", fields: [parentId], references: [id])
+  variants   Product[]     @relation("ProductVariants")
+  barcodes   ProductBarcode[]
+  prices     Price[]
+  docLines   DocumentLine[]
+  stocks     Stock[]
+
+  @@unique([onecBase, onecGuid])
+  @@unique([msAccountId, msId])
+  @@index([name])
+  @@index([syncStatus])
+  @@map("products")
+}
+
+enum ProductKind {
+  PRODUCT
+  SERVICE
+  BUNDLE
+  VARIANT
+}
+
+model ProductBarcode {
+  id        String @id @default(uuid())
+  productId String @map("product_id")
+  barcode   String @unique
+  kind      String @default("EAN13")
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([barcode])
+  @@map("product_barcodes")
+}
+
+model PriceType {
+  id         String  @id @default(uuid())
+  name       String
+  currency   String  @default("KZT")
+  isDefault  Boolean @default(false) @map("is_default")
+  isActive   Boolean @default(true) @map("is_active")
+  onecGuid   String? @map("onec_guid")
+  onecBase   String  @default("default") @map("onec_base")
+  syncStatus SyncStatus @default(SYNCED) @map("sync_status")
+  deleted    Boolean @default(false)
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  prices Price[]
+
+  @@map("price_types")
+}
+
+model Price {
+  id          String   @id @default(uuid())
+  productId   String   @map("product_id")
+  priceTypeId String   @map("price_type_id")
+  price       Decimal  @db.Decimal(18,2)
+  currency    String   @default("KZT")
+  validFrom   DateTime @default(now()) @map("valid_from")
+  validTo     DateTime? @map("valid_to")
+  syncStatus  SyncStatus @default(SYNCED) @map("sync_status")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  product   Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  priceType PriceType @relation(fields: [priceTypeId], references: [id])
+
+  @@unique([productId, priceTypeId])
+  @@map("prices")
+}
+
+model Store {
+  id             String  @id @default(uuid())
+  name           String
+  code           String?
+  address        String?
+  organizationId String  @map("organization_id")
+  isRetail       Boolean @default(false) @map("is_retail")
+  isActive       Boolean @default(true) @map("is_active")
+  // sync fields — 1С
+  onecGuid       String? @map("onec_guid")
+  onecBase       String  @default("default") @map("onec_base")
+  // sync fields — МойСклад
+  msId           String?  @map("ms_id")
+  msAccountId    String?  @map("ms_account_id")
+  msConnectionId String?  @map("ms_connection_id")
+  msUpdated      DateTime? @map("ms_updated")
+  syncStatus     SyncStatus @default(SYNCED) @map("sync_status")
+  owner          Owner      @default(C1) @map("owner")
+  deleted        Boolean @default(false)
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  bins         Bin[]
+  stocks       Stock[]
+  posTerminals POSTerminal[]
+  documents    Document[]   @relation("DocumentStore")
+  docTransfers Document[]   @relation("DocumentStoreTo")
+
+  @@unique([onecBase, onecGuid])
+  @@unique([msAccountId, msId])
+  @@map("stores")
+}
+
+model Bin {
+  id      String  @id @default(uuid())
+  storeId String  @map("store_id")
+  name    String
+  code    String?
+  row     String?
+  section String?
+  level   String?
+
+  store  Store   @relation(fields: [storeId], references: [id])
+  stocks Stock[]
+
+  @@map("bins")
+}
+
+model Stock {
+  id        String  @id @default(uuid())
+  productId String  @map("product_id")
+  storeId   String  @map("store_id")
+  binId     String? @map("bin_id")
+  qty       Decimal @default(0) @db.Decimal(18,3)
+  reserved  Decimal @default(0) @db.Decimal(18,3)
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  product Product @relation(fields: [productId], references: [id])
+  store   Store   @relation(fields: [storeId], references: [id])
+  bin     Bin?    @relation(fields: [binId], references: [id])
+
+  @@unique([productId, storeId, binId])
+  @@index([productId])
+  @@index([storeId])
+  @@map("stock")
+}
+
+model Counterparty {
+  id         String          @id @default(uuid())
+  type       CounterpartyType @default(CUSTOMER)
+  name       String
+  fullName   String?         @map("full_name")
+  inn        String?
+  kpp        String?
+  phone      String?
+  email      String?
+  groupId    String?         @map("group_id")
+  attributes Json?
+  // sync fields — 1С
+  onecGuid   String?         @map("onec_guid")
+  onecBase   String          @default("default") @map("onec_base")
+  onecVersion String?        @map("onec_version")
+  // sync fields — МойСклад
+  msId           String?  @map("ms_id")
+  msAccountId    String?  @map("ms_account_id")
+  msConnectionId String?  @map("ms_connection_id")
+  msUpdated      DateTime? @map("ms_updated")
+  syncStatus SyncStatus      @default(SYNCED) @map("sync_status")
+  owner      Owner           @default(C1) @map("owner")
+  deleted    Boolean         @default(false)
+  organizationId String?  @map("organization_id") // null — общий справочник
+  createdAt  DateTime        @default(now()) @map("created_at")
+  updatedAt  DateTime        @updatedAt @map("updated_at")
+  updatedBy  String?         @map("updated_by")
+
+  group      CounterpartyGroup? @relation(fields: [groupId], references: [id])
+  contracts  Contract[]
+  documents  Document[]
+
+  @@unique([onecBase, onecGuid])
+  @@unique([msAccountId, msId])
+  @@index([name])
+  @@index([syncStatus])
+  @@map("counterparties")
+}
+
+enum CounterpartyType {
+  CUSTOMER
+  SUPPLIER
+  BOTH
+}
+
+model CounterpartyGroup {
+  id     String @id @default(uuid())
+  name   String
+  parentId String? @map("parent_id")
+
+  parent   CounterpartyGroup?  @relation("CPTree", fields: [parentId], references: [id])
+  children CounterpartyGroup[] @relation("CPTree")
+  members  Counterparty[]
+
+  @@map("counterparty_groups")
+}
+
+model Contract {
+  id             String   @id @default(uuid())
+  counterpartyId String   @map("counterparty_id")
+  number         String
+  name           String?
+  type           String?
+  startDate      DateTime? @map("start_date")
+  endDate        DateTime? @map("end_date")
+  currency       String   @default("KZT")
+  isActive       Boolean  @default(true) @map("is_active")
+  onecGuid       String?  @map("onec_guid")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  counterparty Counterparty @relation(fields: [counterpartyId], references: [id])
+
+  @@map("contracts")
+}
+
+// ─── DOCUMENTS (unified table) ───────────────────────────────────────────────
+
+model Document {
+  id             String      @id @default(uuid())
+  docType        DocType     @map("doc_type")
+  number         String?
+  date           DateTime
+  status         DocStatus   @default(DRAFT)
+  organizationId String?     @map("organization_id")
+  counterpartyId String?     @map("counterparty_id")
+  storeId        String?     @map("store_id")
+  storeToId      String?     @map("store_to_id")
+  contractId     String?     @map("contract_id")
+  projectId      String?     @map("project_id")
+  total          Decimal?    @db.Decimal(18,2)
+  comment        String?
+  attributes     Json?
+  postedIn1c     Boolean     @default(false) @map("posted_in_1c")
+  // sync fields
+  onecGuid       String?     @map("onec_guid")
+  onecBase       String      @default("default") @map("onec_base")
+  onecVersion    String?     @map("onec_version")
+  syncStatus     SyncStatus  @default(SYNCED) @map("sync_status")
+  owner          Owner       @default(PLATFORM) @map("owner")
+  deleted        Boolean     @default(false)
+  createdAt      DateTime    @default(now()) @map("created_at")
+  updatedAt      DateTime    @updatedAt @map("updated_at")
+  updatedBy      String?     @map("updated_by")
+
+  organization Organization? @relation(fields: [organizationId], references: [id])
+  counterparty Counterparty? @relation(fields: [counterpartyId], references: [id])
+  store        Store?        @relation("DocumentStore", fields: [storeId], references: [id])
+  storeTo      Store?        @relation("DocumentStoreTo", fields: [storeToId], references: [id])
+  lines        DocumentLine[]
+
+  @@unique([onecBase, onecGuid])
+  @@index([docType, date])
+  @@index([syncStatus])
+  @@index([status])
+  @@map("documents")
+}
+
+enum DocType {
+  // Закупки
+  PURCHASE_ORDER
+  SUPPLY
+  INVOICE_IN
+  PURCHASE_RETURN
+  // Продажи
+  CUSTOMER_ORDER
+  DEMAND
+  INVOICE_OUT
+  SALES_RETURN
+  // Склад
+  ENTER
+  LOSS
+  MOVE
+  INVENTORY
+  // Деньги
+  PAYMENT_IN
+  PAYMENT_OUT
+  // Розница
+  RETAIL_SHIFT
+  RETAIL_DEMAND
+  RETAIL_RETURN
+}
+
+enum DocStatus {
+  DRAFT
+  POSTED
+  CANCELLED
+}
+
+enum SyncStatus {
+  SYNCED
+  DIRTY
+  PENDING
+  ERROR
+  CONFLICT
+}
+
+enum Owner {
+  PLATFORM
+  C1
+  MANUAL
+}
+
+model DocumentLine {
+  id         String   @id @default(uuid())
+  documentId String   @map("document_id")
+  lineNo     Int      @map("line_no")
+  productId  String   @map("product_id")
+  qty        Decimal  @db.Decimal(18,3)
+  price      Decimal? @db.Decimal(18,2)
+  discount   Decimal? @db.Decimal(5,2)
+  vatRate    Decimal? @map("vat_rate") @db.Decimal(5,2)
+  amount     Decimal? @db.Decimal(18,2)
+  attributes Json?
+
+  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  product  Product  @relation(fields: [productId], references: [id])
+
+  @@unique([documentId, lineNo])
+  @@map("document_lines")
+}
+
+// ─── POS ─────────────────────────────────────────────────────────────────────
+
+model POSTerminal {
+  id             String  @id @default(uuid())
+  name           String
+  code           String  @unique
+  organizationId String  @map("organization_id")
+  storeId        String? @map("store_id")
+  priceTypeId    String? @map("price_type_id")
+  isActive       Boolean @default(true) @map("is_active")
+  apiKey         String  @unique @default(uuid()) @map("api_key")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  store        Store?       @relation(fields: [storeId], references: [id])
+  shifts       POSShift[]
+
+  @@map("pos_terminals")
+}
+
+model POSShift {
+  id          String       @id @default(uuid())
+  terminalId  String       @map("terminal_id")
+  number      String
+  openedAt    DateTime     @map("opened_at")
+  closedAt    DateTime?    @map("closed_at")
+  status      ShiftStatus  @default(OPEN)
+  openBalance Decimal      @default(0) @map("open_balance") @db.Decimal(18,2)
+  closeBalance Decimal?    @map("close_balance") @db.Decimal(18,2)
+  totalSales  Decimal      @default(0) @map("total_sales") @db.Decimal(18,2)
+  totalReturns Decimal     @default(0) @map("total_returns") @db.Decimal(18,2)
+  cashIn      Decimal      @default(0) @map("cash_in") @db.Decimal(18,2)
+  cashOut     Decimal      @default(0) @map("cash_out") @db.Decimal(18,2)
+  onecGuid    String?      @map("onec_guid")
+  createdAt   DateTime     @default(now()) @map("created_at")
+
+  terminal     POSTerminal    @relation(fields: [terminalId], references: [id])
+  cashOps      POSCashOp[]
+
+  @@map("pos_shifts")
+}
+
+enum ShiftStatus {
+  OPEN
+  CLOSED
+}
+
+model POSCashOp {
+  id       String      @id @default(uuid())
+  shiftId  String      @map("shift_id")
+  type     CashOpType
+  amount   Decimal     @db.Decimal(18,2)
+  comment  String?
+  ts       DateTime    @default(now())
+
+  shift POSShift @relation(fields: [shiftId], references: [id])
+
+  @@map("pos_cash_ops")
+}
+
+enum CashOpType {
+  IN
+  OUT
+}
+
+// ─── HR ──────────────────────────────────────────────────────────────────────
+
+model Department {
+  id   String @id @default(uuid())
+  name String
+  parentId String? @map("parent_id")
+  // HRMS: подразделение = магазин / склад / офис
+  organizationId String?  @map("organization_id")
+  storeId        String?  @map("store_id")
+  kind           String   @default("STORE") // STORE | WAREHOUSE | OFFICE
+  costAccount    String   @default("7020") @map("cost_account") // план ред. 2025: 7020 расходы по реализации, 7030 административные
+
+  parent   Department?  @relation("DeptTree", fields: [parentId], references: [id])
+  children Department[] @relation("DeptTree")
+  employees Employee[]
+
+  @@map("departments")
+}
+
+model Position {
+  id   String @id @default(uuid())
+  name String
+
+  employees Employee[]
+
+  @@map("positions")
+}
+
+model WorkSchedule {
+  id        String @id @default(uuid())
+  name      String
+  startTime String @map("start_time")
+  endTime   String @map("end_time")
+  duration  Float
+  breakTime Float  @default(0) @map("break_time")
+  isActive  Boolean @default(true) @map("is_active")
+
+  employees     Employee[]
+  shiftPlans    ShiftPlan[]
+  openShifts    OpenShift[]
+
+  @@map("work_schedules")
+}
+
+model Employee {
+  id             String         @id @default(uuid())
+  userId         String?        @unique @map("user_id")
+  firstName      String         @map("first_name")
+  lastName       String         @map("last_name")
+  middleName     String?        @map("middle_name")
+  departmentId   String?        @map("department_id")
+  positionId     String?        @map("position_id")
+  workScheduleId String?        @map("work_schedule_id")
+  employmentType EmploymentType @default(FULL_TIME) @map("employment_type")
+  hireDate       DateTime?      @map("hire_date")
+  fireDate       DateTime?      @map("fire_date")
+  salary         Decimal?       @db.Decimal(18,2)
+  hourlyRate     Decimal?       @map("hourly_rate") @db.Decimal(18,2)
+  inn            String?
+  phone          String?
+  email          String?
+  isActive       Boolean        @default(true) @map("is_active")
+  // sync fields
+  onecGuid       String?        @map("onec_guid")
+  onecBase       String         @default("default") @map("onec_base")
+  syncStatus     SyncStatus     @default(SYNCED) @map("sync_status")
+  deleted        Boolean        @default(false)
+  createdAt      DateTime       @default(now()) @map("created_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+
+  user          User?          @relation(fields: [userId], references: [id])
+  department    Department?    @relation(fields: [departmentId], references: [id])
+  position      Position?      @relation(fields: [positionId], references: [id])
+  workSchedule  WorkSchedule?  @relation(fields: [workScheduleId], references: [id])
+  timeEvents    TimeEvent[]
+  timeSheetRows TimeSheetRow[]
+  shiftResponses ShiftResponse[]
+  payrolls      Payroll[]
+  hrContracts   HrContract[]
+
+  @@unique([onecBase, onecGuid])
+  @@index([lastName, firstName])
+  @@map("employees")
+}
+
+enum EmploymentType {
+  FULL_TIME
+  PART_TIME
+  CONTRACTOR
+  SELF_EMPLOYED
+}
+
+// 1. Учёт рабочего времени
+model TimeEvent {
+  id         String          @id @default(uuid())
+  employeeId String          @map("employee_id")
+  ts         DateTime
+  type       TimeEventType
+  source     TimeEventSource @default(MANUAL)
+  deviceId   String?         @map("device_id")
+
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@index([employeeId, ts])
+  @@map("time_events")
+}
+
+enum TimeEventType {
+  IN
+  OUT
+}
+
+enum TimeEventSource {
+  TERMINAL
+  BIOMETRY
+  MANUAL
+}
+
+// 2. WFM
+model DemandForecast {
+  id            String   @id @default(uuid())
+  storeId       String   @map("store_id")
+  date          DateTime
+  interval      String
+  requiredStaff Int      @map("required_staff")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@index([storeId, date])
+  @@map("demand_forecasts")
+}
+
+model ShiftPlan {
+  id              String   @id @default(uuid())
+  storeId         String   @map("store_id")
+  date            DateTime
+  shift           String
+  positionId      String?  @map("position_id")
+  workScheduleId  String?  @map("work_schedule_id")
+  plannedCount    Int      @default(1) @map("planned_count")
+  actualCount     Int?     @map("actual_count")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  workSchedule WorkSchedule? @relation(fields: [workScheduleId], references: [id])
+
+  @@index([storeId, date])
+  @@map("shift_plans")
+}
+
+// 3. Биржа смен
+model OpenShift {
+  id             String          @id @default(uuid())
+  storeId        String          @map("store_id")
+  date           DateTime
+  shift          String
+  positionId     String?         @map("position_id")
+  workScheduleId String?         @map("work_schedule_id")
+  rate           Decimal?        @db.Decimal(18,2)
+  source         OpenShiftSource @default(INTERNAL)
+  status         OpenShiftStatus @default(OPEN)
+  createdAt      DateTime        @default(now()) @map("created_at")
+  updatedAt      DateTime        @updatedAt @map("updated_at")
+
+  workSchedule WorkSchedule? @relation(fields: [workScheduleId], references: [id])
+  responses    ShiftResponse[]
+
+  @@index([storeId, date])
+  @@map("open_shifts")
+}
+
+enum OpenShiftSource {
+  INTERNAL
+  EXTERNAL
+}
+
+enum OpenShiftStatus {
+  OPEN
+  FILLED
+  CANCELLED
+}
+
+model ShiftResponse {
+  id          String               @id @default(uuid())
+  openShiftId String               @map("open_shift_id")
+  employeeId  String               @map("employee_id")
+  status      ShiftResponseStatus  @default(OFFERED)
+  respondedAt DateTime?            @map("responded_at")
+  createdAt   DateTime             @default(now()) @map("created_at")
+
+  openShift OpenShift @relation(fields: [openShiftId], references: [id])
+  employee  Employee  @relation(fields: [employeeId], references: [id])
+
+  @@unique([openShiftId, employeeId])
+  @@map("shift_responses")
+}
+
+enum ShiftResponseStatus {
+  OFFERED
+  ACCEPTED
+  REJECTED
+}
+
+// 4. Моя смена (самозанятые)
+model GigWorker {
+  id         String  @id @default(uuid())
+  firstName  String  @map("first_name")
+  lastName   String  @map("last_name")
+  phone      String?
+  inn        String?
+  rating     Float?
+  isVerified Boolean @default(false) @map("is_verified")
+  isActive   Boolean @default(true) @map("is_active")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  offers GigOffer[]
+
+  @@map("gig_workers")
+}
+
+model GigOffer {
+  id         String          @id @default(uuid())
+  storeId    String          @map("store_id")
+  date       DateTime
+  positionId String?         @map("position_id")
+  startTime  DateTime        @map("start_time")
+  endTime    DateTime        @map("end_time")
+  rate       Decimal         @db.Decimal(18,2)
+  status     GigOfferStatus  @default(OPEN)
+  workerId   String?         @map("worker_id")
+  createdAt  DateTime        @default(now()) @map("created_at")
+  updatedAt  DateTime        @updatedAt @map("updated_at")
+
+  worker GigWorker? @relation(fields: [workerId], references: [id])
+
+  @@index([storeId, date])
+  @@map("gig_offers")
+}
+
+enum GigOfferStatus {
+  OPEN
+  ASSIGNED
+  COMPLETED
+  CANCELLED
+}
+
+// 5. Маркетплейс
+model MarketplaceOrder {
+  id         String              @id @default(uuid())
+  clientId   String              @map("client_id")
+  objectId   String?             @map("object_id")
+  specialty  String?
+  qty        Int
+  startDate  DateTime            @map("start_date")
+  endDate    DateTime            @map("end_date")
+  status     MarketplaceStatus   @default(NEW)
+  budget     Decimal?            @db.Decimal(18,2)
+  createdAt  DateTime            @default(now()) @map("created_at")
+
+  assignments MarketplaceAssignment[]
+
+  @@map("marketplace_orders")
+}
+
+enum MarketplaceStatus {
+  NEW
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+model MarketplaceAssignment {
+  id       String                     @id @default(uuid())
+  orderId  String                     @map("order_id")
+  workerId String?                    @map("worker_id")
+  agencyId String?                    @map("agency_id")
+  status   MarketplaceAssignmentStatus @default(PENDING)
+  rate     Decimal?                   @db.Decimal(18,2)
+  startDate DateTime                  @map("start_date")
+  endDate   DateTime                  @map("end_date")
+  createdAt DateTime                  @default(now()) @map("created_at")
+
+  order MarketplaceOrder @relation(fields: [orderId], references: [id])
+
+  @@map("marketplace_assignments")
+}
+
+enum MarketplaceAssignmentStatus {
+  PENDING
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+// 6. Табель и зарплата
+model TimeSheet {
+  id     String          @id @default(uuid())
+  month  Int
+  year   Int
+  status TimeSheetStatus @default(DRAFT)
+  createdAt DateTime     @default(now()) @map("created_at")
+  updatedAt DateTime     @updatedAt @map("updated_at")
+
+  rows TimeSheetRow[]
+
+  @@unique([month, year])
+  @@map("time_sheets")
+}
+
+enum TimeSheetStatus {
+  DRAFT
+  APPROVED
+  SENT_TO_1C
+}
+
+model TimeSheetRow {
+  id           String    @id @default(uuid())
+  timeSheetId  String    @map("time_sheet_id")
+  employeeId   String    @map("employee_id")
+  daysWorked   Float     @default(0) @map("days_worked")
+  hoursWorked  Float     @default(0) @map("hours_worked")
+  hoursNight   Float     @default(0) @map("hours_night")
+  hoursHoliday Float     @default(0) @map("hours_holiday")
+  absenceType  String?   @map("absence_type")
+
+  timeSheet TimeSheet @relation(fields: [timeSheetId], references: [id], onDelete: Cascade)
+  employee  Employee  @relation(fields: [employeeId], references: [id])
+
+  @@unique([timeSheetId, employeeId])
+  @@map("time_sheet_rows")
+}
+
+model Payroll {
+  id           String        @id @default(uuid())
+  employeeId   String        @map("employee_id")
+  month        Int
+  year         Int
+  baseSalary   Decimal       @map("base_salary") @db.Decimal(18,2)
+  bonuses      Decimal       @default(0) @db.Decimal(18,2)
+  deductions   Decimal       @default(0) @db.Decimal(18,2)
+  taxes        Decimal       @default(0) @db.Decimal(18,2)
+  netAmount    Decimal       @map("net_amount") @db.Decimal(18,2)
+  status       PayrollStatus @default(DRAFT)
+  onecGuid     String?       @map("onec_guid")
+  createdAt    DateTime      @default(now()) @map("created_at")
+  updatedAt    DateTime      @updatedAt @map("updated_at")
+
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@unique([employeeId, month, year])
+  @@map("payrolls")
+}
+
+enum PayrollStatus {
+  DRAFT
+  APPROVED
+  PAID
+  SENT_TO_1C
+}
+
+// ─── ANALYTICS MARTS ─────────────────────────────────────────────────────────
+
+model MartSalesDaily {
+  id           String   @id @default(uuid())
+  date         DateTime @db.Date
+  storeId      String?  @map("store_id")
+  productGroup String?  @map("product_group")
+  qty          Decimal  @db.Decimal(18,3)
+  revenue      Decimal  @db.Decimal(18,2)
+  cost         Decimal? @db.Decimal(18,2)
+  margin       Decimal? @db.Decimal(18,2)
+  refreshedAt  DateTime @default(now()) @map("refreshed_at")
+
+  @@unique([date, storeId, productGroup])
+  @@index([date])
+  @@map("mart_sales_daily")
+}
+
+model MartStockSnapshot {
+  id          String   @id @default(uuid())
+  date        DateTime @db.Date
+  storeId     String   @map("store_id")
+  productId   String   @map("product_id")
+  qty         Decimal  @db.Decimal(18,3)
+  value       Decimal? @db.Decimal(18,2)
+  refreshedAt DateTime @default(now()) @map("refreshed_at")
+
+  @@unique([date, storeId, productId])
+  @@index([date])
+  @@map("mart_stock_snapshot")
+}
+
+model MartPayroll {
+  id          String   @id @default(uuid())
+  period      String
+  department  String?
+  hours       Float
+  fot         Decimal  @db.Decimal(18,2)
+  refreshedAt DateTime @default(now()) @map("refreshed_at")
+
+  @@unique([period, department])
+  @@map("mart_payroll")
+}
+
+model MartShiftCoverage {
+  id          String   @id @default(uuid())
+  date        DateTime @db.Date
+  storeId     String   @map("store_id")
+  required    Int
+  planned     Int
+  actual      Int
+  refreshedAt DateTime @default(now()) @map("refreshed_at")
+
+  @@unique([date, storeId])
+  @@index([date])
+  @@map("mart_shift_coverage")
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// HRMS & PAYROLL (Казахстан) — Этап 1: кадры + расчёт ЗП
+// Деньги — Decimal(15,2). Все таблицы привязаны к организации (tenant).
+// ════════════════════════════════════════════════════════════════════════════
+
+// Учётная политика компании (feature flags + реквизиты для банка/проводок)
+model HrPolicy {
+  organizationId         String  @id @map("organization_id")
+  companyName            String  @map("company_name")
+  companyBin             String? @map("company_bin")
+  companyIban            String? @map("company_iban")
+  companyBic             String? @map("company_bic")
+  companyBankName        String? @map("company_bank_name")
+  chiefName              String? @map("chief_name")
+  accountantName         String? @map("accountant_name")
+  controlStaffingTable   Boolean @default(true) @map("control_staffing_table")
+  blockOnStaffingOverrun Boolean @default(false) @map("block_on_staffing_overrun")
+  useGradingSystem       Boolean @default(true) @map("use_grading_system")
+  syncWithEsutdAutomated Boolean @default(false) @map("sync_with_esutd_automated")
+  salaryKnp              String  @default("332") @map("salary_knp")
+  // Счета плана счетов РК для сводных проводок (сверить с главбухом)
+  accounts               Json?
+  createdAt              DateTime @default(now()) @map("created_at")
+  updatedAt              DateTime @updatedAt @map("updated_at")
+
+  @@map("tenant_hr_policies")
+}
+
+// Налоговые параметры по году (МРП, МЗП, ставки, пределы). Меняются без кода.
+model HrTaxRule {
+  id             String   @id @default(uuid())
+  organizationId String?  @map("organization_id") // null = общий для всех
+  year           Int
+  params         Json     // см. apps/api/src/modules/hrms/tax/kz-tax.rules.ts
+  note           String?
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@unique([organizationId, year])
+  @@map("hr_tax_rules")
+}
+
+// Производственный календарь: праздники и переносы
+model HrCalendarDay {
+  id             String   @id @default(uuid())
+  organizationId String?  @map("organization_id")
+  date           DateTime @db.Date
+  kind           String   // HOLIDAY (выходной) | WORKDAY (рабочий перенос)
+  name           String?
+
+  @@unique([organizationId, date])
+  @@map("hr_calendar_days")
+}
+
+// Физические лица
+model Individual {
+  id                     String    @id @default(uuid())
+  organizationId         String    @map("organization_id")
+  iin                    String    @db.VarChar(12)
+  lastName               String    @map("last_name")
+  firstName              String    @map("first_name")
+  middleName             String?   @map("middle_name")
+  birthDate              DateTime  @map("birth_date") @db.Date
+  gender                 String    // MALE | FEMALE
+  isResident             Boolean   @default(true) @map("is_resident")
+  citizenshipCountryCode String    @default("KAZ") @map("citizenship_country_code") @db.VarChar(3)
+  phone                  String?
+  // Льготы/исключения по налогам
+  isPensioner            Boolean   @default(false) @map("is_pensioner")
+  disabilityGroup        Int?      @map("disability_group")
+  disabilityIndefinite   Boolean   @default(false) @map("disability_indefinite") // инвалидность установлена бессрочно (СК ст. 248)
+  opvByApplication       Boolean   @default(false) @map("opv_by_application")   // инвалид I–II бессрочно, ОПВ по заявлению
+  fullTimeStudent        Boolean   @default(false) @map("full_time_student")    // очное обучение: ВОСМС/ООСМС не платятся (закон об ОСМС ст. 26)
+  createdAt              DateTime  @default(now()) @map("created_at")
+  updatedAt              DateTime  @updatedAt @map("updated_at")
+
+  contracts HrContract[]
+
+  @@unique([organizationId, iin])
+  @@map("individuals")
+}
+
+// Справочник грейдов
+model SalaryGrade {
+  id             String   @id @default(uuid())
+  organizationId String   @map("organization_id")
+  gradeLevel     String   @map("grade_level")
+  minSalary      Decimal  @map("min_salary") @db.Decimal(15, 2)
+  maxSalary      Decimal  @map("max_salary") @db.Decimal(15, 2)
+  validFrom      DateTime @map("valid_from") @db.Date
+  validTo        DateTime @default(dbgenerated("'9999-12-31'::date")) @map("valid_to") @db.Date
+
+  rateValues GradeRateValue[]
+  slots      StaffingSlot[]
+
+  @@index([organizationId, gradeLevel])
+  @@map("salary_grades")
+}
+
+// Типы ставок (модификатор оклада под ритейл)
+model RateType {
+  id             String @id @default(uuid())
+  organizationId String @map("organization_id")
+  code           String
+  name           String
+  rateUnit       String @default("MONTHLY") @map("rate_unit") // MONTHLY | HOURLY
+
+  rateValues GradeRateValue[]
+  history    EmploymentHistory[]
+
+  @@unique([organizationId, code])
+  @@map("rate_types")
+}
+
+// Матрица Грейд × Тип ставки → оклад
+model GradeRateValue {
+  id         String   @id @default(uuid())
+  gradeId    String   @map("grade_id")
+  rateTypeId String   @map("rate_type_id")
+  value      Decimal  @db.Decimal(15, 2)
+  validFrom  DateTime @map("valid_from") @db.Date
+  validTo    DateTime @default(dbgenerated("'9999-12-31'::date")) @map("valid_to") @db.Date
+
+  grade    SalaryGrade @relation(fields: [gradeId], references: [id], onDelete: Restrict)
+  rateType RateType    @relation(fields: [rateTypeId], references: [id], onDelete: Restrict)
+
+  @@index([gradeId, rateTypeId])
+  @@map("grade_rate_values")
+}
+
+// Штатное расписание (слоты)
+model StaffingSlot {
+  id             String   @id @default(uuid())
+  organizationId String   @map("organization_id")
+  departmentId   String   @map("department_id")
+  positionId     String   @map("position_id")
+  nkzCode        String   @map("nkz_code") @db.VarChar(6)
+  gradeId        String?  @map("grade_id")
+  quantity       Decimal  @default(1) @db.Decimal(5, 2)
+  validFrom      DateTime @map("valid_from") @db.Date
+  validTo        DateTime @default(dbgenerated("'9999-12-31'::date")) @map("valid_to") @db.Date
+
+  grade SalaryGrade? @relation(fields: [gradeId], references: [id])
+
+  @@index([organizationId, departmentId, positionId])
+  @@map("staffing_table")
+}
+
+// Трудовые договоры
+model HrContract {
+  id                    String    @id @default(uuid())
+  organizationId        String    @map("organization_id")
+  individualId          String    @map("individual_id")
+  employeeId            String?   @map("employee_id") // связь с существующим Employee (табель, отметки)
+  contractNumber        String    @map("contract_number")
+  contractDate          DateTime  @map("contract_date") @db.Date
+  hireDate              DateTime  @map("hire_date") @db.Date
+  fireDate              DateTime? @map("fire_date") @db.Date
+  esutdId               String?   @map("esutd_id")
+  status                String    @default("ACTIVE") // ACTIVE | SUSPENDED | TERMINATED
+  isMainJob             Boolean   @default(true) @map("is_main_job")
+  applyStandardDeduction Boolean  @default(true) @map("apply_standard_deduction") // заявление на вычет 30 МРП
+  vacationDaysPerYear   Int       @default(24) @map("vacation_days_per_year")
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+
+  individual   Individual          @relation(fields: [individualId], references: [id], onDelete: Restrict)
+  employee     Employee?           @relation(fields: [employeeId], references: [id])
+  history      EmploymentHistory[]
+  bankDetails  EmployeeBankDetail[]
+  accruals     OneTimeAccrual[]
+  results      PayrollResult[]
+  terminations EmployeeTermination[]
+
+  @@unique([organizationId, contractNumber])
+  @@map("employment_contracts")
+}
+
+// Главный темпоральный (bitemporal) регистр кадровой истории
+model EmploymentHistory {
+  id                  String    @id @default(uuid())
+  contractId          String    @map("contract_id")
+  validFrom           DateTime  @map("valid_from")
+  validTo             DateTime  @default(dbgenerated("'9999-12-31 23:59:59'::timestamp")) @map("valid_to")
+  systemCreatedAt     DateTime  @default(now()) @map("system_created_at")
+  systemInvalidatedAt DateTime? @map("system_invalidated_at")
+  departmentId        String    @map("department_id")
+  positionId          String    @map("position_id")
+  nkzCode             String?   @map("nkz_code") @db.VarChar(6)
+  gradeId             String?   @map("grade_id")
+  rateTypeId          String?   @map("rate_type_id")
+  scheduleId          String?   @map("schedule_id")
+  rateUnit            String    @default("MONTHLY") @map("rate_unit") // MONTHLY | HOURLY
+  employmentRate      Decimal   @default(1) @map("employment_rate") @db.Decimal(4, 2) // доля ставки
+  calculatedSalary    Decimal   @map("calculated_salary") @db.Decimal(15, 2)
+  eventType           String    @map("event_type") // HIRE | TRANSFER | SALARY_CHANGE | TERMINATION
+  createdBy           String?   @map("created_by")
+  comment             String?
+
+  contract HrContract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  rateType RateType?  @relation(fields: [rateTypeId], references: [id])
+
+  @@index([contractId, validFrom])
+  @@index([contractId, systemInvalidatedAt])
+  @@map("employment_history")
+}
+
+// Банковские реквизиты сотрудников
+model EmployeeBankDetail {
+  id         String   @id @default(uuid())
+  contractId String   @map("contract_id")
+  iban       String   @unique @db.VarChar(20)
+  bic        String   @db.VarChar(11)
+  bankName   String   @map("bank_name")
+  isActive   Boolean  @default(true) @map("is_active")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  contract HrContract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+
+  @@map("employee_bank_details")
+}
+
+// Разовые начисления/удержания
+model OneTimeAccrual {
+  id          String   @id @default(uuid())
+  contractId  String   @map("contract_id")
+  period      DateTime @db.Date // YYYY-MM-01
+  accrualType String   @map("accrual_type") // KPI_BONUS | COMPENSATION | INVENTORY_PENALTY
+  amount      Decimal  @db.Decimal(15, 2)
+  description String?
+  createdBy   String?  @map("created_by")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  contract HrContract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+
+  @@index([contractId, period])
+  @@map("one_time_accruals")
+}
+
+// Период расчёта ЗП (закрытие месяца)
+model PayrollPeriod {
+  id             String    @id @default(uuid())
+  organizationId String    @map("organization_id")
+  period         DateTime  @db.Date // YYYY-MM-01
+  status         String    @default("OPEN") // OPEN | CALCULATED | CLOSED
+  calculatedAt   DateTime? @map("calculated_at")
+  closedAt       DateTime? @map("closed_at")
+  closedBy       String?   @map("closed_by")
+  totals         Json?
+
+  results PayrollResult[]
+  journal JournalEntry[]
+
+  @@unique([organizationId, period])
+  @@map("payroll_periods")
+}
+
+// Результат расчёта ЗП по договору за месяц
+model PayrollResult {
+  id               String   @id @default(uuid())
+  payrollPeriodId  String   @map("payroll_period_id")
+  contractId       String   @map("contract_id")
+  period           DateTime @db.Date
+  departmentId     String?  @map("department_id")
+  normDays         Int      @default(0) @map("norm_days")
+  workedDays       Decimal  @default(0) @map("worked_days") @db.Decimal(6, 2)
+  workedHours      Decimal  @default(0) @map("worked_hours") @db.Decimal(8, 2)
+  baseAccrued      Decimal  @map("base_accrued") @db.Decimal(15, 2)
+  bonusAccrued     Decimal  @default(0) @map("bonus_accrued") @db.Decimal(15, 2)
+  totalGrossSalary Decimal  @map("total_gross_salary") @db.Decimal(15, 2)
+  opvAmount        Decimal  @map("opv_amount") @db.Decimal(15, 2)
+  vosmsAmount      Decimal  @map("vosms_amount") @db.Decimal(15, 2)
+  standardDeduction Decimal @default(0) @map("standard_deduction") @db.Decimal(15, 2)
+  ipnBase          Decimal  @default(0) @map("ipn_base") @db.Decimal(15, 2)
+  ipnAmount        Decimal  @map("ipn_amount") @db.Decimal(15, 2)
+  soAmount         Decimal  @map("so_amount") @db.Decimal(15, 2)
+  snAmount         Decimal  @map("sn_amount") @db.Decimal(15, 2)
+  oosmsAmount      Decimal  @map("oosms_amount") @db.Decimal(15, 2)
+  opvrAmount       Decimal  @map("opvr_amount") @db.Decimal(15, 2)
+  otherDeductions  Decimal  @default(0) @map("other_deductions") @db.Decimal(15, 2)
+  netSalaryToPay   Decimal  @map("net_salary_to_pay") @db.Decimal(15, 2)
+  details          Json?    // расшифровка: сегменты истории, ставки, пределы
+  isClosed         Boolean  @default(false) @map("is_closed")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  payrollPeriod PayrollPeriod @relation(fields: [payrollPeriodId], references: [id], onDelete: Cascade)
+  contract      HrContract    @relation(fields: [contractId], references: [id])
+
+  @@unique([payrollPeriodId, contractId])
+  @@index([contractId, period])
+  @@map("payroll_results")
+}
+
+// Расчёт при увольнении (день в день + компенсация отпуска)
+model EmployeeTermination {
+  id                         String   @id @default(uuid())
+  contractId                 String   @map("contract_id")
+  terminationDate            DateTime @map("termination_date") @db.Date
+  reasonCode                 String   @map("reason_code")
+  unusedVacationDays         Decimal  @map("unused_vacation_days") @db.Decimal(6, 2)
+  calculatedAvgDailyWage     Decimal  @map("calculated_avg_daily_wage") @db.Decimal(15, 2)
+  vacationCompensationAmount Decimal  @map("vacation_compensation_amount") @db.Decimal(15, 2)
+  earnedSalaryAmount         Decimal  @map("earned_salary_amount") @db.Decimal(15, 2)
+  details                    Json?
+  status                     String   @default("CALCULATED")
+  createdAt                  DateTime @default(now()) @map("created_at")
+
+  contract HrContract @relation(fields: [contractId], references: [id])
+
+  @@map("employee_terminations")
+}
+
+// Сводные бухгалтерские проводки (агрегация до подразделения)
+model JournalEntry {
+  id              String   @id @default(uuid())
+  payrollPeriodId String   @map("payroll_period_id")
+  period          DateTime @db.Date
+  departmentId    String?  @map("department_id")
+  description     String
+  isSynced        Boolean  @default(false) @map("is_synced")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  payrollPeriod PayrollPeriod      @relation(fields: [payrollPeriodId], references: [id], onDelete: Cascade)
+  lines         JournalEntryLine[]
+
+  @@map("journal_entries")
+}
+
+model JournalEntryLine {
+  id            String  @id @default(uuid())
+  entryId       String  @map("entry_id")
+  debitAccount  String  @map("debit_account")
+  creditAccount String  @map("credit_account")
+  amount        Decimal @db.Decimal(15, 2)
+  description   String?
+
+  entry JournalEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+
+  @@map("journal_entry_lines")
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// БУХГАЛТЕРИЯ (VPNet Accounting внутри FlowPOS) — Этап 1: ядро
+// Инварианты: docs/accounting/INVARIANTS.md. Деньги — Decimal(18,2), без float.
+// ════════════════════════════════════════════════════════════════════════════
+
+// Доступ пользователя к организации (несколько организаций, бухгалтерская фирма)
+model OrgMembership {
+  id             String   @id @default(uuid())
+  userId         String   @map("user_id")
+  organizationId String   @map("organization_id")
+  role           String   // owner|admin|chief_accountant|accountant|hr|cashier|storekeeper|manager|auditor
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@unique([userId, organizationId])
+  @@index([organizationId])
+  @@map("org_memberships")
+}
+
+// Учётная политика с датой начала действия
+model AccPolicy {
+  id                 String   @id @default(uuid())
+  organizationId     String   @map("organization_id")
+  validFrom          DateTime @map("valid_from") @db.Date
+  vatPayer           Boolean  @default(false) @map("vat_payer")
+  taxRegime          String   @default("GENERAL") @map("tax_regime") // GENERAL | SIMPLIFIED | RETAIL_TAX | OTHER
+  inventoryMethod    String   @default("FIFO") @map("inventory_method") // FIFO | AVERAGE
+  allowNegativeStock Boolean  @default(false) @map("allow_negative_stock")
+  baseCurrency       String   @default("KZT") @map("base_currency")
+  chartId            String?  @map("chart_id")
+  params             Json?
+  createdBy          String?  @map("created_by")
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  @@unique([organizationId, validFrom])
+  @@map("acc_policies")
+}
+
+// Версия плана счетов
+model AccChart {
+  id        String    @id @default(uuid())
+  code      String    // KZ-TYPICAL
+  version   Int
+  name      String
+  validFrom DateTime  @map("valid_from") @db.Date
+  validTo   DateTime? @map("valid_to") @db.Date
+  source    String?
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  accounts AccAccount[]
+
+  @@unique([code, version])
+  @@map("acc_charts")
+}
+
+// Счёт / субсчёт. organizationId = null — типовой счёт плана, иначе субсчёт организации
+model AccAccount {
+  id             String   @id @default(uuid())
+  chartId        String   @map("chart_id")
+  organizationId String?  @map("organization_id")
+  code           String
+  name           String
+  nameKk         String?  @map("name_kk")
+  parentId       String?  @map("parent_id")
+  kind           String   @default("AP") // A (активный) | P (пассивный) | AP (активно-пассивный)
+  isGroup        Boolean  @default(false) @map("is_group") // по группе проводки запрещены
+  isOffBalance   Boolean  @default(false) @map("is_off_balance")
+  isQuantitative Boolean  @default(false) @map("is_quantitative")
+  isCurrency     Boolean  @default(false) @map("is_currency")
+  dims           String[] @default([]) // аналитики по порядку: COUNTERPARTY, CONTRACT, PRODUCT, STORE, ...
+  requiredDims   String[] @default([]) @map("required_dims")
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  chart    AccChart     @relation(fields: [chartId], references: [id])
+  parent   AccAccount?  @relation("AccTree", fields: [parentId], references: [id])
+  children AccAccount[] @relation("AccTree")
+  postings AccPosting[]
+
+  @@unique([chartId, organizationId, code])
+  @@index([chartId, code])
+  @@map("acc_accounts")
+}
+
+// Бухгалтерский документ (ручная операция и будущие документы учёта)
+model AccDocument {
+  id             String    @id @default(uuid())
+  organizationId String    @map("organization_id")
+  docType        String    @map("doc_type") // MANUAL_OPERATION | OPENING_BALANCE | STORNO | ...
+  number         String
+  date           DateTime  // дата операции
+  status         String    @default("DRAFT") // DRAFT | POSTED | CANCELLED
+  version        Int       @default(1)
+  currency       String    @default("KZT")
+  amount         Decimal   @default(0) @db.Decimal(18, 2)
+  comment        String?
+  body           Json      // содержимое документа (строки и реквизиты по типу)
+  baseDocumentId String?   @map("base_document_id") // создан на основании
+  reversalOfId   String?   @map("reversal_of_id")   // сторно документа
+  authorId       String?   @map("author_id")
+  updatedById    String?   @map("updated_by_id")
+  postedAt       DateTime? @map("posted_at")
+  externalSource String?   @map("external_source") // FLOWPOS | 1C | MOYSKLAD | IMPORT
+  externalId     String?   @map("external_id")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  versions AccDocumentVersion[]
+
+  @@unique([organizationId, docType, number])
+  @@unique([organizationId, externalSource, externalId])
+  @@index([organizationId, date])
+  @@index([organizationId, status])
+  @@map("acc_documents")
+}
+
+// История версий документа (неизменяемая)
+model AccDocumentVersion {
+  id          String   @id @default(uuid())
+  documentId  String   @map("document_id")
+  version     Int
+  action      String   // CREATE | UPDATE | POST | UNPOST | CANCEL | RESTORE
+  snapshot    Json
+  changedById String?  @map("changed_by_id")
+  reason      String?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  document AccDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([documentId, version])
+  @@map("acc_document_versions")
+}
+
+// Регистратор движений: одна активная запись на источник (частичный уникальный индекс в SQL)
+model AccEntry {
+  id             String    @id @default(uuid())
+  organizationId String    @map("organization_id")
+  sourceType     String    @map("source_type") // ACC_DOCUMENT | TRADE_DOCUMENT | POS_SHIFT | PAYROLL ...
+  sourceId       String    @map("source_id")
+  sourceVersion  Int       @map("source_version")
+  ruleCode       String    @map("rule_code")
+  ruleVersion    String    @map("rule_version")
+  date           DateTime
+  status         String    @default("ACTIVE") // ACTIVE | SUPERSEDED | CANCELLED
+  createdById    String?   @map("created_by_id")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  closedAt       DateTime? @map("closed_at")
+
+  postings AccPosting[]
+
+  @@index([organizationId, sourceType, sourceId])
+  @@index([organizationId, date])
+  @@map("acc_entries")
+}
+
+// Проводка: строка двойной записи по стороне (D/C) в разрезе учёта (BU — бух, NU — налоговый)
+model AccPosting {
+  id             String   @id @default(uuid())
+  entryId        String   @map("entry_id")
+  organizationId String   @map("organization_id")
+  date           DateTime
+  isActive       Boolean  @default(true) @map("is_active")
+  ledger         String   @default("BU") // BU | NU
+  lineNo         Int      @map("line_no")
+  side           String   // D | C
+  accountId      String   @map("account_id")
+  amount         Decimal  @db.Decimal(18, 2) // в тенге
+  currency       String?
+  currencyAmount Decimal? @map("currency_amount") @db.Decimal(18, 2)
+  quantity       Decimal? @db.Decimal(18, 3)
+  counterpartyId String?  @map("counterparty_id")
+  contractId     String?  @map("contract_id")
+  productId      String?  @map("product_id")
+  storeId        String?  @map("store_id")
+  employeeId     String?  @map("employee_id")
+  departmentId   String?  @map("department_id")
+  bankAccountId  String?  @map("bank_account_id")
+  cashboxId      String?  @map("cashbox_id")
+  projectId      String?  @map("project_id")
+  itemId         String?  @map("item_id") // статья доходов/расходов/ДДС
+  settlementDocId String? @map("settlement_doc_id")
+  memo           String?
+
+  entry   AccEntry   @relation(fields: [entryId], references: [id], onDelete: Restrict)
+  account AccAccount @relation(fields: [accountId], references: [id])
+
+  @@index([organizationId, accountId, date])
+  @@index([organizationId, date])
+  @@index([entryId])
+  @@map("acc_postings")
+}
+
+// Блокировка периода: всё до lockedUntil включительно закрыто
+model AccPeriodLock {
+  organizationId String   @id @map("organization_id")
+  lockedUntil    DateTime @map("locked_until") @db.Date
+  updatedById    String?  @map("updated_by_id")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@map("acc_period_locks")
+}
+
+// Нумерация документов
+model AccNumberSequence {
+  organizationId String @map("organization_id")
+  docType        String @map("doc_type")
+  year           Int
+  last           Int    @default(0)
+
+  @@id([organizationId, docType, year])
+  @@map("acc_number_sequences")
+}
+
+// Идемпотентность POST-запросов (заголовок Idempotency-Key)
+model IdempotencyRecord {
+  organizationId String   @map("organization_id")
+  key            String
+  method         String
+  path           String
+  requestHash    String   @map("request_hash")
+  statusCode     Int?     @map("status_code")
+  response       Json?
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@id([organizationId, key])
+  @@map("idempotency_records")
+}
+
+// ─── Справочники учёта ──────────────────────────────────────────────────────
+model Currency {
+  code        String  @id // ISO 4217: KZT, USD, EUR, RUB, CNY
+  numericCode String  @map("numeric_code")
+  name        String
+  nameKk      String? @map("name_kk")
+  decimals    Int     @default(2)
+
+  rates CurrencyRate[]
+
+  @@map("currencies")
+}
+
+model CurrencyRate {
+  id           String   @id @default(uuid())
+  currencyCode String   @map("currency_code")
+  date         DateTime @db.Date
+  rate         Decimal  @db.Decimal(18, 6) // тенге за multiplier единиц
+  multiplier   Int      @default(1)
+  source       String   @default("MANUAL") // MANUAL | NBRK
+
+  currency Currency @relation(fields: [currencyCode], references: [code])
+
+  @@unique([currencyCode, date])
+  @@map("currency_rates")
+}
+
+model OrgBankAccount {
+  id             String   @id @default(uuid())
+  organizationId String   @map("organization_id")
+  name           String
+  iban           String   @db.VarChar(20)
+  bic            String   @db.VarChar(11)
+  bankName       String   @map("bank_name")
+  currency       String   @default("KZT")
+  accountCode    String   @default("1030") @map("account_code")
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@unique([organizationId, iban])
+  @@map("org_bank_accounts")
+}
+
+model Cashbox {
+  id             String   @id @default(uuid())
+  organizationId String   @map("organization_id")
+  name           String
+  currency       String   @default("KZT")
+  storeId        String?  @map("store_id")
+  accountCode    String   @default("1010") @map("account_code")
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@map("cashboxes")
+}
+
+// Статьи: доходов, расходов, движения денежных средств
+model AccItem {
+  id             String  @id @default(uuid())
+  organizationId String  @map("organization_id")
+  kind           String  // INCOME | EXPENSE | CASHFLOW
+  code           String
+  name           String
+  nameKk         String? @map("name_kk")
+  isActive       Boolean @default(true) @map("is_active")
+
+  @@unique([organizationId, kind, code])
+  @@map("acc_items")
+}
+
+model Project {
+  id             String  @id @default(uuid())
+  organizationId String  @map("organization_id")
+  code           String
+  name           String
+  isActive       Boolean @default(true) @map("is_active")
+
+  @@unique([organizationId, code])
+  @@map("projects")
+}
+
+// Ставки НДС с периодами действия
+model VatRate {
+  id        String    @id @default(uuid())
+  code      String    // STANDARD | ZERO | EXEMPT
+  rate      Decimal   @db.Decimal(5, 2)
+  validFrom DateTime  @map("valid_from") @db.Date
+  validTo   DateTime? @map("valid_to") @db.Date
+  source    String?
+  verified  Boolean   @default(false)
+
+  @@unique([code, validFrom])
+  @@map("vat_rates")
+}
+
+// ─── Бухгалтерия, этап 2: автопилот, склад и себестоимость ─────────────────
+
+// Складское движение, порождённое проведением (основа расчёта себестоимости FIFO/средняя)
+model AccStockMove {
+  id             String   @id @default(uuid())
+  organizationId String   @map("organization_id")
+  entryId        String   @map("entry_id")      // запись движений документа-источника
+  sourceType     String   @map("source_type")
+  sourceId       String   @map("source_id")
+  lineNo         Int      @map("line_no")
+  date           DateTime
+  isActive       Boolean  @default(true) @map("is_active")
+  productId      String   @map("product_id")
+  storeId        String   @map("store_id")
+  account        String   // счёт запасов: 1310/1320/1330/1350
+  direction      String   // IN | OUT
+  kind           String   // PURCHASE | ENTER | SALES_RETURN | OPENING | MOVE_IN | SALE | LOSS | PURCHASE_RETURN | MOVE_OUT
+  quantity       Decimal  @db.Decimal(18, 3)
+  knownCost      Decimal? @map("known_cost") @db.Decimal(18, 2) // стоимость прихода, если известна
+  costAccount    String?  @map("cost_account") // куда списывается себестоимость расхода (7010, 7170, …)
+  pairKey        String?  @map("pair_key")     // связь MOVE_OUT ↔ MOVE_IN
+  meta           Json?
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@index([organizationId, productId, date])
+  @@index([entryId])
+  @@index([organizationId, sourceType, sourceId])
+  @@map("acc_stock_moves")
+}
+
+// Проблемы автопилота: документ не удалось отразить в учёте (что и почему)
+model AccAutopilotIssue {
+  id             String    @id @default(uuid())
+  organizationId String?   @map("organization_id")
+  sourceType     String    @map("source_type")
+  sourceId       String    @map("source_id")
+  code           String
+  message        String
+  fix            String?
+  attempts       Int       @default(1)
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+  resolvedAt     DateTime? @map("resolved_at")
+
+  @@unique([sourceType, sourceId])
+  @@index([organizationId, resolvedAt])
+  @@map("acc_autopilot_issues")
+}
+
+// Курсор фонового сверщика автопилота
+model AccAutopilotCursor {
+  id        String   @id // 'trade-documents'
+  updatedAt DateTime @map("updated_at")
+  lastId    String?  @map("last_id")
+
+  @@map("acc_autopilot_cursors")
+}
+
+// Импорт банковской выписки: строки с защитой от повторной загрузки
+model AccBankStatementLine {
+  id             String    @id @default(uuid())
+  organizationId String    @map("organization_id")
+  bankAccountId  String    @map("bank_account_id")
+  batchId        String    @map("batch_id")
+  hash           String    // дата+сумма+номер+контрагент+назначение
+  date           DateTime  @db.Date
+  direction      String    // IN | OUT
+  amount         Decimal   @db.Decimal(18, 2)
+  docNumber      String?   @map("doc_number")
+  counterpartyName String? @map("counterparty_name")
+  counterpartyBin  String? @map("counterparty_bin")
+  counterpartyId String?   @map("counterparty_id")
+  purpose        String?
+  knp            String?
+  status         String    @default("NEW") // NEW | DOCUMENT_CREATED | SKIPPED
+  documentId     String?   @map("document_id")
+  raw            Json?
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  @@unique([organizationId, bankAccountId, hash])
+  @@index([organizationId, batchId])
+  @@map("acc_bank_statement_lines")
+}
+
+// ─── ЭСФ (ИС ЭСФ КГД МФ РК, InvoiceV2, SOAP api1) ──────────────────────────
+
+/// Настройки интеграции с ИС ЭСФ для организации.
+model EsfSettings {
+  organizationId      String    @id @map("organization_id")
+  environment         String    @default("TEST") // TEST (test3.esf.kgd.gov.kz) | PROD (esf.gov.kz)
+  signerIin           String?   @map("signer_iin")           // ИИН владельца ЭЦП, от имени которого открывается сессия
+  operatorFullname    String?   @map("operator_fullname")    // ФИО оператора (поле operatorFullname)
+  signatureType       String    @default("COMPANY") @map("signature_type") // COMPANY | OPERATOR
+  vatRegistrationDate DateTime? @map("vat_registration_date") @db.Date // B 9 (дата постановки на учёт по НДС)
+  transportTypeCode   String?   @map("transport_type_code")  // E 29 «Способ отправления» (классификатор КТС № 378, прил. 3)
+  defaultGoodsOrigin  String?   @map("default_goods_origin") // G 2 для товаров без своего признака (1–5); услуги всегда «6»
+  autoPrepare         Boolean   @default(true) @map("auto_prepare") // готовить ЭСФ по проведённым реализациям
+  inboundLastEventAt  DateTime? @map("inbound_last_event_at")
+  inboundLastId       BigInt?   @map("inbound_last_id")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+
+  @@map("esf_settings")
+}
+
+/// Сессия ИС ЭСФ (открыта подписанным тикетом). Секретов не содержит: только sessionId.
+model EsfSession {
+  id             String    @id @default(uuid())
+  organizationId String    @map("organization_id")
+  environment    String
+  sessionId      String    @map("session_id")
+  iin            String
+  tin            String
+  openedBy       String?   @map("opened_by")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  closedAt       DateTime? @map("closed_at")
+
+  @@index([organizationId, environment, closedAt])
+  @@map("esf_sessions")
+}
+
+/// ЭСФ: исходящие (из проведённых документов бухгалтерии) и входящие (загружены из ИС ЭСФ).
+model EsfInvoice {
+  id                 String    @id @default(uuid())
+  organizationId     String    @map("organization_id")
+  environment        String    @default("TEST")
+  direction          String    // OUTBOUND | INBOUND
+  sourceDocId        String?   @map("source_doc_id")       // documents.id (реализация/поступление)
+  invoiceType        String    @default("ORDINARY_INVOICE") @map("invoice_type") // ORDINARY_INVOICE | FIXED_INVOICE | ADDITIONAL_INVOICE
+  relatedInvoiceId   String?   @map("related_invoice_id")
+  num                String
+  date               DateTime  @db.Date
+  turnoverDate       DateTime  @map("turnover_date") @db.Date
+  sellerTin          String?   @map("seller_tin")
+  sellerName         String?   @map("seller_name")
+  customerTin        String?   @map("customer_tin")
+  customerName       String?   @map("customer_name")
+  counterpartyId     String?   @map("counterparty_id")
+  currency           String    @default("KZT")
+  totalWithoutTax    Decimal   @default(0) @map("total_without_tax") @db.Decimal(18, 2)
+  totalNds           Decimal   @default(0) @map("total_nds") @db.Decimal(18, 2)
+  totalWithTax       Decimal   @default(0) @map("total_with_tax") @db.Decimal(18, 2)
+  /// Локальный статус: READY (сформирован, ждёт подписи) | SENT (принят в очередь ИС ЭСФ) | REJECTED (ФЛК) | далее — статус ИС ЭСФ
+  status             String    @default("READY")
+  esfStatus          String?   @map("esf_status")          // статус из ИС ЭСФ (InvoiceStatus)
+  esfId              BigInt?   @map("esf_id")
+  registrationNumber String?   @map("registration_number")
+  body               String                                  // XML ровно в том виде, в каком подписан/получен
+  bodyHash           String    @map("body_hash")
+  signature          String?
+  certificate        String?
+  errors             Json?
+  cancelReason       String?   @map("cancel_reason")
+  outdated           Boolean   @default(false)              // документ-основание изменён/отменён после формирования
+  sentBy             String?   @map("sent_by")
+  sentAt             DateTime? @map("sent_at")
+  lastUpdateAt       DateTime? @map("last_update_at")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+
+  @@unique([organizationId, environment, direction, num, date])
+  @@unique([organizationId, environment, direction, esfId])
+  @@index([organizationId, direction, status])
+  @@index([sourceDocId])
+  @@map("esf_invoices")
+}
+
+/// Закрытие месяца мастером: итоговые показатели на момент закрытия (для сверки воспроизводимости).
+model AccPeriodClose {
+  id             String    @id @default(uuid())
+  organizationId String    @map("organization_id")
+  period         String    // YYYY-MM
+  status         String    // CLOSED | REOPENED
+  summary        Json      // ОСВ, прибыль, склад, деньги, переоценка, финрезультат, хэш закрывающих проводок
+  closedBy       String?   @map("closed_by")
+  closedAt       DateTime  @default(now()) @map("closed_at")
+  reopenedBy     String?   @map("reopened_by")
+  reopenedAt     DateTime? @map("reopened_at")
+  reopenReason   String?   @map("reopen_reason")
+
+  @@index([organizationId, period])
+  @@map("acc_period_closes")
+}

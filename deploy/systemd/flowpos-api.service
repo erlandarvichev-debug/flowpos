@@ -1,0 +1,24 @@
+[Unit]
+Description=FlowPOS API (NestJS)
+After=network.target postgresql.service redis-server.service
+Wants=postgresql.service redis-server.service
+
+[Service]
+Type=simple
+User=flowpos
+Group=flowpos
+WorkingDirectory=/opt/flowpos/current/apps/api
+EnvironmentFile=/opt/flowpos/shared/api.env
+ExecStart=/usr/bin/node dist/main.js
+Restart=always
+RestartSec=5
+# Изоляция
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/flowpos/shared
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
