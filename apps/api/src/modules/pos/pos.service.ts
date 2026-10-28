@@ -1,6 +1,15 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { v4 as uuidv4 } from 'uuid';
+import * as crypto from 'crypto';
 
+/**
+ * FP-002: Atomic POS Sale Service
+ * One Prisma transaction per sale:
+ * - Insert sale, lines, payments, recovery job
+ * - All succeed or all rollback
+ * - Idempotent: operation_id UNIQUE
+ */
 @Injectable()
 export class PosService {
   constructor(private prisma: PrismaService) {}
@@ -152,5 +161,172 @@ export class PosService {
           : undefined,
       },
     });
+  }
+}
+
+  /**
+   * FP-002: Atomic sale command
+   * One transaction: BEGIN → INSERT sale/lines/payments/recovery → COMMIT
+   * 
+   * Contract:
+   * - operation_id UNIQUE: same operation → same result (idempotent)
+   * - All inserts succeed or all rollback
+   * - payload_hash immutable (cannot change after commit)
+   * - Recovery job created BEFORE external effects
+   */
+  async atomicSale(data: {
+    tenantId: string;
+    organizationId: string;
+    operationId: string;
+    deviceId: string;
+    terminalId: string;
+    shiftId: string;
+    saleNumber: string;
+    saleDate: Date;
+    totalAmount: number; // in minor units
+    items: Array<{ productId: string; qty: number; unitPrice: number; discount: number; lineTotal: number }>;
+    payments: Array<{ paymentId: string; type: string; amount: number }>;
+  }) {
+    // FP-002: Calculate payload hash for idempotency
+    const payloadHash = crypto
+      .createHash('sha256')
+      .update(JSON.stringify({
+        operationId: data.operationId,
+        items: data.items,
+        payments: data.payments,
+        totalAmount: data.totalAmount,
+      }))
+      .digest('hex');
+
+    try {
+      // FP-002: Atomic transaction
+      const sale = await this.prisma.$transaction(async (tx) => {
+        const saleId = uuidv4();
+
+        // Insert sale (UNIQUE operation_id prevents duplicates)
+        const createdSale = await tx.posSales.create({
+          data: {
+            id: saleId,
+            operationId: data.operationId,
+            deviceId: data.deviceId,
+            terminalId: data.terminalId,
+            shiftId: data.shiftId,
+            saleNumber: data.saleNumber,
+            saleDate: data.saleDate,
+            totalAmount: data.totalAmount,
+            payloadHash,
+            status: 'DRAFT',
+            tenantId: data.tenantId,
+            organizationId: data.organizationId,
+          },
+        });
+
+        // Insert receipt lines
+        for (const [idx, item] of data.items.entries()) {
+          await tx.posReceiptLines.create({
+            data: {
+              id: uuidv4(),
+              saleId,
+              productId: item.productId,
+              qty: item.qty,
+              unitPrice: item.unitPrice,
+              discount: item.discount,
+              lineTotal: item.lineTotal,
+              sequence: idx + 1,
+            },
+          });
+        }
+
+        // Insert expected payments (for recovery)
+        for (const payment of data.payments) {
+          await tx.posPayments.create({
+            data: {
+              id: uuidv4(),
+              saleId,
+              paymentId: payment.paymentId,
+              type: payment.type,
+              amount: payment.amount,
+              status: 'CREATED',
+            },
+          });
+        }
+
+        // FP-002: Insert recovery job BEFORE external effects
+        // This ensures we can retry payment/fiscal if process crashes
+        await tx.recoveryJobs.create({
+          data: {
+            id: uuidv4(),
+            saleId,
+            status: 'PENDING_PAYMENT',
+            retryCount: 0,
+            nextRetryAt: new Date(),
+          },
+        });
+
+        return createdSale;
+      });
+
+      return {
+        saleId: sale.id,
+        receiptNumber: sale.saleNumber,
+        status: 'INTENT_STORED',
+        // FP-002: Return here, external effects called by caller
+      };
+    } catch (error: any) {
+      // FP-002: UNIQUE constraint → idempotent return existing sale
+      if (error.code === 'P2002' && error.meta?.target?.includes('operationId')) {
+        // Operation already exists, return it
+        const existingSale = await this.prisma.posSales.findUnique({
+          where: { operationId: data.operationId },
+        });
+        if (existingSale) {
+          return {
+            saleId: existingSale.id,
+            receiptNumber: existingSale.saleNumber,
+            status: 'IDEMPOTENT',
+          };
+        }
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * FP-002: Read sale by operation_id (after external effect failure)
+   * Used to recover from payment provider crash
+   */
+  async getSaleByOperationId(operationId: string) {
+    return this.prisma.posSales.findUnique({
+      where: { operationId },
+      include: {
+        lines: true,
+        payments: true,
+        recovery: true,
+      },
+    });
+  }
+
+  /**
+   * FP-002: External effect: Process payment (idempotent)
+   * Called AFTER atomicSale() returns successfully
+   */
+  async processPayment(saleId: string, paymentId: string, amount: number) {
+    // TODO: Call payment provider with paymentId (idempotency key)
+    // Should return: CONFIRMED | REJECTED | TIMEOUT
+    // On success: update pos_payments status = CONFIRMED
+    // On failure: update recovery_jobs status = PENDING_FISCAL and log error
+    throw new Error('FP-002: Payment provider not implemented');
+  }
+
+  /**
+   * FP-002: External effect: Register fiscal (idempotent)
+   * Called AFTER payment is confirmed
+   */
+  async registerFiscal(saleId: string, receiptNumber: string, payloadHash: string) {
+    // TODO: Call fiscal printer with receiptNumber + payloadHash (idempotency key)
+    // Should return: fiscal_number or error
+    // On success: update pos_sales fiscal_number, update recovery_jobs status = COMPLETED
+    // On failure: log to fiscal_attempts, update recovery_jobs for retry
+    throw new Error('FP-002: Fiscal printer not implemented');
   }
 }
