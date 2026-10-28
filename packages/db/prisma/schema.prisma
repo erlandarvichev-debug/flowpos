@@ -21,6 +21,8 @@ model Tenant {
   users              User[]
   grants             Grant[]
   auditLogs          AuditLog[]
+  outboxes           Outbox[] // FP-009: Event sourcing
+  jobs               Jobs[] // FP-009: Durable task queue
 
   @@map("tenants")
 }
@@ -2084,4 +2086,58 @@ model AccPeriodClose {
 
   @@index([organizationId, period])
   @@map("acc_period_closes")
+}
+
+// ─── FP-009: OUTBOX PATTERN (Event Sourcing) ───────────────────────────────────
+
+model Outbox {
+  id               String   @id @default(uuid())
+  tenantId         String   @map("tenant_id")
+  organizationId   String?  @map("organization_id")
+  aggregateType    String   @map("aggregate_type")
+  aggregateId      String   @map("aggregate_id")
+  eventType        String   @map("event_type")
+  data             Json
+  metadata         Json?
+  version          BigInt   @default(1)
+  published        Boolean  @default(false)
+  publishedAt      DateTime? @map("published_at")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, published])
+  @@index([aggregateType, aggregateId])
+  @@index([createdAt])
+  @@map("outbox")
+}
+
+// ─── FP-009: JOBS SCHEDULER (Durable Task Queue) ──────────────────────────────
+
+model Jobs {
+  id            String   @id @default(uuid())
+  tenantId      String   @map("tenant_id")
+  name          String
+  status        String   @default("pending") // pending, started, completed, failed, dead
+  data          Json
+  result        Json?
+  error         String?
+  
+  leaseUntil    DateTime? @map("lease_until")
+  leaseOwner    String?   @map("lease_owner")
+  attempt       Int      @default(0)
+  maxAttempts   Int      @default(3) @map("max_attempts")
+  
+  nextRunAt     DateTime @default(now()) @map("next_run_at")
+  startedAt     DateTime? @map("started_at")
+  completedAt   DateTime? @map("completed_at")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, status])
+  @@index([nextRunAt])
+  @@index([leaseUntil])
+  @@map("jobs")
 }

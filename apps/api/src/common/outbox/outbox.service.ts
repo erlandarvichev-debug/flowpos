@@ -1,47 +1,101 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 
-export interface OutboxEntry {
-  idempotencyKey: string;
-  entity: string;
-  localId: string;
-  connectionId?: string;
-  operation: 'CREATE' | 'UPDATE' | 'DELETE' | 'POST' | 'UNPOST';
-  payload: object;
+/**
+ * FP-009: Outbox Pattern for Event Sourcing
+ * Events are durably written in same transaction as business data
+ * Then polled and delivered by background worker
+ */
+export interface DomainEvent {
+  aggregateType: string; // e.g., "Document", "User"
+  aggregateId: string;
+  eventType: string; // e.g., "DocumentCreated", "DocumentApproved"
+  data: Record<string, any>;
+  metadata?: Record<string, any>;
 }
 
 @Injectable()
 export class OutboxService {
   constructor(private prisma: PrismaService) {}
 
-  /** Записывает в outbox внутри уже открытой транзакции */
-  async enqueueInTx(tx: any, entry: OutboxEntry) {
-    await tx.outbox.create({
+  /**
+   * FP-009: Record event in outbox (called inside business transaction)
+   */
+  async recordEvent(tenantId: string, organizationId: string | null, event: DomainEvent) {
+    return this.prisma.outbox.create({
       data: {
-        idempotencyKey: entry.idempotencyKey,
-        entity: entry.entity,
-        localId: entry.localId,
-        connectionId: entry.connectionId ?? null,
-        operation: entry.operation,
-        payload: entry.payload,
+        id: crypto.randomUUID(),
+        tenantId,
+        organizationId,
+        aggregateType: event.aggregateType,
+        aggregateId: event.aggregateId,
+        eventType: event.eventType,
+        data: event.data,
+        metadata: event.metadata || {},
+        version: 1,
       },
     });
   }
 
-  async getStatus() {
-    const [pending, sending, done, error, dead] = await Promise.all([
-      this.prisma.outbox.count({ where: { status: 'PENDING' } }),
-      this.prisma.outbox.count({ where: { status: 'SENDING' } }),
-      this.prisma.outbox.count({ where: { status: 'DONE' } }),
-      this.prisma.outbox.count({ where: { status: 'ERROR' } }),
-      this.prisma.outbox.count({ where: { status: 'DEAD' } }),
-    ]);
-    return { pending, sending, done, error, dead };
+  /**
+   * FP-009: Get unpublished events for worker to process
+   */
+  async getUnpublishedEvents(tenantId: string, limit: number = 100) {
+    return this.prisma.outbox.findMany({
+      where: {
+        tenantId,
+        published: false,
+      },
+      orderBy: { createdAt: 'asc' },
+      take: limit,
+    });
   }
 
-  async list(status?: string, cursor?: string, limit = 50) {
-    const where: any = {};
-    if (status) where.status = status;
+  /**
+   * FP-009: Mark event as published (worker success)
+   */
+  async markPublished(eventId: string) {
+    return this.prisma.outbox.update({
+      where: { id: eventId },
+      data: {
+        published: true,
+        publishedAt: new Date(),
+      },
+    });
+  }
+
+  /**
+   * FP-009: Get event history for aggregate
+   */
+  async getEventHistory(tenantId: string, aggregateType: string, aggregateId: string) {
+    return this.prisma.outbox.findMany({
+      where: {
+        tenantId,
+        aggregateType,
+        aggregateId,
+      },
+      orderBy: { version: 'asc' },
+    });
+  }
+
+  /**
+   * FP-009: Status dashboard
+   */
+  async getStatus(tenantId: string) {
+    const [published, pending] = await Promise.all([
+      this.prisma.outbox.count({ where: { tenantId, published: true } }),
+      this.prisma.outbox.count({ where: { tenantId, published: false } }),
+    ]);
+    return { published, pending, total: published + pending };
+  }
+
+  /**
+   * FP-009: List events (backwards compat with old code)
+   */
+  async list(tenantId: string, status?: string, cursor?: string, limit = 50) {
+    const where: any = { tenantId };
+    if (status === 'PENDING') where.published = false;
+    if (status === 'DONE') where.published = true;
     if (cursor) where.createdAt = { lt: new Date(cursor) };
 
     const items = await this.prisma.outbox.findMany({
