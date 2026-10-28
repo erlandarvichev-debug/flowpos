@@ -1,0 +1,298 @@
+
+> rmk@0.2.90 test
+> vitest run src
+
+
+ RUN  v5.0.2 C:/Users/123/Documents/Codex/2026-10-27/task/flowpos-esf
+
+ ❯ src/services/sale.test.ts (0 test)
+ ❯ src/lib/financeModel.test.ts (0 test)
+ ❯ src/lib/bankCommission.test.ts (0 test)
+ ❯ src/services/terminalPayment.test.ts (0 test)
+ ❯ src/lib/payment.test.ts (0 test)
+ ❯ src/services/license.test.ts (4 tests | 4 failed) 46ms
+   ❯ проверка лицензии: телефон владельца для CRM (4)
+     × берёт телефон сотрудника, под которым вошли 36ms
+     × у сотрудника пусто — телефон организации 4ms
+     × телефона нет нигде — поле phone не отправляется 2ms
+     × МойСклад недоступен — уходит последний сохранённый номер 2ms
+ ❯ src/lib/orderCompleteness.test.ts (0 test)
+ ❯ src/services/kiosk.test.ts (0 test)
+ ❯ src/lib/returnRemaining.test.ts (0 test)
+ ❯ src/lib/transferPayment.test.ts (0 test)
+ ❯ src/lib/localShiftTotals.test.ts (0 test)
+ ❯ src/lib/pendingStock.test.ts (4 tests | 1 failed) 14ms
+   ❯ неотправленные продажи для остатков (1)
+     × недописанный чек (пропал свет) в остаток не идёт 9ms
+ ❯ src/services/backoffice/saleDocumentName.test.ts (0 test)
+ ❯ src/lib/clock.test.ts (0 test)
+ ❯ src/lib/passwordHash.test.ts (0 test)
+ ❯ src/services/backoffice/posImageUrl.test.ts (1 test | 1 failed) 15ms
+   ❯ ссылка на фото товара из POS-ассортимента (1)
+     × строка, объект со ссылкой, запасной tiny, нет фото 13ms
+ ❯ src/services/accountState.test.ts (0 test)
+ ❯ src/services/shiftReport.test.ts (0 test)
+ ❯ src/lib/storedDate.test.ts (0 test)
+ ❯ src/lib/platform.test.ts (0 test)
+ ❯ src/lib/noCrossCallTransactions.test.ts (0 test)
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 18 ⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/lib/bankCommission.test.ts [ src/lib/bankCommission.test.ts ]
+Error: ENOENT: no such file or directory, open 'C:\Users\123\AppData\Local\Packages\sandbox.{e9a9d866-263a-461f-80e6-ee750c68519b}\AC\Temp\TT-nFxqbtiEHy80U81SKt\ssr\0c6d560d4bbf7dfbbe49b58a1363b8daefdb56eb'
+ ❯ src/lib/bankCommission.test.ts:2:1
+      1| import { describe, expect, it } from "vitest";
+      2| import { commissionTextLines, computeBankCommission } from "./bankComm…
+       | ^
+      3|
+      4| // Как у пользователя в точке: карта Kaspi 2,3%, QR Kaspi 1%.
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/24]⎯
+
+ FAIL  src/lib/clock.test.ts [ src/lib/clock.test.ts ]
+Error: ENOENT: no such file or directory, open 'C:\Users\123\AppData\Local\Packages\sandbox.{e9a9d866-263a-461f-80e6-ee750c68519b}\AC\Temp\TT-nFxqbtiEHy80U81SKt\ssr\3831b561fd756273db1b8ea63f64bad91153e507'
+ ❯ src/lib/clock.test.ts:2:1
+      1| import { describe, expect, it } from "vitest";
+      2| import { clockSkewMs, describeSkew, isWrongTimezone } from "./clock.ts…
+       | ^
+      3|
+      4| describe("часы кассы", () => {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/24]⎯
+
+ FAIL  src/lib/financeModel.test.ts [ src/lib/financeModel.test.ts ]
+Error: ENOENT: no such file or directory, open 'C:\Users\123\AppData\Local\Packages\sandbox.{e9a9d866-263a-461f-80e6-ee750c68519b}\AC\Temp\TT-nFxqbtiEHy80U81SKt\ssr\e69995bb78398a9c64e2d27ac11d3fae6e476213'
+ ❯ src/lib/bankCommission.ts:2:1
+      1| import { isTransferPayment } from "./transferPayment.ts";
+      2| import { PayMethod } from "../types/orders";
+       | ^
+      3|
+      4| /**
+ ❯ src/lib/financeModel.test.ts:2:1
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/24]⎯
+
+ FAIL  src/lib/localShiftTotals.test.ts [ src/lib/localShiftTotals.test.ts ]
+Error: ENOENT: no such file or directory, open 'C:\Users\123\AppData\Local\Packages\sandbox.{e9a9d866-263a-461f-80e6-ee750c68519b}\AC\Temp\TT-nFxqbtiEHy80U81SKt\ssr\e69995bb78398a9c64e2d27ac11d3fae6e476213'
+ ❯ src/lib/localShiftTotals.ts:1:1
+      1| import { PayMethod } from "../types/orders";
+       | ^
+      2| import { NONCASH_METHODS } from "./bankCommission.ts";
+      3|
+ ❯ src/lib/localShiftTotals.test.ts:2:1
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/24]⎯
+
+ FAIL  src/lib/noCrossCallTransactions.test.ts [ src/lib/noCrossCallTransactions.test.ts ]
+Error: ENOENT: no such file or directory, open 'C:\Users\123\AppData\Local\Packages\sandbox.{e9a9d866-263a-461f-80e6-ee750c68519b}\AC\Temp\TT-nFxqbtiEHy80U81SKt\ssr\48208fa1878085dc4bd994ca40819e8acfd3632e'
+ ❯ src/lib/noCrossCallTransactions.test.ts:1:38
+      1| import { describe, expect, it } from "vitest";
+       |                                      ^
+      2|
+      3| /**
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/24]⎯
+
+ FAIL  src/lib/orderCompleteness.test.ts [ src/lib/orderCompleteness.test.ts ]
+Error: ENOENT: no such file or directory, open 'C:\Users\123\AppData\Local\Packages\sandbox.{e9a9d866-263a-461f-80e6-ee750c68519b}\AC\Temp\TT-nFxqbtiEHy80U81SKt\ssr\831e151ab82061c70bc9a43c6eb14c002741adff'
+ ❯ src/lib/orderCompleteness.ts:1:1
+      1| import { getStoredItemsTotal, toWholeAmount } from "./bill.ts";
+       | ^
+      2|
+      3| /**
+ ❯ src/lib/orderCompleteness.test.ts:2:1
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/24]⎯
+
+ FAIL  src/lib/passwordHash.test.ts [ src/lib/passwordHash.test.ts ]
+Error: ENOENT: no such file or directory, open 'C:\Users\123\AppData\Local\Packages\sandbox.{e9a9d866-263a-461f-80e6-ee750c68519b}\AC\Temp\TT-nFxqbtiEHy80U81SKt\ssr\a2fb337282b8f1eb6c1a3e59c95684c713e9c5e3'
+ ❯ src/lib/passwordHash.test.ts:2:1
+      1| import { describe, expect, it } from "vitest";
+      2| import { hashPassword, verifyPassword } from "./passwordHash.ts";
+       | ^
+      3|
+      4| describe("пароль администратора", () => {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/24]⎯
+
+ FAIL  src/lib/payment.test.ts [ src/lib/payment.test.ts ]
+Error: ENOENT: no such file or directory, open 'C:\Users\123\AppData\Local\Packages\sandbox.{e9a9d866-263a-461f-80e6-ee750c68519b}\AC\Temp\TT-nFxqbtiEHy80U81SKt\ssr\a66a24e1271464979daef800e026f5493c126a32'
+ ❯ src/lib/payment.ts:3:1
+      1| import { TicketPaymentType } from "../types";
+      2| import { PayMethod } from "../types/orders";
+      3| import { SettingsTypeEnum } from "../stores/appSettings.ts";
+       | ^
+      4| import { toWholeAmount } from "./bill.ts";
+      5| import type { PulsarCloseRequest } from "../services/pulsar.service.ts…
+ ❯ src/lib/payment.test.ts:6:1
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/24]⎯
+
+ FAIL  src/lib/platform.test.ts [ src/lib/platform.test.ts ]
+Error: ENOENT: no such file or directory, open 'C:\Users\123\AppData\Local\Packages\sandbox.{e9a9d866-263a-461f-80e6-ee750c68519b}\AC\Temp\TT-nFxqbtiEHy80U81SKt\ssr\6be64d6615c6fb29b550f9952f5c0ce8c6b7efae'
+ ❯ src/lib/platform.ts:1:1
+      1| import { isAndroid } from './rasterReceipt.ts'
+       | ^
+      2|
+      3| /**
+ ❯ src/lib/platform.test.ts:2:1
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/24]⎯
+
+ FAIL  src/lib/returnRemaining.test.ts [ src/lib/returnRemaining.test.ts ]
+Error: ENOENT: no such file or directory, open 'C:\Users\123\AppData\Local\Packages\sandbox.{e9a9d866-263a-461f-80e6-ee750c68519b}\AC\Temp\TT-nFxqbtiEHy80U81SKt\ssr\d6800a07d19cdfd067febe122d0a6a036d717890'
+ ❯ src/lib/returnRemaining.test.ts:2:1
+      1| import { describe, expect, it } from 'vitest';
+      2| import { remainingQuantitiesAfterReturns, type ReturnedQuantity } from…
+       | ^
+      3|
+      4| type Line = { guid: string; price: number; qty: number };
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/24]⎯
+
+ FAIL  src/lib/storedDate.test.ts [ src/lib/storedDate.test.ts ]
+Error: ENOENT: no such file or directory, open 'C:\Users\123\AppData\Local\Packages\sandbox.{e9a9d866-263a-461f-80e6-ee750c68519b}\AC\Temp\TT-nFxqbtiEHy80U81SKt\ssr\086ea0e23945946bbe808d685a4c2b0a0837eba1'
+ ❯ src/lib/storedDate.test.ts:2:1
+      1| import { describe, expect, it } from "vitest";
+      2| import { parseStoredDate } from "./storedDate.ts";
+       | ^
+      3|
+      4| describe("время чека из базы", () => {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/24]⎯
+
+ FAIL  src/lib/transferPayment.test.ts [ src/lib/transferPayment.test.ts ]
+Error: ENOENT: no such file or directory, open 'C:\Users\123\AppData\Local\Packages\sandbox.{e9a9d866-263a-461f-80e6-ee750c68519b}\AC\Temp\TT-nFxqbtiEHy80U81SKt\ssr\45393db3e768d70cddf63fb1fbc4e8615d22384e'
+ ❯ src/lib/transferPayment.test.ts:2:1
+      1| import { describe, expect, it } from "vitest";
+      2| import {
+       | ^
+      3|   isTransferPayment,
+      4|   parseTransferBanks,
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/24]⎯
+
+ FAIL  src/services/accountState.test.ts [ src/services/accountState.test.ts ]
+Error: ENOENT: no such file or directory, open 'C:\Users\123\AppData\Local\Packages\sandbox.{e9a9d866-263a-461f-80e6-ee750c68519b}\AC\Temp\TT-nFxqbtiEHy80U81SKt\ssr\76c1901996870d1afc520aaa53983035519cd757'
+ ❯ src/services/accountState.service.ts:1:1
+      1| import { isMoySkladAccountDisabled } from "../lib/moyskladError.ts";
+       | ^
+      2|
+      3| /**
+ ❯ src/services/accountState.test.ts:2:1
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[13/24]⎯
+
+ FAIL  src/services/kiosk.test.ts [ src/services/kiosk.test.ts ]
+Error: ENOENT: no such file or directory, open 'C:\Users\123\AppData\Local\Packages\sandbox.{e9a9d866-263a-461f-80e6-ee750c68519b}\AC\Temp\TT-nFxqbtiEHy80U81SKt\ssr\a66a24e1271464979daef800e026f5493c126a32'
+ ❯ src/services/kiosk.service.ts:7:1
+      5| import { ordersRepo } from "../repos/ordersRepo.ts";
+      6| import { settingsRepo } from "../repos/settingsRepo.ts";
+      7| import { SettingsTypeEnum, useAppSettingsStore } from "../stores/appSe…
+       | ^
+      8| import { PayMethod } from "../types/orders";
+      9| import type { Product } from "../types/products";
+ ❯ src/services/kiosk.test.ts:26:45
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[14/24]⎯
+
+ FAIL  src/services/sale.test.ts [ src/services/sale.test.ts ]
+Error: ENOENT: no such file or directory, open 'C:\Users\123\AppData\Local\Packages\sandbox.{e9a9d866-263a-461f-80e6-ee750c68519b}\AC\Temp\TT-nFxqbtiEHy80U81SKt\ssr\e69995bb78398a9c64e2d27ac11d3fae6e476213'
+ ❯ src/services/sale.test.ts:2:1
+      1| import { beforeEach, describe, expect, it, vi } from "vitest";
+      2| import { PayMethod } from "../types/orders";
+       | ^
+      3|
+      4| // Всё, с чем говорит проведение продажи, подменено и записывает вызов…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[15/24]⎯
+
+ FAIL  src/services/shiftReport.test.ts [ src/services/shiftReport.test.ts ]
+Error: ENOENT: no such file or directory, open 'C:\Users\123\AppData\Local\Packages\sandbox.{e9a9d866-263a-461f-80e6-ee750c68519b}\AC\Temp\TT-nFxqbtiEHy80U81SKt\ssr\d573b0d5aabb67de68f6b3e43d216078d3236124'
+ ❯ src/services/shiftReport.service.ts:2:1
+      1| import dayjs from "dayjs";
+      2| import { sumMarkups, type MarkupTotal } from "../lib/markup.ts";
+       | ^
+      3| import { settingsRepo } from "../repos/settingsRepo.ts";
+      4| import { SettingsTypeEnum } from "../stores/appSettings.ts";
+ ❯ src/services/shiftReport.test.ts:2:1
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[16/24]⎯
+
+ FAIL  src/services/terminalPayment.test.ts [ src/services/terminalPayment.test.ts ]
+Error: ENOENT: no such file or directory, open 'C:\Users\123\AppData\Local\Packages\sandbox.{e9a9d866-263a-461f-80e6-ee750c68519b}\AC\Temp\TT-nFxqbtiEHy80U81SKt\ssr\04fad87ce981edf9482363f93e9ee77f99c04623'
+ ❯ src/services/terminalPayment.service.ts:3:1
+      1| import kaspiPayService from "./kaspiPay.service.ts";
+      2| import halykPayService from "./halykPay.service.ts";
+      3| import { HalykTerminalMethod } from "../types";
+       | ^
+      4| import { SettingsTypeEnum, useAppSettingsStore } from "../stores/appSe…
+      5|
+ ❯ src/services/terminalPayment.test.ts:26:5
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[17/24]⎯
+
+ FAIL  src/services/backoffice/saleDocumentName.test.ts [ src/services/backoffice/saleDocumentName.test.ts ]
+Error: ENOENT: no such file or directory, open 'C:\Users\123\AppData\Local\Packages\sandbox.{e9a9d866-263a-461f-80e6-ee750c68519b}\AC\Temp\TT-nFxqbtiEHy80U81SKt\ssr\6c63970f9f545c015f24d1fd5d00252fc87beaed'
+ ❯ src/services/backoffice/moyskladBackoffice.provider.ts:2:1
+      1| import dayjs from "dayjs";
+      2| import { applyStockDeltas } from "../../lib/pendingStock.ts";
+       | ^
+      3| import { loadPendingStockDeltas } from "../pendingStock.service.ts";
+      4| import httpMoySkladPos, { buildPosUrl, buildPosHeaders } from "../../h…
+ ❯ src/services/backoffice/saleDocumentName.test.ts:7:35
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[18/24]⎯
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 6 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/lib/pendingStock.test.ts > неотправленные продажи для остатков > недописанный чек (пропал свет) в остаток не идёт
+Error: ENOENT: no such file or directory, open 'C:\Users\123\AppData\Local\Packages\sandbox.{e9a9d866-263a-461f-80e6-ee750c68519b}\AC\Temp\TT-nFxqbtiEHy80U81SKt\ssr\aaa21d26f83d0bcd457e514a9711d5d0cfb8a590'
+ ❯ src/lib/pendingStock.test.ts:32:40
+     30|   it("недописанный чек (пропал свет) в остаток не идёт", async () => {
+     31|     const { pendingSaleDeltas } = await import("./pendingStock.ts");
+     32|     const { checkOrderCompleteness } = await import("./orderCompletene…
+       |                                        ^
+     33|     const complete = {
+     34|       totalCost: 840,
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[19/24]⎯
+
+ FAIL  src/services/license.test.ts > проверка лицензии: телефон владельца для CRM > берёт телефон сотрудника, под которым вошли
+ FAIL  src/services/license.test.ts > проверка лицензии: телефон владельца для CRM > у сотрудника пусто — телефон организации
+ FAIL  src/services/license.test.ts > проверка лицензии: телефон владельца для CRM > телефона нет нигде — поле phone не отправляется
+ FAIL  src/services/license.test.ts > проверка лицензии: телефон владельца для CRM > МойСклад недоступен — уходит последний сохранённый номер
+Error: ENOENT: no such file or directory, open 'C:\Users\123\AppData\Local\Packages\sandbox.{e9a9d866-263a-461f-80e6-ee750c68519b}\AC\Temp\TT-nFxqbtiEHy80U81SKt\ssr\a66a24e1271464979daef800e026f5493c126a32'
+ ❯ src/services/license.service.ts:4:1
+      2| import { getVersion } from "@tauri-apps/api/app";
+      3| import { settingsRepo } from "../repos/settingsRepo.ts";
+      4| import { SettingsTypeEnum } from "../stores/appSettings.ts";
+       | ^
+      5| import httpMoySklad from "../helpers/http-moysklad.ts";
+      6| import { ensureRemapToken } from "./moyskladShipment.service.ts";
+ ❯ freshCheck src/services/license.test.ts:37:28
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[20/24]⎯
+
+ FAIL  src/services/backoffice/posImageUrl.test.ts > ссылка на фото товара из POS-ассортимента > строка, объект со ссылкой, запасной tiny, нет фото
+Error: ENOENT: no such file or directory, open 'C:\Users\123\AppData\Local\Packages\sandbox.{e9a9d866-263a-461f-80e6-ee750c68519b}\AC\Temp\TT-nFxqbtiEHy80U81SKt\ssr\ae58abc7ac761b7df751fcbf1db8ebe69efc5aea'
+ ❯ src/services/backoffice/posImageUrl.test.ts:9:29
+      7| describe("ссылка на фото товара из POS-ассортимента", () => {
+      8|   it("строка, объект со ссылкой, запасной tiny, нет фото", async () =>…
+      9|     const { posImageUrl } = await import("./moyskladBackoffice.provide…
+       |                             ^
+     10|     expect(posImageUrl({ image: { miniature: "https://x/m.png" } })).t…
+     11|     expect(posImageUrl({ image: { miniature: { href: "https://x/h.png"…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[21/24]⎯
+
+
+ Test Files  21 failed | 21 passed (42)
+      Tests  6 failed | 113 passed (119)
+   Start at  18:32:53
+   Duration  2.65s (transform 51%, tests 24%, import 18%, worker 6%)
+
+  Transform  transforming modules took 2.62s · 51% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns

@@ -1,0 +1,83 @@
+﻿id,epic,priority,owner_role,size,dependencies,status,title,acceptance
+FP-001,Baseline,P0,Tech lead,S,,DONE_LOCAL,Зафиксировать репозиторий и владельцев данных,HEAD проверен remote; карта вызовов и чужих изменений; изоляция checkout
+FP-002,POS,P0,Rust engineer,L,FP-001,PLANNED,Одна атомарная Rust-команда durable sale intent,Один connection; fault injection и SQLITE_BUSY; одна полная операция; нет сети в SQL retry
+FP-003,POS,P0,Backend/Rust,L,FP-002,PLANNED,Durable payment и fiscal state machines,UNKNOWN переживает restart; timeout не создаёт второй платёж/чек; проверен status lookup провайдеров
+FP-004,POS,P1,Frontend/Backend,L,"FP-001,FP-002",PLANNED,Canonical BackofficeProvider с capabilities,Нет обязательных oneCGUID/accountHref в домене; старые провайдеры проходят общий contract suite
+FP-005,POS,P0,Backend,M,"FP-007,FP-008,FP-009,FP-004",PLANNED,Серверный inbox POS и stable operation identity,UNIQUE tenant+org+operation; миграция устройства сохраняет sale; ACK после commit
+FP-006,POS,P0,QA/Pilot owner,L,"FP-003,FP-005",PLANNED,Пилотная смена и сверка оборудования,Продажа/возврат/смешанная оплата/печать/обрыв; ноль необъяснённых расхождений
+FP-007,Platform,P0,Backend,M,FP-001,PLANNED,Tenant и organization composite identity,Два клиента и две организации не видят/не связывают чужие объекты
+FP-008,Platform,P0,Security/Backend,L,FP-007,PLANNED,OIDC sessions RBAC grants и MFA,Revoke и expiry работают; org scope из session; field-level payroll permissions
+FP-009,Platform,P0,Backend/DBA,L,FP-007,PLANNED,Postgres unit of work outbox и RLS,Runtime role без BYPASSRLS; rollback; composite FK; outbox после commit
+FP-010,ESF,P0,Backend/Frontend,M,FP-001,DONE_LOCAL,Локальный синтетический ESF срез,Durable inbound/outbound/status/errors/dedup; UNKNOWN не resend; UI и signing boundary; тесты
+FP-011,ESF,P0,Integration lead,M,FP-001,PLANNED,Получить актуальный SDK WSDL XSD и доступ,Bytes checksum version; test/prod service endpoints; onboarding auth TTL limits enums документированы
+FP-012,ESF,P0,Integration engineer,L,"FP-009,FP-011,FP-013,FP-021",PLANNED,Адаптер получения и атомарный cursor,Повтор страницы и crash не теряют документ; частичная страница не подтверждается; сверка диапазона
+FP-013,ESF,P0,Backend/Security,M,"FP-009,FP-011",PLANNED,Реестр XML схем и immutable raw bytes,Encoding/checksum сохранены; XXE/DTD отключены; unknown schema в карантине без потери полей
+FP-014,ESF,P1,Backend/Methodologist,M,"FP-012,FP-025",PLANNED,Сопоставление товара контрагента и оснований,Manual override audited; receipt не создаёт stock/VAT; correction chain сохранена
+FP-015,ESF,P0,Integration engineer,L,"FP-011,FP-013,FP-029",PLANNED,Serializer исходящего документа,Golden XML по XSD; версии формы; totals/rounding; no silent truncation
+FP-016,ESF,P0,Security/Signing engineer,L,"FP-008,FP-011,FP-013",PLANNED,Signing provider и authority validation,Exact bytes hash; сертификат/назначение/полномочия/expiry; stale approval блокируется; нет key в логах
+FP-017,ESF,P0,Integration engineer,L,"FP-015,FP-016,FP-021",PLANNED,Отправка и reconciliation результата,Lost response/restart → UNKNOWN; status lookup доказан; нет слепого resend
+FP-018,ESF,P0,Methodologist/Backend,M,"FP-012,FP-016",PLANNED,Решения по исправлению дополнению отзыву,Technical ACK отдельно от business acceptance; сроки/роль/основание; explicit approval
+FP-019,ESF,P0,Tax methodologist/Backend,L,"FP-012,FP-039",PLANNED,Частичный зачёт НДС и корректировки,Quarter/year/amount/remainder/rule version; нельзя автоматически зачесть весь VAT при download
+FP-020,ESF,P1,Frontend,L,"FP-008,FP-012,FP-017,FP-018",PLANNED,Рабочее место ESF для реальных пользователей,Tabs/filters/card/raw/history; UNKNOWN только сверка; partial bulk result; доступность клавиатурой
+FP-021,Platform,P0,Backend,M,FP-009,PLANNED,Jobs lease fencing retry и DLQ,Stale worker не подтверждает чужой lease; jitter/Retry-After; unsafe stage не retry
+FP-022,ESF,P1,SRE/Integration,M,"FP-012,FP-017,FP-024",PLANNED,Метрики и runbook ESF,Alerts по lag/UNKNOWN/quarantine; trace и ответственный; secret redaction
+FP-023,ESF,P0,QA/Methodologist,L,"FP-017,FP-018,FP-019,FP-020,FP-022",PLANNED,Уполномоченный ESF sandbox pilot,Документы приняты реальным тестовым контуром; duplicate/correction/timeout доказательства; sign-off
+FP-024,ESF,P1,Backend/Support,M,"FP-012,FP-017",PLANNED,Ошибки карантин и контролируемый replay,Error taxonomy; причина исправления; audit replay; same key different hash не заметается
+FP-025,Catalog,P1,Backend,M,FP-009,PLANNED,Товары варианты единицы штрихкоды,Stable item ID; дубли и weight barcode; versions и external mappings
+FP-026,Catalog,P1,Backend/Frontend,M,"FP-025,FP-008",PLANNED,Контрагенты договоры и реквизиты,Effective dates; адреса/БИН; доступ; нет чужих ссылок
+FP-027,Catalog,P1,Backend,M,FP-025,PLANNED,Прайс-листы скидки и округление,Priority/interval; preview discount; immutable offline snapshot
+FP-028,Documents,P0,Backend,L,"FP-009,FP-026",PLANNED,Общие документы версии и ссылки,Expected_version; immutable posted version; source/correction graph; duplicate post conflict
+FP-029,Documents,P0,Backend/Frontend,M,"FP-028,FP-008",PLANNED,Согласования и simulate command,Hash/scope/sum/TTL bound; изменение отменяет approval; UI показывает эффект
+FP-030,Inventory,P1,Backend,L,"FP-025,FP-028",PLANNED,Поступление и складские движения,Частичная приёмка/расхождения; qty и value; источник каждого movement
+FP-031,Inventory,P1,Accounting engineer,L,FP-030,PLANNED,Себестоимость и дополнительные расходы,Fixture COGS2200 profit800 stock8800; остаток округления детерминирован; метод периода
+FP-032,Inventory,P1,Backend/Frontend,M,FP-030,PLANNED,Резервы перемещения и адреса,Available=fact-reserved; нет двойного резерва при конкуренции; two-stage transfer
+FP-033,Inventory,P1,Backend/Frontend,M,"FP-030,FP-031",PLANNED,Инвентаризация списание партии серии,Сверка с фактами; причины; lot/expiry; approved discrepancy
+FP-034,Sales,P1,Backend/Frontend,L,"FP-027,FP-028,FP-032",PLANNED,Заказ клиента отгрузка возврат,Partial fulfilment; return by basis; prices/tax snapshot; правильный склад/стоимость
+FP-035,Purchases,P1,Backend/Frontend,L,"FP-026,FP-030,FP-029",PLANNED,Потребность заказ поставщику и приёмка,Budget approval; qty expected/received; расхождения и возврат поставщику
+FP-036,Treasury,P1,Backend,L,"FP-028,FP-026",PLANNED,Банк касса авансы и разнесение,Bank key scoped by account; дубли не зачисляют дважды; allocation/reversal audited
+FP-037,Treasury,P1,Backend/Frontend,M,"FP-036,FP-029",PLANNED,Платёжный календарь и заявки,Согласование получателя/суммы; cash forecast scenarios; import не делает payout
+FP-038,Accounting,P0,Accounting engineer,L,"FP-028,FP-031,FP-036",PLANNED,Двойная запись и аналитики,Balanced entry; unique source/version; decimal rules; posting simulation accepted
+FP-039,Accounting,P0,Tax methodologist,L,FP-038,PLANNED,Rule packs и налоговые регистры,Effective period/source/approval; воспроизводимость; golden tests не меняются под код
+FP-040,Accounting,P1,Accounting engineer,L,"FP-038,FP-039",PLANNED,Закрытие периода и сторно,Locked period enforced server; reopen audited; balance/stock reconciliation
+FP-041,Accounting,P2,Accounting engineer,L,"FP-038,FP-040",PLANNED,ОС НМА амортизация и РБП,Asset lifecycle; disposal; period rules; accepted reference dataset
+FP-042,Accounting,P1,Backend,M,"FP-036,FP-038",PLANNED,Валюты курсы и переоценка,Источник/дата курса; точные decimal; realized/unrealized difference; audit
+FP-043,Reports,P1,Analytics/Frontend,L,"FP-038,FP-040",PLANNED,P&L ДДС баланс и drilldown,Показатели раскрываются до документа; cutoff/currency/rule version; totals reconcile
+FP-044,Reports,P2,Analytics,M,"FP-043,FP-037",PLANNED,Бюджеты проекты и план-факт,CFO dimensions; plan snapshot; gap reason; access scoped export
+FP-045,Import,P1,Backend/Frontend,L,"FP-025,FP-026,FP-028",PLANNED,Staging CSV Excel mapping и preview,Row errors; dry run totals; idempotent batch; no external effects on import
+FP-046,Import,P1,Integration engineer,L,"FP-045,FP-005",PLANNED,Миграция 1С и МоегоСклада,Opening balances/delta/references; no duplicate sale after device migration; cutover ownership
+FP-047,Import,P1,Methodologist/Backend,L,"FP-030,FP-031,FP-039",PLANNED,Международный импорт и landed costs,Customs declaration/origin/currency/ТНВЭД; factual events separate; cost allocation accepted
+FP-048,Payroll,P1,Backend/HR methodologist,M,"FP-008,FP-026,FP-039",PLANNED,Сотрудник договор и кадровые даты,Role/field permissions; historical terms; no retroactive overwrite of payroll inputs
+FP-049,Payroll,P1,Backend/Frontend,M,FP-048,PLANNED,Графики табель отпуска больничные,Effective dates; approved timesheet; absence overlap rules; source trace
+FP-050,Payroll,P1,Payroll engineer,L,"FP-048,FP-049,FP-039",PLANNED,Расчёт начислений удержаний и обязательств,Rule snapshot; exact rounding; period golden payslips accepted by methodologist
+FP-051,Payroll,P1,Backend/Frontend,L,"FP-050,FP-037",PLANNED,Утверждение перерасчёт payslip и реестр выплаты,Closed run immutable; adjustment trace; approval separate from real payout
+FP-052,Tax/ISNA,P1,Tax methodologist,M,"FP-039,FP-040",PLANNED,Профиль обязанностей и календарь,Forms/periods per org; source/effective dates; overdue ownership
+FP-053,Tax/ISNA,P1,Integration lead,M,FP-052,PLANNED,Получить ИСНА контракты по нужным ФНО,Per-form access/schema/receipt/signing confirmed; no invented universal endpoint
+FP-054,Tax/ISNA,P1,Backend/Frontend,L,"FP-053,FP-039,FP-016",PLANNED,Сборка ФНО контрольные соотношения и отправка,Drilldown fields; immutable submission; final accepted receipt; correction history
+FP-055,NKT,P1,Integration engineer,M,"FP-025,FP-011",PLANNED,Подтвердить НКТ contract и environments,OpenAPI checksum auth/limits; test platform distinguished from productive NKT
+FP-056,NKT,P1,Backend/Frontend,L,"FP-055,FP-025",PLANNED,Mapping NTIN KZTIN заявки и статусы,Own stable ID; source/history; failed matching not silent; status reconciliation
+FP-057,Statistics,P1,Methodologist/Integration,M,FP-052,PLANNED,Установить формы респондента и доступ,Для каждой формы XML/API/export подтверждён; general automation not assumed
+FP-058,Statistics,P1,Backend/Frontend,L,"FP-057,FP-016,FP-043",PLANNED,Статформы validation package и receipt,Период/форма/version; controls; submit status accepted; correction evidence
+FP-059,EDO,P2,Backend/Security,L,"FP-013,FP-016,FP-029",PLANNED,Межфирменные envelopes и архив подписей,Recipient grant; two independent tenants; signature evidence/retention/export
+FP-060,CRM,P1,Backend/Frontend,L,"FP-026,FP-034",PLANNED,Лиды сделки воронки и активности,Owner grants; stage history; deal→order→margin links; revenue not from stage alone
+FP-061,CRM,P2,Integration/Frontend,M,"FP-060,FP-008",PLANNED,Коммуникации задачи и шаблоны,Consent/access; dedup inbound; channel-specific failures; no unsolicited send
+FP-062,Autopilot,P1,Backend/Security,L,"FP-008,FP-029,FP-043",PLANNED,Policy engine A0-A3 и лимиты,Atomic reservations; stop/revoke; split commands cannot evade limits; UNKNOWN retains reserve
+FP-063,Autopilot,P1,AI engineer,L,"FP-062,FP-043",PLANNED,Помощник с доказательствами и draft actions,Org/time/source citations; prompt injection data isolation; no self approval
+FP-064,MCP,P2,Backend/Security,L,"FP-062,FP-063",PLANNED,MCP read/draft/propose и OAuth,Scopes/audience/revoke; no arbitrary SQL URL shell; client conformance pinned
+FP-065,Forecast,P2,Analytics,L,"FP-043,FP-037,FP-060",PLANNED,Прогноз ДДС продаж и закупки,Baseline/backtest/no future leakage; uncertainty; stockout/leadtime/cash constraints
+FP-066,Frontend,P1,Design/Frontend,M,FP-008,PLANNED,Design system browser ERP и role nav,No Tauri in browser core; org/period visible; keyboard/focus/mobile table
+FP-067,Frontend,P1,Frontend,M,"FP-066,FP-028",PLANNED,Документ list/card/history и bulk results,Cursor/filter; field errors; conflict diff; partial success; permission-safe export
+FP-068,Security,P0,Security engineer,L,"FP-008,FP-009",PLANNED,Threat model и boundary tests,Tenant escape/IDOR/CSRF/SSRF/XXE; abuse cases and fixes; actual runtime role tests
+FP-069,Security,P0,Security/SRE,M,FP-068,PLANNED,Vault crypto key rotation и retention,No secret in log/Git/LLM; encrypted backups; revoke drill; retention/legal hold
+FP-070,Security,P0,Legal/Security,M,FP-069,PLANNED,ПД география и передача LLM,Утверждены размещение/backup/index/transfer legal basis и data minimization
+FP-071,SRE,P1,SRE,M,"FP-009,FP-021",PLANNED,Metrics traces logs и SLO,Lag/UNKNOWN/queue/ledger alerts; redaction; owner and escalation runbooks
+FP-072,SRE,P0,DBA/SRE,L,"FP-069,FP-071",PLANNED,Backup PITR restore drill,DB+objects+signatures восстановлены; measured RPO/RTO; checksum/link reconciliation
+FP-073,QA,P0,QA engineer,L,"FP-009,FP-028,FP-038",PLANNED,Golden financial and property suite,Fixture receipt/sale/cost; debit=credit; concurrent post; closed period; random replay
+FP-074,QA,P0,QA/Security,L,"FP-068,FP-020,FP-067",PLANNED,Browser E2E access and workflow,Org switch/tabs/stale approval/UNKNOWN/bulk; keyboard and screen reader check
+FP-075,QA,P1,QA/DBA,L,"FP-072,FP-046",PLANNED,Migration rehearsal и crash matrix,Expand/contract old/new clients; rollback/forward plan; disk full/BUSY/unknown commit
+FP-076,QA,P1,Performance engineer,M,"FP-071,FP-073",PLANNED,Load test пилотных объёмов,Измерены p95/error/queue; цели согласованы; test data synthetic; no production load
+FP-077,Release,P0,Tech lead/Security,M,FP-068,PLANNED,Разобрать dependency advisories baseline,Четыре исходных advisories классифицированы; targeted upgrade+regression; no blind audit fix
+FP-078,Release,P1,Release engineer,M,"FP-072,FP-075,FP-077",PLANNED,CI supply chain и signing release artifacts,Type/schema/tests/secret scan/SBOM; separate env secrets; approved immutable artifact
+FP-079,Release,P0,Product/Methodologist,L,"FP-006,FP-023,FP-040,FP-051,FP-054,FP-056,FP-058,FP-074",PLANNED,Матрица готовности полного ERP,Каждый модуль/роль/сценарий имеет evidence/sign-off; ESF срез не объявлен всем ERP
+FP-080,Release,P0,Product/SRE,M,"FP-078,FP-079,FP-070",PLANNED,Production go/no-go и pilot rollout,Отдельное разрешение; tenant/org flags; rollback/kill switch; reconciliation owner
+FP-081,ESF access/concurrency,P0,Backend/QA,M,FP-010,DONE_LOCAL,Fixture principal grants и lease fencing локального ESF,Scope из provider; org/action guard; шесть процессов; crash/restart; late callback fenced; UI карантина и read-only
+FP-082,ESF PostgreSQL,P0,Backend/DBA,M,FP-081,DONE_SQL_FIXTURE,ESF SQL migration restricted role RLS и concurrent claim,Применение дважды; NOLOGIN/NOBYPASSRLS owner/runtime; реальные concurrent sessions и restart fixture cluster; HTTP PG adapter ещё не подключён

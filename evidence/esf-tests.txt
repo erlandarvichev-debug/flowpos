@@ -1,0 +1,25 @@
+
+> rmk@0.2.90 test:esf
+> node --test erp/esf-stand/*.node-test.ts
+
+✔ operation identity survives device migration; changed payload conflicts (2.5953ms)
+✔ synthetic signing boundary binds scope, bytes and expiry; marker is never legal signature (0.9615ms)
+✔ tenant and organization scope do not leak document IDs or collide (1.1511ms)
+✔ unknown send cannot resend; reconcile only calls lookup (1.8006ms)
+✔ concurrent sends claim one durable attempt (0.9975ms)
+✔ confirmed rejection is terminal and audited without automatic retry (1.0021ms)
+✔ wrong or expired approval and payload tampering are blocked (0.7271ms)
+✔ incoming replay is deduplicated and corrections retain linkage (0.829ms)
+✔ fault before cursor commit rolls back entire inbound batch (0.6393ms)
+✔ unsupported schema and entity-bearing XML are quarantined without parsing (0.5805ms)
+✔ restart preserves documents; crashed sender recovers UNKNOWN without retry (48.257ms)
+✔ gateway errors and malformed ACK remain UNKNOWN; production adapter is blocked (1.8319ms)
+✔ local HTTP flow enforces token, origin and host and supports inbound/outbound/status (172.3712ms)
+ℹ tests 13
+ℹ suites 0
+ℹ pass 13
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 391.8054

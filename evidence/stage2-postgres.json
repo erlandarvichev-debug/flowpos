@@ -1,0 +1,18 @@
+{
+  "postgres_version": "16.9",
+  "checks": [
+    "migration applies twice without destructive changes",
+    "runtime and command owner are NOLOGIN/NOSUPERUSER/NOBYPASSRLS",
+    "six concurrent sessions create one canonical operation",
+    "same key different payload rejected even with same supplied hash",
+    "RLS isolates tenant and organization; missing context/reader mutation/direct DML denied",
+    "expected version and approval expiry enforced",
+    "six concurrent sessions claim exactly one submission attempt",
+    "actual PostgreSQL restart preserves active claim and attempt identity",
+    "expired lease → UNKNOWN; stale callback fenced; no automatic resend",
+    "NULL lease token cannot authorize status changes",
+    "composite foreign key rejects cross-organization approval"
+  ],
+  "passed": 11,
+  "runtime_http_adapter": "not implemented; SQL persistence slice only"
+}

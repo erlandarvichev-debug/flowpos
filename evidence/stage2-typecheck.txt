@@ -1,0 +1,3 @@
+
+> rmk@0.2.90 typecheck:esf
+> tsc -p erp/esf-stand/tsconfig.json

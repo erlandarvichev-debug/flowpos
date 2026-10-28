@@ -1,0 +1,35 @@
+
+> rmk@0.2.90 test:esf
+> node --test erp/esf-stand/*.node-test.ts
+
+✔ authorization rejects foreign org, disabled/expired principal and protects all commands (3.6172ms)
+✔ stale version/approval rejected; expiry reset is explicit; actor is audited (2.0436ms)
+✔ opening another connection does not recover an active send; late callback is fenced (57.8233ms)
+✔ six real processes deduplicate create and claim one send (424.9275ms)
+✔ hard child exit after durable claim recovers only after lease; never resends (154.4169ms)
+✔ composite local FK refuses cross-organization approval/job references (1.7293ms)
+✔ v1 migration preserves payload/hash/idempotency and records missing historic schema honestly (65.9896ms)
+✔ HTTP principal cannot be impersonated by headers/body; grants rechecked after session (104.9866ms)
+✔ unsupported form preserves schema and raw payload; cannot be approved (1.892ms)
+✔ read-only listing cannot trigger recovery in another organization (1.5883ms)
+✔ operation identity survives device migration; changed payload conflicts (2.7797ms)
+✔ synthetic signing boundary binds scope, bytes and expiry; marker is never legal signature (1.7457ms)
+✔ tenant and organization scope do not leak document IDs or collide (1.5046ms)
+✔ unknown send cannot resend; reconcile only calls lookup (2.6465ms)
+✔ concurrent sends claim one durable attempt (1.9875ms)
+✔ confirmed rejection is terminal and audited without automatic retry (2.1048ms)
+✔ wrong or expired approval and payload tampering are blocked (1.7447ms)
+✔ incoming replay is deduplicated and corrections retain linkage (1.8133ms)
+✔ fault before cursor commit rolls back entire inbound batch (1.5817ms)
+✔ unsupported schema and entity-bearing XML are quarantined without parsing (1.5742ms)
+✔ restart preserves documents; crashed sender recovers UNKNOWN without retry (71.808ms)
+✔ gateway errors and malformed ACK remain UNKNOWN; production adapter is blocked (2.6216ms)
+✔ local HTTP flow enforces token, origin and host and supports inbound/outbound/status (159.0497ms)
+ℹ tests 23
+ℹ suites 0
+ℹ pass 23
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 946.7659

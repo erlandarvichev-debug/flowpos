@@ -1,0 +1,16 @@
+
+> rmk@0.2.90 test
+> vitest run
+
+
+ RUN  v5.0.2 C:/Users/123/Documents/Codex/2026-10-27/task/flowpos-esf
+
+
+ Test Files  42 passed (42)
+      Tests  230 passed (230)
+   Start at  19:23:25
+   Duration  2.68s (transform 48%, tests 25%, import 24%, worker 3%)
+
+  Transform  transforming modules took 4.07s · 48% of tracked time, re-done on every run
+             persist transforms across runs with fsModuleCache: true
+             learn more: https://vitest.dev/guide/improving-performance#caching-between-reruns

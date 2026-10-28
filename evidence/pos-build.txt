@@ -1,0 +1,49 @@
+
+> rmk@0.2.90 build
+> vue-tsc --noEmit && vite build
+
+vite v6.4.3 building for production...
+transforming...
+✓ 793 modules transformed.
+rendering chunks...
+[plugin vite:reporter]
+(!) C:/Users/123/Documents/Codex/2026-10-27/task/flowpos-esf/src/layouts/DefaultLayout.vue is dynamically imported by C:/Users/123/Documents/Codex/2026-10-27/task/flowpos-esf/src/layouts/AppLayout.vue?vue&type=script&setup=true&lang.ts but also statically imported by C:/Users/123/Documents/Codex/2026-10-27/task/flowpos-esf/src/layouts/AppLayout.vue?vue&type=script&setup=true&lang.ts, dynamic import will not move module into another chunk.
+
+computing gzip size...
+dist/index.html                                                0.49 kB │ gzip:   0.31 kB
+dist/assets/inter-vietnamese-wght-normal-CBcvBZtf.woff2       10.25 kB
+dist/assets/inter-greek-ext-wght-normal-DlzME5K_.woff2        11.23 kB
+dist/assets/inter-cyrillic-wght-normal-DqGufNeO.woff2         18.75 kB
+dist/assets/inter-greek-wght-normal-CkhJZR-_.woff2            19.00 kB
+dist/assets/productSearch.worker-CvtwcafO.js                  21.64 kB
+dist/assets/inter-cyrillic-ext-wght-normal-BOeWTOD4.woff2     25.96 kB
+dist/assets/logo-Cui1JkF2.png                                 31.98 kB
+dist/assets/primeicons-C6QP2o4f.woff2                         35.15 kB
+dist/assets/inter-latin-wght-normal-Dx4kXJAl.woff2            48.26 kB
+dist/assets/primeicons-MpK4pl85.ttf                           84.98 kB
+dist/assets/primeicons-WjwUDZjB.woff                          85.06 kB
+dist/assets/inter-latin-ext-wght-normal-DO1Apj_S.woff2        85.07 kB
+dist/assets/primeicons-DMOk5skT.eot                           85.16 kB
+dist/assets/primeicons-Dr5RGzOO.svg                          342.53 kB │ gzip: 105.26 kB
+dist/assets/KioskSetupModal-DvPwMWA7.css                       0.95 kB │ gzip:   0.41 kB
+dist/assets/LoginPage-DKsi5MoG.css                             6.85 kB │ gzip:   1.89 kB
+dist/assets/CatalogPage-ODN1MUtK.css                           9.32 kB │ gzip:   1.59 kB
+dist/assets/KioskPage-DkJRWiXS.css                            17.29 kB │ gzip:   2.82 kB
+dist/assets/index-D6Gt-9HD.css                               243.09 kB │ gzip:  30.36 kB
+dist/assets/AppLayout-BgNxZ2qF.js                              0.06 kB │ gzip:   0.08 kB
+dist/assets/AdminLayout-05o1Omtt.js                            1.01 kB │ gzip:   0.60 kB
+dist/assets/ReturnsPage-DDjJo0-Q.js                            3.39 kB │ gzip:   1.71 kB
+dist/assets/KioskSetupModal-BeYoWOuS.js                        4.82 kB │ gzip:   1.98 kB
+dist/assets/index-BB4ddtfg.js                                  4.90 kB │ gzip:   1.24 kB
+dist/assets/LoginPage-BbYDq8EI.js                              5.85 kB │ gzip:   2.52 kB
+dist/assets/OrdersPage-CKTQOYiw.js                            15.47 kB │ gzip:   5.83 kB
+dist/assets/CatalogPage-ifa7UFfl.js                           44.33 kB │ gzip:  11.99 kB
+dist/assets/KioskPage-D9kker50.js                             45.78 kB │ gzip:  13.32 kB
+dist/assets/DatePicker-DksHqGvr.js                           107.49 kB │ gzip:  22.70 kB
+dist/assets/index-D68aFkQI.js                              1,917.19 kB │ gzip: 550.94 kB
+
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 6.58s

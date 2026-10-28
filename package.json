@@ -9,6 +9,7 @@
   "scripts": {
     "test": "jest --config jest.config.js --runInBand",
     "test:watch": "jest --config jest.config.js --watch",
+    "test:esf": "node --test erp/esf-stand/*.node-test.ts",
     "dev": "concurrently \"npm run dev:api\" \"npm run dev:web\"",
     "dev:api": "npm run dev --workspace=apps/api",
     "dev:web": "npm run dev --workspace=apps/web",
@@ -17,7 +18,9 @@
     "dev:analytics": "npm run dev --workspace=apps/analytics-worker",
     "dev:moysklad": "npm run dev --workspace=apps/moysklad-worker",
     "dev:workers": "concurrently \"npm run dev:sync\" \"npm run dev:push\" \"npm run dev:analytics\" \"npm run dev:moysklad\"",
+    "dev:esf": "node erp/esf-stand/server.ts",
     "build": "npm run build --workspaces",
+    "typecheck:esf": "tsc -p erp/esf-stand/tsconfig.json",
     "db:generate": "npm run db:generate --workspace=apps/api",
     "db:migrate": "npm run db:migrate --workspace=apps/api",
     "db:seed": "npm run db:seed --workspace=apps/api",
