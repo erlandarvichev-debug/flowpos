@@ -307,26 +307,303 @@ export class PosService {
   }
 
   /**
-   * FP-002: External effect: Process payment (idempotent)
-   * Called AFTER atomicSale() returns successfully
+   * FP-003: Payment State Machine
+   * States: CREATED → PENDING → CONFIRMED | REJECTED | UNKNOWN
+   * UNKNOWN is stable (prevents blind retry); manual reconciliation required
    */
-  async processPayment(saleId: string, paymentId: string, amount: number) {
-    // TODO: Call payment provider with paymentId (idempotency key)
-    // Should return: CONFIRMED | REJECTED | TIMEOUT
-    // On success: update pos_payments status = CONFIRMED
-    // On failure: update recovery_jobs status = PENDING_FISCAL and log error
-    throw new Error('FP-002: Payment provider not implemented');
+  async processPayment(saleId: string, paymentId: string, amount: number, timeoutMs = 30000) {
+    const now = new Date();
+    const timeoutAt = new Date(Date.now() + timeoutMs);
+
+    // FP-003: Create payment attempt (durable before external effect)
+    const attempt = await this.prisma.paymentAttempt.create({
+      data: {
+        id: uuidv4(),
+        saleId,
+        paymentId, // idempotency key for payment provider
+        status: 'CREATED',
+        amount,
+        paymentMethod: 'UNKNOWN', // will be determined by caller
+        timeoutAt,
+      },
+    });
+
+    try {
+      // FP-003: Transition to PENDING
+      await this.prisma.paymentAttempt.update({
+        where: { id: attempt.id },
+        data: {
+          status: 'PENDING',
+          lastAttemptAt: now,
+        },
+      });
+
+      // FP-003: Call payment provider with idempotency key
+      // Provider must be idempotent: same paymentId → same result
+      const providerResult = await this.callPaymentProvider(paymentId, amount);
+
+      // FP-003: Handle provider response
+      if (providerResult.status === 'CONFIRMED') {
+        await this.prisma.paymentAttempt.update({
+          where: { id: attempt.id },
+          data: {
+            status: 'CONFIRMED',
+            confirmedAt: now,
+            providerId: providerResult.providerId,
+          },
+        });
+        return { status: 'CONFIRMED', attempt };
+      } else if (providerResult.status === 'REJECTED') {
+        await this.prisma.paymentAttempt.update({
+          where: { id: attempt.id },
+          data: {
+            status: 'REJECTED',
+            errorCode: providerResult.errorCode,
+            errorMessage: providerResult.errorMessage,
+          },
+        });
+        return { status: 'REJECTED', attempt };
+      } else {
+        // FP-003: UNKNOWN — timeout or no response
+        // Do NOT automatically retry; requires manual reconciliation
+        await this.prisma.paymentAttempt.update({
+          where: { id: attempt.id },
+          data: {
+            status: 'UNKNOWN',
+            errorCode: 'TIMEOUT_OR_UNKNOWN_RESPONSE',
+          },
+        });
+        return { status: 'UNKNOWN', attempt };
+      }
+    } catch (error: any) {
+      // FP-003: Error during payment processing
+      await this.prisma.paymentAttempt.update({
+        where: { id: attempt.id },
+        data: {
+          status: 'UNKNOWN',
+          errorCode: 'PAYMENT_PROVIDER_ERROR',
+          errorMessage: error.message,
+        },
+      });
+      return { status: 'UNKNOWN', attempt };
+    }
   }
 
   /**
-   * FP-002: External effect: Register fiscal (idempotent)
-   * Called AFTER payment is confirmed
+   * FP-003: Fiscal State Machine
+   * States: CREATED → SENT → REGISTERED | FAILED | UNKNOWN
+   * UNKNOWN is stable; manual reconciliation required
    */
-  async registerFiscal(saleId: string, receiptNumber: string, payloadHash: string) {
-    // TODO: Call fiscal printer with receiptNumber + payloadHash (idempotency key)
-    // Should return: fiscal_number or error
-    // On success: update pos_sales fiscal_number, update recovery_jobs status = COMPLETED
-    // On failure: log to fiscal_attempts, update recovery_jobs for retry
-    throw new Error('FP-002: Fiscal printer not implemented');
+  async registerFiscal(
+    saleId: string,
+    receiptNumber: string,
+    payloadHash: string,
+    timeoutMs = 15000,
+  ) {
+    const now = new Date();
+    const timeoutAt = new Date(Date.now() + timeoutMs);
+
+    // FP-003: Create fiscal attempt (durable before external effect)
+    const attempt = await this.prisma.fiscalAttempt.create({
+      data: {
+        id: uuidv4(),
+        saleId,
+        receiptNumber, // idempotency key for fiscal printer
+        payloadHash, // immutable proof of payload
+        status: 'CREATED',
+        timeoutAt,
+      },
+    });
+
+    try {
+      // FP-003: Transition to SENT
+      await this.prisma.fiscalAttempt.update({
+        where: { id: attempt.id },
+        data: {
+          status: 'SENT',
+          lastAttemptAt: now,
+        },
+      });
+
+      // FP-003: Call fiscal printer with idempotency key
+      // Printer must be idempotent: same receiptNumber + hash → same fiscal_number
+      const printerResult = await this.callFiscalPrinter(receiptNumber, payloadHash);
+
+      // FP-003: Handle printer response
+      if (printerResult.status === 'REGISTERED') {
+        await this.prisma.fiscalAttempt.update({
+          where: { id: attempt.id },
+          data: {
+            status: 'REGISTERED',
+            fiscalNumber: printerResult.fiscalNumber,
+            fiscalDate: now,
+            registeredAt: now,
+            printerId: printerResult.printerId,
+          },
+        });
+        return { status: 'REGISTERED', fiscalNumber: printerResult.fiscalNumber, attempt };
+      } else if (printerResult.status === 'FAILED') {
+        await this.prisma.fiscalAttempt.update({
+          where: { id: attempt.id },
+          data: {
+            status: 'FAILED',
+            errorCode: printerResult.errorCode,
+            errorMessage: printerResult.errorMessage,
+          },
+        });
+        return { status: 'FAILED', attempt };
+      } else {
+        // FP-003: UNKNOWN — timeout or no response
+        // Do NOT automatically retry; requires manual reconciliation
+        await this.prisma.fiscalAttempt.update({
+          where: { id: attempt.id },
+          data: {
+            status: 'UNKNOWN',
+            errorCode: 'TIMEOUT_OR_UNKNOWN_RESPONSE',
+          },
+        });
+        return { status: 'UNKNOWN', attempt };
+      }
+    } catch (error: any) {
+      // FP-003: Error during fiscal processing
+      await this.prisma.fiscalAttempt.update({
+        where: { id: attempt.id },
+        data: {
+          status: 'UNKNOWN',
+          errorCode: 'FISCAL_PRINTER_ERROR',
+          errorMessage: error.message,
+        },
+      });
+      return { status: 'UNKNOWN', attempt };
+    }
+  }
+
+  /**
+   * FP-003: Reconciliation — lookup payment provider status
+   * Used when payment is in UNKNOWN state after restart
+   */
+  async reconcilePayment(paymentAttemptId: string, paymentId: string) {
+    const attempt = await this.prisma.paymentAttempt.findUnique({
+      where: { id: paymentAttemptId },
+    });
+
+    if (!attempt) throw new NotFoundException('Payment attempt not found');
+    if (attempt.status === 'CONFIRMED') return { status: 'CONFIRMED' };
+    if (attempt.status === 'REJECTED') return { status: 'REJECTED' };
+    if (attempt.status !== 'UNKNOWN') {
+      throw new BadRequestException('Payment must be in UNKNOWN state to reconcile');
+    }
+
+    // FP-003: Look up payment status from provider (idempotent)
+    const providerStatus = await this.lookupPaymentStatus(paymentId);
+
+    const now = new Date();
+    if (providerStatus === 'CONFIRMED') {
+      await this.prisma.paymentAttempt.update({
+        where: { id: paymentAttemptId },
+        data: {
+          status: 'CONFIRMED',
+          confirmedAt: now,
+          providerStatus,
+        },
+      });
+      return { status: 'CONFIRMED' };
+    } else if (providerStatus === 'REJECTED') {
+      await this.prisma.paymentAttempt.update({
+        where: { id: paymentAttemptId },
+        data: {
+          status: 'REJECTED',
+          providerStatus,
+        },
+      });
+      return { status: 'REJECTED' };
+    } else {
+      // Still UNKNOWN — provider doesn't know either
+      await this.prisma.paymentAttempt.update({
+        where: { id: paymentAttemptId },
+        data: {
+          lastLookupAt: now,
+          providerStatus,
+        },
+      });
+      return { status: 'UNKNOWN', lastLookupAt: now };
+    }
+  }
+
+  /**
+   * FP-003: Reconciliation — lookup fiscal printer status
+   * Used when fiscal is in UNKNOWN state after restart
+   */
+  async reconcileFiscal(fiscalAttemptId: string, receiptNumber: string, payloadHash: string) {
+    const attempt = await this.prisma.fiscalAttempt.findUnique({
+      where: { id: fiscalAttemptId },
+    });
+
+    if (!attempt) throw new NotFoundException('Fiscal attempt not found');
+    if (attempt.status === 'REGISTERED') return { status: 'REGISTERED', fiscalNumber: attempt.fiscalNumber };
+    if (attempt.status === 'FAILED') return { status: 'FAILED' };
+    if (attempt.status !== 'UNKNOWN') {
+      throw new BadRequestException('Fiscal must be in UNKNOWN state to reconcile');
+    }
+
+    // FP-003: Look up fiscal status from printer (idempotent)
+    const printerStatus = await this.lookupFiscalStatus(receiptNumber, payloadHash);
+
+    const now = new Date();
+    if (printerStatus.status === 'REGISTERED') {
+      await this.prisma.fiscalAttempt.update({
+        where: { id: fiscalAttemptId },
+        data: {
+          status: 'REGISTERED',
+          fiscalNumber: printerStatus.fiscalNumber,
+          registeredAt: now,
+          printerStatus: JSON.stringify(printerStatus),
+        },
+      });
+      return { status: 'REGISTERED', fiscalNumber: printerStatus.fiscalNumber };
+    } else if (printerStatus.status === 'FAILED') {
+      await this.prisma.fiscalAttempt.update({
+        where: { id: fiscalAttemptId },
+        data: {
+          status: 'FAILED',
+          printerStatus: JSON.stringify(printerStatus),
+        },
+      });
+      return { status: 'FAILED' };
+    } else {
+      // Still UNKNOWN
+      await this.prisma.fiscalAttempt.update({
+        where: { id: fiscalAttemptId },
+        data: {
+          lastLookupAt: now,
+          printerStatus: JSON.stringify(printerStatus),
+        },
+      });
+      return { status: 'UNKNOWN', lastLookupAt: now };
+    }
+  }
+
+  // ─── FP-003: Provider stub methods ───────────────────────────────────────────
+
+  private async callPaymentProvider(paymentId: string, amount: number) {
+    // TODO: Integrate with actual payment provider (Kaspi, Halyk, etc.)
+    // Contract: must be idempotent on paymentId
+    throw new Error('FP-003: Payment provider not configured');
+  }
+
+  private async lookupPaymentStatus(paymentId: string) {
+    // TODO: Query payment provider for current status
+    throw new Error('FP-003: Payment provider status lookup not configured');
+  }
+
+  private async callFiscalPrinter(receiptNumber: string, payloadHash: string) {
+    // TODO: Integrate with actual fiscal printer
+    // Contract: must be idempotent on receiptNumber + payloadHash
+    throw new Error('FP-003: Fiscal printer not configured');
+  }
+
+  private async lookupFiscalStatus(receiptNumber: string, payloadHash: string) {
+    // TODO: Query fiscal printer for current status
+    throw new Error('FP-003: Fiscal printer status lookup not configured');
   }
 }

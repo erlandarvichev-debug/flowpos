@@ -825,6 +825,113 @@ enum CashOpType {
   OUT
 }
 
+// ─── FP-003: DURABLE PAYMENT & FISCAL STATE MACHINES ─────────────────────────
+
+model PaymentAttempt {
+  id           String   @id @default(uuid())
+  saleId       String   @map("sale_id")
+  paymentId    String   @map("payment_id")
+
+  // FP-003: State machine (CREATED → PENDING → CONFIRMED | REJECTED | UNKNOWN)
+  status       String   @default("CREATED") // CREATED, PENDING, CONFIRMED, REJECTED, UNKNOWN, RECONCILING
+  amount       Int // in minor units
+  paymentMethod String @map("payment_method") // CASH, CARD, QR, MIXED
+
+  // External provider tracking
+  providerId   String?  @map("provider_id")
+  providerStatus String? @map("provider_status") // raw status from gateway
+
+  // FP-003: Timeout tracking (UNKNOWN survives restart)
+  timeoutAt    DateTime? @map("timeout_at") // when payment was sent
+  lastAttemptAt DateTime? @map("last_attempt_at")
+  retryCount   Int      @default(0) @map("retry_count")
+  maxRetries   Int      @default(3) @map("max_retries")
+
+  // Error tracking
+  errorCode    String?  @map("error_code")
+  errorMessage String?  @map("error_message")
+
+  confirmedAt  DateTime? @map("confirmed_at")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  sale         PosSales @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  reconciliation PaymentReconciliation?
+
+  @@index([saleId])
+  @@index([status])
+  @@index([timeoutAt])
+  @@map("payment_attempts")
+}
+
+model FiscalAttempt {
+  id           String   @id @default(uuid())
+  saleId       String   @map("sale_id")
+  receiptNumber String @map("receipt_number")
+  payloadHash  String   @map("payload_hash")
+
+  // FP-003: State machine (CREATED → SENT → REGISTERED | FAILED | UNKNOWN)
+  status       String   @default("CREATED") // CREATED, SENT, REGISTERED, FAILED, UNKNOWN
+  fiscalNumber String?  @map("fiscal_number")
+  fiscalDate   DateTime? @map("fiscal_date")
+
+  // Printer tracking
+  printerId    String?  @map("printer_id")
+  printerStatus String? @map("printer_status")
+
+  // FP-003: Timeout tracking (UNKNOWN survives restart)
+  timeoutAt    DateTime? @map("timeout_at")
+  lastAttemptAt DateTime? @map("last_attempt_at")
+  retryCount   Int      @default(0) @map("retry_count")
+  maxRetries   Int      @default(3) @map("max_retries")
+
+  // Error tracking
+  errorCode    String?  @map("error_code")
+  errorMessage String?  @map("error_message")
+
+  registeredAt DateTime? @map("registered_at")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  sale         PosSales @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  reconciliation FiscalReconciliation?
+
+  @@index([saleId])
+  @@index([status])
+  @@index([timeoutAt])
+  @@map("fiscal_attempts")
+}
+
+model PaymentReconciliation {
+  id              String   @id @default(uuid())
+  paymentAttemptId String @unique @map("payment_attempt_id")
+
+  lastLookupAt    DateTime? @map("last_lookup_at")
+  lastKnownStatus String?   @map("last_known_status")
+  lastKnownProviderStatus String? @map("last_known_provider_status")
+
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  paymentAttempt  PaymentAttempt @relation(fields: [paymentAttemptId], references: [id], onDelete: Cascade)
+
+  @@map("payment_reconciliations")
+}
+
+model FiscalReconciliation {
+  id              String   @id @default(uuid())
+  fiscalAttemptId String @unique @map("fiscal_attempt_id")
+
+  lastLookupAt    DateTime? @map("last_lookup_at")
+  lastKnownStatus String?   @map("last_known_status")
+  lastKnownFiscalNumber String? @map("last_known_fiscal_number")
+
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  fiscalAttempt   FiscalAttempt @relation(fields: [fiscalAttemptId], references: [id], onDelete: Cascade)
+
+  @@map("fiscal_reconciliations")
+}
+
 // ─── HR ──────────────────────────────────────────────────────────────────────
 
 model Department {
