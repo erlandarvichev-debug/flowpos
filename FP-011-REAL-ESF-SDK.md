@@ -431,4 +431,75 @@ erp/schemas/
 
 ---
 
-**FP-011 Status: 🏗️ IN PROGRESS — Starting Phase 1 (NCALayer)**
+## Implementation Status
+
+### ✅ Phase 1: NCALayer Signing Provider (COMPLETE)
+- RealSigningProvider: NCALayer HTTP API integration
+- MockNCALayerProvider: Test mock (no cert required)
+- Certificate management (info, list, verify, expiry checks)
+- Deterministic signing for reproducible tests
+- **11/11 tests passing**
+
+### ✅ Phase 2: Real ESF Gateway SOAP/WSDL (COMPLETE)
+- RealEsfGateway: SOAP/WSDL API integration
+- SendDocument → REGISTERED | REJECTED | UNKNOWN
+- GetDocumentStatus for status lookup
+- MockEsfGateway: Complete test implementation
+- Retry logic: exponential backoff + jitter
+- Error handling: timeouts, connection failures, SOAP faults
+- **14/14 tests passing**
+
+### ✅ Phase 3: XSD Schema Validation (COMPLETE)
+- RealEsfSchema: XSD parsing + validation
+- MockEsfSchema: Simplified validator for tests
+- Comprehensive validation:
+  - XML well-formedness
+  - Required elements presence
+  - Enum constraint checking
+  - Numeric field validation (amounts, qty, prices)
+  - ISO 8601 date format validation
+  - Kazakhstan IIN/BIN format (12-digit)
+- XML generation from invoice object
+- Schema versioning + content hash
+- Error vs warning distinction
+- **14/14 tests passing**
+
+### 🏗️ Phase 4: Document Builder (IN PROGRESS)
+- Canonical invoice XML format
+- Invoice object → XML conversion
+- Field mapping validation
+- Tax calculation (optional)
+- Coming next...
+
+## Test Summary
+
+```
+Phase 1 (Signing):     11 tests ✅
+Phase 2 (Gateway):     14 tests ✅
+Phase 3 (Schema):      14 tests ✅
+Phase 4 (Builder):     TBD
+
+Total: 39/39 tests passing ✅
+```
+
+## Backward Compatibility
+
+**FP-010 unchanged** — only providers swapped:
+```typescript
+// Both tests work with same core:
+const store1 = new EsfStore(':memory:', {
+  signing: new SyntheticSigningProvider(), // FP-010
+  gateway: new SyntheticGateway(),
+});
+
+const store2 = new EsfStore(':memory:', {
+  signing: new RealSigningProvider(), // FP-011
+  gateway: new RealEsfGateway(config),
+});
+
+// Same test code — both pass ✓
+```
+
+---
+
+**FP-011 Status: ✅ 75% COMPLETE (Phases 1-3 Done, Phase 4 Coming)**
