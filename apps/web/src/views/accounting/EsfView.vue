@@ -81,6 +81,7 @@
                 <el-button size="small" link @click="showXml(row)">XML</el-button>
                 <el-button v-if="canSend && ['READY', 'REJECTED'].includes(row.status)" size="small" link type="danger" @click="discard(row)">Отменить</el-button>
                 <el-button v-if="canSend && canRevoke(row)" size="small" link type="danger" @click="act('REVOKE', row)">Отозвать</el-button>
+                <el-button v-if="canSend && row.status === 'UNKNOWN'" size="small" link type="warning" @click="releaseUnknown(row)">Разрешить повторную отправку</el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -202,6 +203,7 @@ const TRANSPORT = [
 ]
 const STATUS: Record<string, [string, string]> = {
   READY: ['Готов к подписи', 'info'], SENT: ['Отправлен', ''], REJECTED: ['Отклонён (ФЛК)', 'danger'], CANCELLED: ['Отменён', 'info'],
+  SENDING: ['Отправляется', 'warning'], UNKNOWN: ['Результат неизвестен — сверка', 'warning'],
   CREATED: ['Создан', ''], DELIVERED: ['Доставлен', 'success'], REVOKED: ['Отозван', 'warning'], DECLINED: ['Отклонён получателем', 'danger'],
   CANCELED: ['Аннулирован', 'warning'], IN_QUEUE: ['В очереди', ''], IN_PROCESSING: ['В обработке', ''], FAILED: ['Ошибочный', 'danger'],
   WAITING_CUSTOMER_CONFIRMATION: ['Ждёт подтверждения', 'warning'], WAITING_CUSTOMER_REVOKE_CONFIRMATION: ['Отзыв ждёт подтверждения', 'warning'],
@@ -334,6 +336,15 @@ async function act(action: string, row: any) {
 async function discard(row: any) {
   try { await ElMessageBox.confirm(`Отменить ЭСФ № ${row.num}? Он не был зарегистрирован в ИС ЭСФ.`, 'Отмена ЭСФ', { type: 'warning', confirmButtonText: 'Отменить ЭСФ', cancelButtonText: 'Нет' }) } catch { return }
   try { await api.post(`/accounting/esf/invoices/${row.id}/discard`); await load() } catch (e) { showError(e) }
+}
+
+/** UNKNOWN: ЭСФ мог быть принят. Повтор — только если сверка по дате и номеру его не нашла (проверяет сервер). */
+async function releaseUnknown(row: any) {
+  let reason = ''
+  try {
+    reason = ((await ElMessageBox.prompt(`ЭСФ № ${row.num}: ответ ИС ЭСФ не был получен. Повторная отправка допустима, только если сверка не нашла этот ЭСФ в ИС ЭСФ. Причина:`, 'Повторная отправка', { confirmButtonText: 'Разрешить', cancelButtonText: 'Отмена', inputValidator: (v: string) => (v?.trim().length ?? 0) >= 5 || 'Не короче 5 символов' })) as any).value
+  } catch { return }
+  try { await api.post(`/accounting/esf/invoices/${row.id}/release-unknown`, { reason }); ElMessage.success('ЭСФ снова готов к подписи'); await load() } catch (e) { showError(e) }
 }
 
 async function showXml(row: any) {

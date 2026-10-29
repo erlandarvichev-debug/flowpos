@@ -182,6 +182,9 @@ export class AccountingController {
   @Post('esf/actions') @RequirePermission('acc.esf.send')
   esfAction(@Org() ctx: OrgContext, @Body() b: any) { return this.esf.action(ctx, b); }
 
+  @Post('esf/invoices/:id/release-unknown') @RequirePermission('acc.esf.send')
+  esfReleaseUnknown(@Org() ctx: OrgContext, @Param('id') id: string, @Body() b: any) { return this.esf.releaseUnknown(ctx, id, b?.reason); }
+
   @Post('esf/refresh') @RequirePermission('acc.esf.read')
   esfRefresh(@Org() ctx: OrgContext) { return this.esf.refresh(ctx); }
 

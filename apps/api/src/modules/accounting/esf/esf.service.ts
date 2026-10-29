@@ -39,6 +39,10 @@ function stripPem(cert: string) {
 @Injectable()
 export class EsfService implements OnModuleInit, OnModuleDestroy {
   private log = new Logger('ESF');
+  /** Отправка дольше этого — процесс считается упавшим (таймаут SOAP 60 с). */
+  static SEND_LEASE_MS = 5 * 60_000;
+  /** Сверка «не найдено» доказательна только спустя этот срок после отправки (задержка обработки ИС ЭСФ). */
+  static RECONCILE_QUIET_MS = 10 * 60_000;
   private timer?: NodeJS.Timeout;
   private running = false;
   /** Подменяется в тестах. */
@@ -426,23 +430,80 @@ export class EsfService implements OnModuleInit, OnModuleDestroy {
     });
     const evidence = await this.checkSignatures(ctx, s, b.certificate, items.map((it) => ({ kind: 'INVOICE' as const, subjectId: it.row.id, label: `ЭСФ № ${it.row.num}`, bytes: it.body, signature: it.signature, token: it.signingToken })));
     const cert = stripPem(b.certificate);
-    const res = await this.wrap(() => this.client(env).syncInvoice(session.sessionId, cert, items), session.id);
+    const ids = items.map((i) => i.row.id);
+
+    // FP-017: до сети — атомарный захват READY → SENDING. Метка захвата (sentAt) — fencing для результата.
+    const claimAt = new Date();
+    await this.prisma.$transaction(async (tx) => {
+      const c = await tx.esfInvoice.updateMany({ where: { id: { in: ids }, organizationId: ctx.organizationId, status: 'READY' }, data: { status: 'SENDING', sentAt: claimAt, sentBy: ctx.userId, certificate: cert } });
+      if (c.count !== ids.length) throw new AccError('ESF_STATUS', 'Часть ЭСФ уже отправляется или отправлена — обновите список');
+      for (const it of items) await tx.esfInvoice.update({ where: { id: it.row.id }, data: { signature: it.signature } });
+      await tx.auditLog.create({ data: { userId: ctx.userId, organizationId: ctx.organizationId, action: 'ESF_SEND_STARTED', entity: 'esf_invoice', entityId: ids.join(','), after: { environment: env, claimAt: claimAt.toISOString(), signing: evidence } as any } });
+    });
+    const fenced = (id: string) => ({ id, organizationId: ctx.organizationId, status: 'SENDING', sentAt: claimAt });
+
+    let res: Awaited<ReturnType<EsfSoapClient['syncInvoice']>>;
+    try {
+      res = await this.client(env).syncInvoice(session.sessionId, cert, items);
+    } catch (e: any) {
+      // Только отказ до обработки (нет сессии/доступа/подпись входа) доказывает, что ЭСФ не приняты.
+      const notProcessed = e instanceof EsfSoapError && (e.sessionClosed || e.code === 'ACCESS_DENIED' || e.code === 'SECURITY_ERROR');
+      const data = notProcessed
+        ? { status: 'READY', sentAt: null, sentBy: null, signature: null, certificate: null }
+        : { status: 'UNKNOWN', errors: [{ errorCode: 'OUTCOME_UNKNOWN', text: `Ответ ИС ЭСФ не получен (${e instanceof EsfSoapError ? e.code : 'ERROR'}) — ЭСФ мог быть принят. Повторная отправка заблокирована до сверки.` }] as any };
+      for (const id of ids) await this.prisma.esfInvoice.updateMany({ where: fenced(id), data });
+      await this.prisma.auditLog.create({ data: { userId: ctx.userId, organizationId: ctx.organizationId, action: notProcessed ? 'ESF_SEND_NOT_PROCESSED' : 'ESF_SEND_OUTCOME_UNKNOWN', entity: 'esf_invoice', entityId: ids.join(','), after: { environment: env, claimAt: claimAt.toISOString(), error: e instanceof EsfSoapError ? e.code : 'ERROR' } as any } });
+      return this.wrap(() => Promise.reject(e), session.id);
+    }
+
     const key = (num: string, date: string) => `${num}|${date}`;
     const acc = new Map(res.accepted.map((a) => [key(a.num, a.date), a]));
     const dec = new Map(res.declined.map((a) => [key(a.num, a.date), a]));
     const result: any[] = [];
+    let unknown = 0;
     for (const it of items) {
       const k = key(it.row.num, esfDate(it.row.date));
       const a = acc.get(k), d = dec.get(k);
-      const data: any = { signature: it.signature, certificate: cert, sentBy: ctx.userId, sentAt: new Date() };
+      const data: any = {};
       if (a) Object.assign(data, { status: 'SENT', esfStatus: 'IN_QUEUE', esfId: a.id ? BigInt(a.id) : null, errors: a.errors.length ? a.errors : Prisma.DbNull });
       else if (d) Object.assign(data, { status: 'REJECTED', errors: d.errors });
-      else Object.assign(data, { status: 'SENT', esfStatus: null }); // ответа по номеру нет — уточним сверкой по ключу
-      const upd = await this.prisma.esfInvoice.update({ where: { id: it.row.id }, data });
-      result.push({ id: upd.id, num: upd.num, status: upd.status, errors: upd.errors });
+      else { unknown++; Object.assign(data, { status: 'UNKNOWN', esfStatus: null, errors: [{ errorCode: 'OUTCOME_UNKNOWN', text: 'ИС ЭСФ не вернула результат по этому ЭСФ — статус уточняется сверкой по дате и номеру' }] }); }
+      // Результат применяется, только если строку не перехватил другой процесс/восстановление.
+      const applied = (await this.prisma.esfInvoice.updateMany({ where: fenced(it.row.id), data })).count === 1;
+      const upd = await this.prisma.esfInvoice.findUniqueOrThrow({ where: { id: it.row.id } });
+      result.push({ id: upd.id, num: upd.num, status: upd.status, errors: upd.errors, fenced: !applied });
     }
-    await this.prisma.auditLog.create({ data: { userId: ctx.userId, organizationId: ctx.organizationId, action: 'ESF_UPLOAD', entity: 'esf_invoice', entityId: items.map((i) => i.row.id).join(','), after: { environment: env, accepted: res.accepted.length, declined: res.declined.length, signing: evidence } as any } });
-    return { accepted: res.accepted.length, declined: res.declined.length, items: result };
+    await this.prisma.auditLog.create({ data: { userId: ctx.userId, organizationId: ctx.organizationId, action: 'ESF_UPLOAD', entity: 'esf_invoice', entityId: ids.join(','), after: { environment: env, accepted: res.accepted.length, declined: res.declined.length, unknown, signing: evidence } as any } });
+    return { accepted: res.accepted.length, declined: res.declined.length, unknown, items: result };
+  }
+
+  /** FP-017: процесс упал/завис после захвата — истёкший SENDING становится UNKNOWN, а не READY. */
+  async recoverStaleSending(organizationId?: string, now = new Date()) {
+    const before = new Date(now.getTime() - EsfService.SEND_LEASE_MS);
+    const stale = await this.prisma.esfInvoice.findMany({ where: { ...(organizationId ? { organizationId } : {}), direction: 'OUTBOUND', status: 'SENDING', sentAt: { lt: before } }, select: { id: true, organizationId: true, sentAt: true } });
+    for (const r of stale) {
+      const c = await this.prisma.esfInvoice.updateMany({ where: { id: r.id, status: 'SENDING', sentAt: r.sentAt }, data: { status: 'UNKNOWN', errors: [{ errorCode: 'RECOVERED_UNKNOWN', text: 'Отправка прервалась (сбой или перезапуск) — ЭСФ мог быть принят. Повторная отправка заблокирована до сверки.' }] as any } });
+      if (c.count) await this.prisma.auditLog.create({ data: { userId: null, organizationId: r.organizationId, action: 'ESF_SEND_RECOVERED_UNKNOWN', entity: 'esf_invoice', entityId: r.id, after: { sentAt: r.sentAt?.toISOString() } as any } });
+    }
+    return stale.length;
+  }
+
+  /**
+   * FP-017: оператор явно разрешает повторную отправку UNKNOWN-ЭСФ — только если сверка по ключу
+   * после «тихого» периода не нашла документ в ИС ЭСФ. Причина и автор — в журнале.
+   */
+  async releaseUnknown(ctx: OrgContext, id: string, reason: string) {
+    if (!String(reason ?? '').trim() || String(reason).trim().length < 5) throw new AccError('ESF_REASON', 'Укажите причину (не короче 5 символов)');
+    const r = await this.prisma.esfInvoice.findFirst({ where: { id, organizationId: ctx.organizationId, direction: 'OUTBOUND' } });
+    if (!r) throw new AccError('NOT_FOUND', 'ЭСФ не найден', { status: 404 });
+    if (r.status !== 'UNKNOWN') throw new AccError('ESF_STATUS', `Разрешить повторную отправку можно только для ЭСФ с неизвестным результатом (сейчас ${r.status})`);
+    const quietFrom = new Date((r.sentAt ?? r.updatedAt).getTime() + EsfService.RECONCILE_QUIET_MS);
+    const proof = await this.prisma.auditLog.findFirst({ where: { organizationId: ctx.organizationId, action: 'ESF_RECONCILE_NOT_FOUND', entityId: r.id, ts: { gte: quietFrom } }, orderBy: { ts: 'desc' } });
+    if (!proof) throw new AccError('ESF_RECONCILE_REQUIRED', 'Нет доказательства, что ИС ЭСФ не приняла этот ЭСФ', { fix: `Нажмите «Обновить статусы» не раньше ${quietFrom.toISOString().slice(0, 16).replace('T', ' ')} UTC: сверка по дате и номеру должна не найти ЭСФ. Если найдёт — статус обновится сам.` });
+    const c = await this.prisma.esfInvoice.updateMany({ where: { id: r.id, status: 'UNKNOWN' }, data: { status: 'READY', sentAt: null, sentBy: null, signature: null, certificate: null, errors: Prisma.DbNull } });
+    if (!c.count) throw new AccError('ESF_STATUS', 'Статус ЭСФ изменился — обновите список');
+    await this.prisma.auditLog.create({ data: { userId: ctx.userId, organizationId: ctx.organizationId, action: 'ESF_UNKNOWN_RELEASED', entity: 'esf_invoice', entityId: r.id, reason: String(reason).trim(), after: { num: r.num, date: esfDate(r.date), sentAt: r.sentAt?.toISOString(), proofAuditId: proof.id } as any } });
+    return { id: r.id, status: 'READY' };
   }
 
   /**
@@ -566,13 +627,19 @@ export class EsfService implements OnModuleInit, OnModuleDestroy {
 
   private async refreshWith(organizationId: string, env: string, session: { id: string; sessionId: string }) {
     const client = this.client(env);
-    // 1) Отправленные без id (сбой связи) — сверка по дате выписки и номеру
-    const noId = await this.prisma.esfInvoice.findMany({ where: { organizationId, environment: env, direction: 'OUTBOUND', status: 'SENT', esfId: null }, take: 50 });
+    // 1) FP-017: результат неизвестен — сверка ТОЛЬКО по ключу (дата выписки + номер). Не найден → остаётся UNKNOWN.
+    await this.recoverStaleSending(organizationId);
+    const noId = await this.prisma.esfInvoice.findMany({ where: { organizationId, environment: env, direction: 'OUTBOUND', OR: [{ status: 'UNKNOWN' }, { status: 'SENT', esfId: null }] }, take: 50 });
     if (noId.length) {
       const found = await this.wrap(() => client.queryInvoiceSummaryByKey(session.sessionId, 'OUTBOUND', noId.map((r) => ({ date: esfDate(r.date), num: r.num }))), session.id);
-      for (const f of found) {
-        const r = noId.find((x) => x.num === String(f.num));
-        if (r) await this.prisma.esfInvoice.update({ where: { id: r.id }, data: { esfId: BigInt(f.invoiceId), esfStatus: f.invoiceStatus ?? null, registrationNumber: f.registrationNumber ?? null } });
+      for (const r of noId) {
+        const f = found.find((x) => String(x.num) === r.num && (!x.date || String(x.date) === esfDate(r.date)) && x.invoiceId);
+        if (f) {
+          const c = await this.prisma.esfInvoice.updateMany({ where: { id: r.id, status: r.status }, data: { status: 'SENT', esfId: BigInt(f.invoiceId), esfStatus: f.invoiceStatus ?? null, registrationNumber: f.registrationNumber ?? null, errors: Prisma.DbNull } });
+          if (c.count) await this.prisma.auditLog.create({ data: { userId: null, organizationId, action: 'ESF_RECONCILE_FOUND', entity: 'esf_invoice', entityId: r.id, after: { num: r.num, date: esfDate(r.date), invoiceId: String(f.invoiceId), invoiceStatus: f.invoiceStatus ?? null } as any } });
+        } else if (r.status === 'UNKNOWN') {
+          await this.prisma.auditLog.create({ data: { userId: null, organizationId, action: 'ESF_RECONCILE_NOT_FOUND', entity: 'esf_invoice', entityId: r.id, after: { num: r.num, date: esfDate(r.date) } as any } });
+        }
       }
     }
     // 2) Статусы отправленных
@@ -680,6 +747,7 @@ export class EsfService implements OnModuleInit, OnModuleDestroy {
           }
         }
         await this.markOutdated(s.organizationId, s.environment);
+        await this.recoverStaleSending(s.organizationId);
         const session = await this.activeSession(this.prisma, s.organizationId, s.environment);
         if (session) {
           try { await this.refreshWith(s.organizationId, s.environment, session); } catch (e: any) { this.log.warn(`${s.organizationId}: ${e.message}`); }

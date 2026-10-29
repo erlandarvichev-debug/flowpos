@@ -381,3 +381,168 @@ describe('ЭСФ: возврат (дополнительный ЭСФ) и отз
     expect((await prisma.esfInvoice.findUnique({ where: { id: rev.id } }))!.status).toBe('REVOKED');
   });
 });
+
+describe('FP-017: отправка и сверка результата — потерянный ответ → UNKNOWN, без слепой повторной отправки', () => {
+  const soapFault = (code: string, text: string) =>
+    `<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body><soap:Fault><faultcode>${code}</faultcode><faultstring>${text}</faultstring></soap:Fault></soap:Body></soap:Envelope>`;
+
+  /** Две готовые к отправке ЭСФ, открытая сессия, подписи по запросу на подпись. */
+  async function readyToSend() {
+    const { ctx, t } = await setupOrg();
+    await esf.updateSettings(ctx, { signerIin: '123456789021', vatRegistrationDate: '2020-01-15', transportTypeCode: '30', defaultGoodsOrigin: '5' });
+    const sale1 = await stockAndSell(ctx, t, '2026-10-05');
+    const sale2 = await s.trade.create(ctx, { docType: 'DEMAND', date: '2026-10-06', counterpartyId: t.customer.id, storeId: t.s1.id, status: 'POSTED', lines: [{ productId: t.service.id, qty: '1', price: '580' }] });
+    const i1 = await esf.prepare(ctx, sale1.id);
+    const i2 = await esf.prepare(ctx, sale2.id);
+    await prisma.esfSession.create({ data: { organizationId: ctx.organizationId, environment: 'TEST', sessionId: 'S-17', iin: '123456789021', tin: '123456789021' } });
+    const sign = async () => {
+      const sd = await esf.signData(ctx, [i1.id, i2.id]);
+      return { certificate: signer.pem, items: sd.items.map((i) => ({ id: i.id, signature: signer.sign(i.body), signingToken: i.signingToken })) };
+    };
+    const row = (id: string) => prisma.esfInvoice.findUniqueOrThrow({ where: { id } });
+    const audits = (action: string) => prisma.auditLog.findMany({ where: { organizationId: ctx.organizationId, action } });
+    return { ctx, i1, i2, sign, row, audits };
+  }
+
+  /** Поддельная ИС ЭСФ с управляемым поведением syncInvoice и сверки по ключу. */
+  function stand(opts: { sync: (body: string) => string | Error | { fault: string } | Promise<string>; byKey?: (body: string) => string }) {
+    const calls: { op: string; body: string }[] = [];
+    const fetcher = async (_url: string, init: any) => {
+      const op = /esf:(\w+)Request/.exec(init.body)?.[1] ?? '?';
+      calls.push({ op, body: init.body });
+      const wrapOk = (inner: string) => ({ status: 200, text: async () => `<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body><ns2:${op}Response xmlns:ns2="esf">${inner}</ns2:${op}Response></soap:Body></soap:Envelope>` });
+      if (op === 'syncInvoice') {
+        const r = await opts.sync(init.body);
+        if (r instanceof Error) throw r;
+        if (typeof r === 'object') return { status: 500, text: async () => r.fault };
+        return wrapOk(r);
+      }
+      if (op === 'queryInvoiceSummaryByKey') return wrapOk(opts.byKey?.(init.body) ?? '<invoiceSummaryList/>');
+      if (op === 'queryInvoiceSummaryById') return wrapOk('<invoiceSummaryList/>');
+      if (op === 'queryUpdates') return wrapOk('<lastEventDate>2026-10-23T10:00:00.000+05:00</lastEventDate><lastBlock>true</lastBlock><invoiceInfoList/>');
+      return wrapOk('');
+    };
+    return { fetcher, calls, syncCalls: () => calls.filter((c) => c.op === 'syncInvoice').length };
+  }
+
+  it('обрыв связи во время отправки → UNKNOWN; повторно подписать и отправить нельзя', async () => {
+    const { ctx, i1, i2, sign, row } = await readyToSend();
+    const st = stand({ sync: () => new Error('socket hang up') });
+    esf.fetcher = st.fetcher;
+    await expectCode(esf.upload(ctx, await sign()), 'ESF_NETWORK');
+    for (const id of [i1.id, i2.id]) expect(await row(id)).toMatchObject({ status: 'UNKNOWN', esfId: null });
+    expect(((await row(i1.id)).errors as any[])[0].errorCode).toBe('OUTCOME_UNKNOWN');
+    await expectCode(esf.signData(ctx, [i1.id]), 'ESF_STATUS');
+    const again = await esf.prepare(ctx, (await row(i1.id)).sourceDocId!);
+    expect(again).toMatchObject({ id: i1.id, status: 'UNKNOWN' }); // не пересобирается и не получает новый номер
+    await expectCode(esf.discard(ctx, i1.id), 'ESF_STATUS');
+    expect(st.syncCalls()).toBe(1);
+  });
+
+  it('неразборчивый ответ или общая SOAP-ошибка → UNKNOWN (не READY)', async () => {
+    const { ctx, i1, sign, row } = await readyToSend();
+    esf.fetcher = stand({ sync: () => ({ fault: soapFault('soap:Server', 'Internal error') }) }).fetcher;
+    await expectCode(esf.upload(ctx, await sign()), 'ESF_FAULT');
+    expect((await row(i1.id)).status).toBe('UNKNOWN');
+  });
+
+  it('закрытая сессия — запрос не обрабатывался: ЭСФ снова READY, повтор после входа возможен', async () => {
+    const { ctx, i1, i2, sign, row, audits } = await readyToSend();
+    esf.fetcher = stand({ sync: () => ({ fault: soapFault('soap:Server', 'Session closed') }) }).fetcher;
+    await expectCode(esf.upload(ctx, await sign()), 'ESF_SESSION_CLOSED');
+    for (const id of [i1.id, i2.id]) expect(await row(id)).toMatchObject({ status: 'READY', sentAt: null, signature: null });
+    expect(await audits('ESF_SEND_NOT_PROCESSED')).toHaveLength(1);
+  });
+
+  it('ИС ЭСФ не вернула результат по одному ЭСФ → только он UNKNOWN', async () => {
+    const { ctx, i1, i2, sign, row } = await readyToSend();
+    esf.fetcher = stand({ sync: () => `<acceptedSet><standardResponse><id>7001</id><num>${i1.num}</num><date>${esfDate(new Date())}</date></standardResponse></acceptedSet>` }).fetcher;
+    const up = await esf.upload(ctx, await sign());
+    expect(up).toMatchObject({ accepted: 1, declined: 0, unknown: 1 });
+    expect(await row(i1.id)).toMatchObject({ status: 'SENT', esfStatus: 'IN_QUEUE' });
+    expect((await row(i2.id)).status).toBe('UNKNOWN');
+  });
+
+  it('две параллельные отправки одних и тех же ЭСФ → в ИС ЭСФ уходит одна', async () => {
+    const { ctx, sign } = await readyToSend();
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const st = stand({ sync: () => '<acceptedSet/>' });
+    const slow = async (url: string, init: any) => { if (init.body.includes('syncInvoiceRequest')) await gate; return st.fetcher(url, init); };
+    esf.fetcher = slow;
+    const payload = await sign();
+    const first = esf.upload(ctx, payload);
+    await new Promise((r) => setTimeout(r, 50));
+    await expectCode(esf.upload(ctx, payload), 'ESF_STATUS');
+    release();
+    await first;
+    expect(st.syncCalls()).toBe(1);
+  });
+
+  it('процесс упал после захвата: истёкший SENDING → UNKNOWN; свежий SENDING не трогается', async () => {
+    const { ctx, i1, i2, row, audits } = await readyToSend();
+    await prisma.esfInvoice.update({ where: { id: i1.id }, data: { status: 'SENDING', sentAt: new Date(Date.now() - EsfService.SEND_LEASE_MS - 1000) } });
+    await prisma.esfInvoice.update({ where: { id: i2.id }, data: { status: 'SENDING', sentAt: new Date() } });
+    await esf.recoverStaleSending(ctx.organizationId);
+    expect((await row(i1.id)).status).toBe('UNKNOWN');
+    expect(((await row(i1.id)).errors as any[])[0].errorCode).toBe('RECOVERED_UNKNOWN');
+    expect((await row(i2.id)).status).toBe('SENDING');
+    expect(await audits('ESF_SEND_RECOVERED_UNKNOWN')).toHaveLength(1);
+  });
+
+  it('запоздавший ответ после восстановления не применяется (fencing по метке захвата)', async () => {
+    const { ctx, i1, sign, row } = await readyToSend();
+    esf.fetcher = stand({
+      sync: async () => {
+        // пока ИС ЭСФ «думает», другой процесс признал отправку зависшей
+        await prisma.esfInvoice.updateMany({ where: { id: i1.id }, data: { status: 'UNKNOWN' } });
+        return `<acceptedSet><standardResponse><id>7002</id><num>${i1.num}</num><date>${esfDate(new Date())}</date></standardResponse></acceptedSet>`;
+      },
+    }).fetcher;
+    const up = await esf.upload(ctx, await sign());
+    const r1 = up.items.find((x: any) => x.id === i1.id);
+    expect(r1.fenced).toBe(true);
+    expect(await row(i1.id)).toMatchObject({ status: 'UNKNOWN', esfId: null });
+  });
+
+  it('сверка по ключу (дата+номер) находит принятый ЭСФ → SENT с id; запрос сверки доказуемо по ключу', async () => {
+    const { ctx, i1, i2, sign, row, audits } = await readyToSend();
+    esf.fetcher = stand({ sync: () => new Error('timeout') }).fetcher;
+    await expectCode(esf.upload(ctx, await sign()), 'ESF_NETWORK');
+    const d = esfDate((await row(i1.id)).date);
+    const st = stand({ sync: () => '', byKey: () => `<invoiceSummaryList><invoiceSummary><invoiceId>8001</invoiceId><invoiceStatus>CREATED</invoiceStatus><num>${i1.num}</num><date>${d}</date></invoiceSummary><invoiceSummary><invoiceId>8999</invoiceId><num>${i2.num}</num><date>01.01.2020</date></invoiceSummary></invoiceSummaryList>` });
+    esf.fetcher = st.fetcher;
+    await esf.refresh(ctx);
+    const lookup = st.calls.find((c) => c.op === 'queryInvoiceSummaryByKey')!;
+    expect(lookup.body).toContain(`<invoiceKey><date>${d}</date><num>${i1.num}</num></invoiceKey>`);
+    expect(lookup.body).toContain('<direction>OUTBOUND</direction>');
+    expect(await row(i1.id)).toMatchObject({ status: 'SENT', esfId: 8001n });
+    // совпал номер, но не дата — это не наш документ
+    expect(await row(i2.id)).toMatchObject({ status: 'UNKNOWN', esfId: null });
+    expect(await audits('ESF_RECONCILE_FOUND')).toHaveLength(1);
+    expect(st.syncCalls()).toBe(0); // сверка никогда не отправляет повторно
+  });
+
+  it('не найдено → остаётся UNKNOWN; повтор только явным решением после «тихого» срока, с причиной и в журнале', async () => {
+    const { ctx, i1, sign, row, audits } = await readyToSend();
+    esf.fetcher = stand({ sync: () => new Error('timeout') }).fetcher;
+    await expectCode(esf.upload(ctx, await sign()), 'ESF_NETWORK');
+    esf.fetcher = stand({ sync: () => '' }).fetcher;
+    await esf.refresh(ctx); // сразу после отправки — «не найдено» ещё ничего не доказывает
+    expect((await row(i1.id)).status).toBe('UNKNOWN');
+    expect((await audits('ESF_RECONCILE_NOT_FOUND')).length).toBeGreaterThan(0);
+    await expectCode(esf.releaseUnknown(ctx, i1.id, 'проверил в ИС ЭСФ'), 'ESF_RECONCILE_REQUIRED');
+
+    // прошло больше тихого срока, сверка снова не нашла
+    await prisma.esfInvoice.update({ where: { id: i1.id }, data: { sentAt: new Date(Date.now() - EsfService.RECONCILE_QUIET_MS - 60_000) } });
+    await esf.refresh(ctx);
+    await expectCode(esf.releaseUnknown(ctx, i1.id, ''), 'ESF_REASON');
+    const rel = await esf.releaseUnknown(ctx, i1.id, 'сверка не нашла, ИС ЭСФ проверена вручную');
+    expect(rel.status).toBe('READY');
+    const log = await audits('ESF_UNKNOWN_RELEASED');
+    expect(log).toHaveLength(1);
+    expect(log[0]).toMatchObject({ userId: ctx.userId, reason: 'сверка не нашла, ИС ЭСФ проверена вручную' });
+    // теперь можно подписать заново
+    expect((await esf.signData(ctx, [i1.id])).items).toHaveLength(1);
+  });
+});
