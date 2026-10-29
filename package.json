@@ -9,7 +9,7 @@
   "scripts": {
     "test": "jest --config jest.config.js --runInBand",
     "test:watch": "jest --config jest.config.js --watch",
-    "test:esf": "node --test erp/esf-stand/*.node-test.ts",
+    "test:esf": "node --test --test-concurrency=1 erp/esf-stand/*-test.ts",
     "dev": "concurrently \"npm run dev:api\" \"npm run dev:web\"",
     "dev:api": "npm run dev --workspace=apps/api",
     "dev:web": "npm run dev --workspace=apps/web",

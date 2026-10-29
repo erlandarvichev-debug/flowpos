@@ -42,6 +42,7 @@ export interface ValidationResultWithMetadata extends ValidationResult {
   usedVersion?: string;
   fallback?: boolean;
   detectedVersion?: string;
+  quarantined?: boolean;
 }
 
 /**
@@ -107,7 +108,7 @@ export class SchemaRegistry {
    * Returns UNKNOWN if version not found
    */
   async validate(xml: string): Promise<ValidationResultWithMetadata> {
-    const detectedVersion = this.detectVersion(xml);
+    const detectedVersion = this.detectVersion(xml) ?? undefined;
     const versionToUse = detectedVersion || this.defaultVersion;
 
     const cache = this.schemas.get(versionToUse);
@@ -144,20 +145,22 @@ export class SchemaRegistry {
    * Try: detected → v3 → v2 → v4 → QUARANTINE
    */
   async validateWithFallback(xml: string): Promise<ValidationResultWithMetadata> {
-    const detectedVersion = this.detectVersion(xml);
+    const detectedVersion = this.detectVersion(xml) ?? undefined;
 
     // 1. Try detected version
+    let detectedResult: ValidationResult | null = null;
     if (detectedVersion && this.schemas.has(detectedVersion)) {
       const cache = this.schemas.get(detectedVersion)!;
-      const result = cache.schema.validate(xml);
+      detectedResult = cache.schema.validate(xml);
 
-      if (result.valid) {
+      if (detectedResult.valid) {
         cache.hits++;
         return {
-          ...result,
+          ...detectedResult,
           usedVersion: detectedVersion,
           detectedVersion,
           fallback: false,
+          quarantined: false,
         };
       }
     }
@@ -180,6 +183,7 @@ export class SchemaRegistry {
             usedVersion: version,
             detectedVersion,
             fallback: true,
+            quarantined: false,
           };
         }
       } catch (error) {
@@ -188,7 +192,18 @@ export class SchemaRegistry {
       }
     }
 
-    // 3. All schemas failed → QUARANTINE
+    // 3a. Known schema, invalid content → plain rejection with that schema's errors.
+    if (detectedResult) {
+      return {
+        ...detectedResult,
+        usedVersion: detectedVersion!,
+        detectedVersion,
+        fallback: false,
+        quarantined: false,
+      };
+    }
+
+    // 3b. Unknown or undeclared schema that matches nothing → QUARANTINE
     return {
       valid: false,
       errors: [
@@ -200,6 +215,7 @@ export class SchemaRegistry {
       usedVersion: undefined,
       detectedVersion,
       fallback: false,
+      quarantined: true,
     };
   }
 
@@ -315,7 +331,7 @@ export class MockSchemaRegistry {
       errors: [],
       warnings: [],
       usedVersion: version,
-      detectedVersion: this.detectVersion(xml),
+      detectedVersion: this.detectVersion(xml) ?? undefined,
     };
   }
 

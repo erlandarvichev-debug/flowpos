@@ -1,6 +1,6 @@
 # FP-011: Real SDK/WSDL/XSD Integration
 
-**Status:** In Progress  
+**Status:** ⚠️ PARTIAL — local building blocks only; backlog acceptance (real SDK/WSDL/XSD bytes, checksums, endpoints) NOT met  
 **Date:** 2026-10-29  
 **Target:** Production ESF SDK from ИС ЭСФ (МОД РК)
 
@@ -578,4 +578,9 @@ if (result.state === 'UNKNOWN') {
 
 ---
 
-**FP-011 Status: ✅ 100% COMPLETE (All 4 Phases Done, 52/52 Tests Passing)**
+**FP-011 Status: ⚠️ PARTIAL (audit 2026-10-29)**
+
+- Backlog FP-011 = *obtain* the official SDK/WSDL/XSD, record bytes/checksums/versions, document test/prod endpoints, auth, TTL, limits, enums. **None of this is done** — no official artifacts are in the repo.
+- `gateway.real.ts` SOAP operations are **assumed, not taken from a WSDL**. Per `docs/erp/LOCAL_RUNBOOK.md`, real methods/enums may only be added after a contract test. Treat it as a placeholder; it must not be pointed at ИС ЭСФ.
+- `schema.real.ts` is a **heuristic checker of the synthetic stand format**, not XSD validation: required elements are hardcoded, and enum extraction is a stub.
+- Fixed on 2026-10-29: well-formedness check rejected every real document (the prolog and self-closing tags were counted as unbalanced) → replaced by `xml-wellformed.ts` (stack-based, rejects DTD/ENTITY). Schema version is now read from `xs:schema`, not from the XML prolog. 10 of 14 real-schema tests had been silently skipped (missing XSD) → they now run against `fixtures/synthetic-invoice-v3.xsd`.

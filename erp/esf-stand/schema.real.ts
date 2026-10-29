@@ -14,6 +14,7 @@
 
 import { readFileSync } from 'fs';
 import { createHash } from 'crypto';
+import { checkWellFormed } from './xml-wellformed.ts';
 
 export interface ValidationResult {
   valid: boolean;
@@ -86,8 +87,9 @@ export class RealEsfSchema {
 
     try {
       // 1. Check XML is well-formed
-      if (!this.isWellFormedXml(xml)) {
-        errors.push('XML is not well-formed (parse error)');
+      const wellFormed = checkWellFormed(xml);
+      if (!wellFormed.ok) {
+        errors.push(`XML is not well-formed: ${wellFormed.error}`);
         return { valid: false, errors, warnings, schemaVersion: this.schemaVersion };
       }
 
@@ -177,21 +179,6 @@ export class RealEsfSchema {
    */
   getSchemaHash(): string {
     return createHash('sha256').update(this.xsdContent).digest('hex');
-  }
-
-  /**
-   * FP-011: Internal: check if XML is well-formed
-   */
-  private isWellFormedXml(xml: string): boolean {
-    try {
-      // Simple check: count opening/closing tags
-      const openTags = (xml.match(/<[^/][^>]*>/g) || []).length;
-      const closeTags = (xml.match(/<\/[^>]*>/g) || []).length;
-
-      return openTags === closeTags && xml.includes('<?xml');
-    } catch {
-      return false;
-    }
   }
 
   /**
@@ -366,7 +353,8 @@ export class RealEsfSchema {
    * FP-011: Internal: extract schema version
    */
   private extractSchemaVersion(xsd: string): string {
-    const versionMatch = xsd.match(/version="([^"]+)"/);
+    const schemaTag = xsd.match(/<(?:\w+:)?schema\b[^>]*>/)?.[0] ?? '';
+    const versionMatch = schemaTag.match(/\sversion\s*=\s*["']([^"']+)["']/);
     return versionMatch ? versionMatch[1] : 'unknown';
   }
 

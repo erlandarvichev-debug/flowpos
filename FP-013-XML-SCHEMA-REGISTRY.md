@@ -1,6 +1,6 @@
 # FP-013: XML Schema Registry
 
-**Status:** ✅ COMPLETE (40/40 tests passing)  
+**Status:** ⚠️ PARTIAL — registry + validator work and are tested on real classes; immutable raw bytes/checksum not implemented  
 **Date:** 2026-10-29  
 **Target:** Dynamic schema versioning & management
 
@@ -408,21 +408,21 @@ describe('FP-013: Schema Registry', () => {
 
 ---
 
-**FP-013 Status: ✅ COMPLETE**
+**FP-013 Status: ⚠️ PARTIAL (audit 2026-10-29)**
 
-## Phase Summary
+Done and tested against the real classes (`esf-validator.integrated-test.ts`, 16 tests, no mocks):
+- multi-version registry, version detection, fallback chain, per-version stats;
+- `EsfValidatorIntegrated`: ACCEPT / REJECT / QUARANTINE;
+- XXE: documents with DTD/ENTITY are never accepted (`xml-wellformed.ts`).
 
-- **Phase 1:** Schema Registry Core (24/24 tests ✅)
-  - SchemaRegistry class with multi-version management
-  - MockSchemaRegistry for testing
-  - Version detection, validation, fallback chain
-  - Schema caching & statistics tracking
+Fixed on 2026-10-29:
+- the validator constructor threw on an empty registry → config is now applied after `initialize()`;
+- QUARANTINE was never produced (case-sensitive substring match on "Quarantined") → explicit `quarantined` flag;
+- a known version with invalid content was quarantined → now REJECT with that schema's errors; only unknown/undeclared schemas are quarantined;
+- strict validation flagged rejects as quarantined → fixed;
+- the tests exercised `MockEsfValidatorIntegrated`, and two assertions had been weakened to pass → mock removed, tests rewritten.
 
-- **Phase 2:** Integrated ESF Validator (16/16 tests ✅)
-  - EsfValidatorIntegrated wraps SchemaRegistry
-  - DocumentValidationResult with recommendation field
-  - Fallback validation (validateDocument)
-  - Strict validation without fallback (validateStrict)
-  - Schema statistics & monitoring
-
-**Total:** 40/40 tests passing ✅
+Not done (backlog acceptance):
+- **immutable raw bytes + encoding + checksum** stored with the document;
+- **"unknown schema quarantined without losing fields"** — needs raw-bytes storage;
+- validation runs against the synthetic fixture only — no official XSD yet (blocked on FP-011).

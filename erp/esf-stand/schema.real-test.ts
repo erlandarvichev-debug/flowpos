@@ -5,6 +5,8 @@
 
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert';
+import { existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import {
   RealEsfSchema,
   MockEsfSchema,
@@ -70,149 +72,81 @@ describe('FP-011: Mock ESF Schema', () => {
 });
 
 describe('FP-011: Real ESF Schema (Validation)', () => {
+  const fixturePath = fileURLToPath(new URL('./fixtures/synthetic-invoice-v3.xsd', import.meta.url));
+  const fixtureMissing = !existsSync(fixturePath) && `fixture not found: ${fixturePath}`;
   let schema: RealEsfSchema;
 
+  const invoice: Invoice = {
+    number: 'INV-001',
+    date: '2026-10-29',
+    seller: { iin: '121212121212', name: 'Seller Ltd' },
+    buyer: { iin: '343434343434', name: 'Buyer Inc' },
+    items: [{ description: 'Product', quantity: '1', unitPrice: '10000.00', amount: '10000.00' }],
+    totalAmount: '10000.00',
+    currency: 'KZT',
+  };
+
   beforeEach(() => {
-    try {
-      // Try to load real schema (may not exist in CI)
-      schema = new RealEsfSchema('./erp/schemas/Invoice_v3.xsd');
-    } catch (error: any) {
-      // Skip real schema tests if file not found
-      console.log(`⊘ Real schema not available: ${error.message}`);
-    }
+    if (!fixtureMissing) schema = new RealEsfSchema(fixturePath);
   });
 
-  it('real schema validates complete invoice XML', function() {
-    if (!schema) {
-      console.log('⊘ Real schema: skipped (file not found)');
-      return;
-    }
-
-    const xml = `<?xml version="1.0" encoding="UTF-8"?>
-<Invoice>
-  <Number>INV-001</Number>
-  <Date>2026-10-29</Date>
-  <Seller>
-    <IIN>121212121212</IIN>
-    <Name>Seller Ltd</Name>
-  </Seller>
-  <Buyer>
-    <IIN>343434343434</IIN>
-    <Name>Buyer Inc</Name>
-  </Buyer>
-  <Items>
-    <Item>
-      <Description>Product</Description>
-      <Quantity>1</Quantity>
-      <UnitPrice>10000</UnitPrice>
-      <Amount>10000</Amount>
-    </Item>
-  </Items>
-  <TotalAmount>10000</TotalAmount>
-  <Currency>KZT</Currency>
-</Invoice>`;
-
-    const result = schema.validate(xml);
-
-    assert(result.schemaVersion);
-    console.log(`✓ Real schema v${result.schemaVersion}: validates invoice`);
+  it('reads schema version from the xs:schema element, not the XML prolog', { skip: fixtureMissing }, () => {
+    assert.equal(schema.validate('<Invoice/>').schemaVersion, 'v3');
   });
 
-  it('real schema rejects malformed XML', function() {
-    if (!schema) {
-      console.log('⊘ Real schema: skipped');
-      return;
-    }
+  it('accepts the document it generates itself', { skip: fixtureMissing }, () => {
+    const result = schema.validate(schema.generateXml(invoice));
+    assert.deepEqual(result.errors, []);
+    assert.equal(result.valid, true);
+  });
 
-    const xml = '<Invoice><Invalid unclosed>';
+  it('accepts self-closing elements, comments and a prolog', { skip: fixtureMissing }, () => {
+    const xml = schema.generateXml(invoice).replace('<Items>', '<!-- c --><Items><Note/>');
+    assert.equal(schema.validate(xml).valid, true);
+  });
 
-    const result = schema.validate(xml);
-
+  it('rejects malformed XML', { skip: fixtureMissing }, () => {
+    const result = schema.validate('<Invoice><Invalid unclosed>');
     assert.equal(result.valid, false);
-    assert(result.errors.length > 0);
-
-    console.log('✓ Real schema: rejects malformed XML');
+    assert.match(result.errors[0], /not well-formed/);
   });
 
-  it('real schema validates numeric fields', function() {
-    if (!schema) {
-      console.log('⊘ Real schema: skipped');
-      return;
-    }
-
-    const validXml = `<?xml version="1.0"?>
-<Invoice>
-  <Number>INV-001</Number>
-  <Date>2026-10-29</Date>
-  <Seller><IIN>121212121212</IIN><Name>Seller</Name></Seller>
-  <Buyer><IIN>343434343434</IIN><Name>Buyer</Name></Buyer>
-  <Items><Item><Quantity>5.5</Quantity></Item></Items>
-  <TotalAmount>10000.50</TotalAmount>
-  <Currency>KZT</Currency>
-</Invoice>`;
-
-    const result = schema.validate(validXml);
-
-    // Should not have numeric errors (5.5 and 10000.50 are valid)
-    const numericErrors = result.errors.filter((e) =>
-      e.includes('numeric'),
-    );
-    assert(numericErrors.length === 0 || result.valid);
-
-    console.log('✓ Real schema: validates numeric fields');
+  it('rejects overlapping tags even when counts balance', { skip: fixtureMissing }, () => {
+    const result = schema.validate('<?xml version="1.0"?><a><b></a></b>');
+    assert.equal(result.valid, false);
+    assert.match(result.errors[0], /mismatched closing tag/);
   });
 
-  it('real schema validates ISO 8601 dates', function() {
-    if (!schema) {
-      console.log('⊘ Real schema: skipped');
-      return;
-    }
-
-    const validXml = `<?xml version="1.0"?>
-<Invoice>
-  <Number>INV-001</Number>
-  <Date>2026-10-29</Date>
-  <Seller><IIN>121212121212</IIN><Name>Seller</Name></Seller>
-  <Buyer><IIN>343434343434</IIN><Name>Buyer</Name></Buyer>
-  <Items></Items>
-  <TotalAmount>0</TotalAmount>
-  <Currency>KZT</Currency>
-</Invoice>`;
-
-    const result = schema.validate(validXml);
-
-    const dateErrors = result.errors.filter((e) => e.includes('Date'));
-    assert(dateErrors.length === 0 || result.valid);
-
-    console.log('✓ Real schema: validates ISO dates');
-  });
-
-  it('real schema warns on non-standard IIN format', function() {
-    if (!schema) {
-      console.log('⊘ Real schema: skipped');
-      return;
-    }
-
-    const xml = `<?xml version="1.0"?>
-<Invoice>
-  <Number>INV-001</Number>
-  <Date>2026-10-29</Date>
-  <Seller><IIN>12345</IIN><Name>Seller</Name></Seller>
-  <Buyer><IIN>343434343434</IIN><Name>Buyer</Name></Buyer>
-  <Items></Items>
-  <TotalAmount>0</TotalAmount>
-  <Currency>KZT</Currency>
-</Invoice>`;
-
+  it('rejects DOCTYPE/ENTITY (XXE)', { skip: fixtureMissing }, () => {
+    const xml = '<?xml version="1.0"?><!DOCTYPE x [<!ENTITY e SYSTEM "file:///etc/passwd">]><Invoice>&e;</Invoice>';
     const result = schema.validate(xml);
+    assert.equal(result.valid, false);
+    assert.match(result.errors[0], /DTD/);
+  });
 
-    // IIN should have 12 digits (Kazakhstan format)
-    const iinWarnings = result.warnings.filter((w) =>
-      w.includes('IIN'),
-    );
-    assert(iinWarnings.length > 0 || result.valid);
+  it('reports missing required elements', { skip: fixtureMissing }, () => {
+    const xml = schema.generateXml(invoice).replace(/<Currency>KZT<\/Currency>/, '');
+    const result = schema.validate(xml);
+    assert.equal(result.valid, false);
+    assert(result.errors.some((e) => e.includes('Currency')));
+  });
 
-    console.log('✓ Real schema: warns on invalid IIN');
+  it('rejects non-numeric amounts', { skip: fixtureMissing }, () => {
+    const result = schema.validate(schema.generateXml({ ...invoice, totalAmount: '10k' }));
+    assert.equal(result.valid, false);
+    assert(result.errors.some((e) => e.includes('TotalAmount must be numeric')));
+  });
+
+  it('rejects non-ISO dates', { skip: fixtureMissing }, () => {
+    const result = schema.validate(schema.generateXml({ ...invoice, date: '29.10.2026' }));
+    assert.equal(result.valid, false);
+    assert(result.errors.some((e) => e.includes('ISO 8601')));
+  });
+
+  it('warns (but does not reject) on non-12-digit IIN', { skip: fixtureMissing }, () => {
+    const result = schema.validate(schema.generateXml({ ...invoice, seller: { iin: '12345', name: 'S' } }));
+    assert.equal(result.valid, true);
+    assert(result.warnings.some((w) => w.includes('IIN')));
   });
 });
 

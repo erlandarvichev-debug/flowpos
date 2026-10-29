@@ -75,15 +75,14 @@ describe('FP-081: Concurrency & Lease Fencing', () => {
     const results = await Promise.all(promises);
     sendResults.push(...results);
 
-    // FP-081: Verify only one worker succeeded in claiming send
-    const successCount = results.filter((r) => r.error === null).length;
-    assert.equal(successCount, 1, 'Only one worker should claim send lease');
+    // Losers do not throw: send() is idempotent and returns the current snapshot without calling the gateway.
+    assert.equal(gateway.sends, 1, 'Gateway must be called exactly once');
+    assert.deepEqual(results.filter((r) => r.error !== null), [], 'No worker should error');
+    assert.equal(results.filter((r) => r.status === 'REGISTERED').length, 1, 'Only the lease holder sees the result');
 
-    // FP-081: Verify document moved to SENDING (not multiple times)
     const finalDoc = store.get({ tenantId, orgId }, doc.id);
     assert.equal(finalDoc.state, 'REGISTERED', 'Document should be registered');
-
-    console.log(`✓ 6 workers: ${successCount}/6 claimed, rest got conflict`);
+    assert.equal(finalDoc.externalId, `stand-${doc.id}`);
   });
 
   it('late callback from crashed process is fenced (not processed)', async () => {

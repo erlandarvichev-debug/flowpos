@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic test fixture for the local ESF stand. NOT the official ИС ЭСФ schema. -->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" targetNamespace="http://es.lk.kz/schema/invoice" version="v3">
+  <xs:element name="Invoice">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="Number" type="xs:string" minOccurs="1"/>
+        <xs:element name="Date" type="xs:date" minOccurs="1"/>
+        <xs:element name="Seller" minOccurs="1"/>
+        <xs:element name="Buyer" minOccurs="1"/>
+        <xs:element name="Items" minOccurs="1"/>
+        <xs:element name="TotalAmount" type="xs:decimal" minOccurs="1"/>
+        <xs:element name="Currency" type="xs:string" minOccurs="1"/>
+        <xs:element name="TaxAmount" type="xs:decimal" minOccurs="0"/>
+      </xs:sequence>
+      <xs:attribute name="schemaVersion" type="xs:string"/>
+    </xs:complexType>
+  </xs:element>
+</xs:schema>

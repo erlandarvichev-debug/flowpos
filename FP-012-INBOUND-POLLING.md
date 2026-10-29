@@ -1,6 +1,6 @@
 # FP-012: Inbound Polling Adapter
 
-**Status:** 🏗️ IN PROGRESS  
+**Status:** ⚠️ PARTIAL — polling/reconciliation logic tested against mocks; backlog acceptance not proven  
 **Date:** 2026-10-29  
 **Target:** Async inbound document fetching & reconciliation
 
@@ -458,4 +458,8 @@ Total: 76/76 tests passing ✅
 
 ---
 
-**FP-012 Status: ✅ 100% COMPLETE (All 3 Phases Done, 76/76 Tests Passing)**
+**FP-012 Status: ⚠️ PARTIAL (audit 2026-10-29)**
+
+- Known defect: `PersistentInboundPoller.pollPersistent()` loads the saved cursor but **never uses it** — `poll()` reads the cursor from the document store. Crash recovery "from the saved cursor" therefore does not work as described.
+- The cursor is written to Postgres *after* ingestion into a different store — this is **not atomic**. Backlog acceptance ("repeat page and crash do not lose a document; partial page not acknowledged") rests on `EsfStore.ingest` (SQLite, atomic), not on this adapter.
+- Depends on FP-009 (PG unit of work) and FP-021 (lease fencing), which are still PLANNED.

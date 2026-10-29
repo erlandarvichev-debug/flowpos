@@ -46,9 +46,17 @@ export class EsfValidatorIntegrated {
       quarantineUnknown: config?.quarantineUnknown !== false,
     };
 
-    // Set registry defaults
-    this.registry.setDefaultVersion(this.config.primaryVersion);
-    this.registry.setFallbackChain(this.config.fallbackChain);
+    this.applyConfig();
+  }
+
+  // Registration may happen before or after construction; only wire versions that exist.
+  private applyConfig(): void {
+    const registered = new Set(this.registry.listVersions());
+    if (registered.has(this.config.primaryVersion)) {
+      this.registry.setDefaultVersion(this.config.primaryVersion);
+    }
+    const chain = this.config.fallbackChain.filter((v) => registered.has(v));
+    if (chain.length) this.registry.setFallbackChain(chain);
   }
 
   /**
@@ -61,13 +69,12 @@ export class EsfValidatorIntegrated {
 
     // 2. Determine what to do
     const isQuarantined =
-      !result.valid &&
-      result.errors.some((e) => e.includes('Quarantined'));
+      !result.valid && result.quarantined === true && this.config.quarantineUnknown;
 
     const canRetry =
       !result.valid &&
       !isQuarantined &&
-      result.detectedVersion !== null;
+      result.detectedVersion != null;
 
     let recommendation: 'ACCEPT' | 'REJECT' | 'QUARANTINE';
 
@@ -96,7 +103,7 @@ export class EsfValidatorIntegrated {
 
     return {
       ...result,
-      isQuarantined: !result.valid,
+      isQuarantined: false,
       canRetry: false,
       recommendation: result.valid ? 'ACCEPT' : 'REJECT',
     };
@@ -140,52 +147,6 @@ export class EsfValidatorIntegrated {
         deprecated: schema.deprecated || false,
       });
     }
-  }
-}
-
-/**
- * FP-013: Mock Integrated Validator (for testing)
- */
-export class MockEsfValidatorIntegrated {
-  private registry: any; // MockSchemaRegistry
-
-  constructor(registry: any) {
-    this.registry = registry;
-  }
-
-  async validateDocument(xml: string): Promise<DocumentValidationResult> {
-    const result = await this.registry.validateWithFallback(xml);
-
-    return {
-      ...result,
-      isQuarantined: !result.valid,
-      canRetry: false,
-      recommendation: result.valid ? 'ACCEPT' : 'REJECT',
-    };
-  }
-
-  async validateStrict(xml: string): Promise<DocumentValidationResult> {
-    const result = await this.registry.validate(xml);
-
-    return {
-      ...result,
-      isQuarantined: !result.valid,
-      canRetry: false,
-      recommendation: result.valid ? 'ACCEPT' : 'REJECT',
-    };
-  }
-
-  getSchemaStats(): any {
-    return {
-      schemas: this.registry.getStats(),
-      primaryVersion: 'v3',
-      fallbackChain: ['v3', 'v2', 'v4'],
-    };
-  }
-
-  async initialize(schemas: any[]): Promise<void> {
-    for (const schema of schemas) {
-      await this.registry.register(schema.version, schema.xsdPath);
-    }
+    this.applyConfig();
   }
 }

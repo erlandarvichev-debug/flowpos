@@ -11,10 +11,12 @@
 import { InboundPoller, type InboundDocument } from './inbound-poller.ts';
 import { CursorStore } from './cursor.store.ts';
 
+export type CursorStorePort = Pick<CursorStore, 'getCursor' | 'setCursor' | 'deleteCursor' | 'getRecord'>;
+
 export interface PersistentPollerConfig {
   batchSize?: number;
   maxRetries?: number;
-  cursorStore: CursorStore;
+  cursorStore: CursorStorePort;
 }
 
 /**
@@ -22,7 +24,7 @@ export interface PersistentPollerConfig {
  * InboundPoller with PostgreSQL cursor persistence
  */
 export class PersistentInboundPoller extends InboundPoller {
-  private cursorStore: CursorStore;
+  private cursorStore: CursorStorePort;
 
   constructor(
     gateway: any,
@@ -48,7 +50,7 @@ export class PersistentInboundPoller extends InboundPoller {
     documentsFetched: number;
     documentsSaved: number;
     duplicates: number;
-    errors: string[];
+    errors: Array<{ document: string; error: string }>;
     nextCursor: string;
     crashed: boolean;
   }> {
@@ -82,7 +84,7 @@ export class PersistentInboundPoller extends InboundPoller {
         documentsFetched: 0,
         documentsSaved: 0,
         duplicates: 0,
-        errors: [error.message],
+        errors: [{ document: '', error: error.message }],
         nextCursor: '',
         crashed: true,
       };
