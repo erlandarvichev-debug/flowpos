@@ -51,6 +51,7 @@ if [ ! -f $SHARED/api.env ]; then
   echo "== Настройки API (секреты сгенерированы)"
   sed -e "s#postgresql://flowpos:<пароль-БД>@#postgresql://flowpos:${DB_PASS}@#" \
       -e "s#JWT_SECRET=<сгенерировать>#JWT_SECRET=$(openssl rand -hex 32)#" \
+      -e "s#ESF_SIGNING_SECRET=<сгенерировать>#ESF_SIGNING_SECRET=$(openssl rand -hex 32)#" \
       -e "s#https://app.example.kz#https://${APP_DOMAIN}#" \
       "$HERE/env/api.env.example" > $SHARED/api.env
 else

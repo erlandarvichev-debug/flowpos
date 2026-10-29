@@ -12,6 +12,7 @@ function assertProductionConfig() {
   if (secret.length < 32 || secret === 'flowpos-secret') problems.push('JWT_SECRET не задан или короче 32 символов');
   if (!process.env.DATABASE_URL) problems.push('DATABASE_URL не задан');
   if (!process.env.CORS_ORIGIN) problems.push('CORS_ORIGIN не задан (адрес веб-интерфейса, https://…)');
+  if ((process.env.ESF_SIGNING_SECRET || '').length < 32) problems.push('ESF_SIGNING_SECRET не задан или короче 32 символов (привязка подписи ЭСФ к байтам)');
   if (problems.length) {
     console.error(`FlowPOS API не запущен — небезопасная конфигурация:\n- ${problems.join('\n- ')}`);
     process.exit(1);

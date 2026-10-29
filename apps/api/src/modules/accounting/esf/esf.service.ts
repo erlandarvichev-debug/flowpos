@@ -9,6 +9,7 @@ import { TRADE_SOURCE, TradeDoc, tradeLineAmounts } from '../autopilot/trade-rul
 import { EsfInvoiceData, EsfProduct, INVOICE_VERSION, esfDate, parseEsfDate, parseInvoice, signableIdList, signableIdWithReasonList } from './invoice-xml';
 import { EsfSoapClient, EsfSoapError, Fetcher } from './esf-soap.client';
 import { EsfSerializationError, serializeInvoice } from './invoice-serializer';
+import { EsfSigningError, checkSigner, inspectCertificate, issueSigningRequest, signingEvidence, signingSecret, verifyRawSignature, verifySigningRequest } from './esf-signing';
 import { ESF_UNITS } from './units.data';
 
 type Tx = Prisma.TransactionClient;
@@ -25,6 +26,11 @@ const money = (v: Prisma.Decimal) => v.toFixed(2);
 // Без округления: лишние знаки после запятой должна увидеть проверка сериализатора, а не toFixed.
 const exact = (v: Prisma.Decimal) => (v.decimalPlaces() <= 2 ? v.toFixed(2) : v.toFixed());
 const today = () => new Date(new Date().toISOString().slice(0, 10) + 'T00:00:00.000Z');
+
+function signingError(e: unknown): never {
+  if (e instanceof EsfSigningError) throw new AccError(e.code, e.message, e.problems.length ? { fix: e.problems.map((p) => `• ${p}`).join('\n') } : undefined);
+  throw e;
+}
 
 function stripPem(cert: string) {
   return cert.replace(/-----[^-]+-----/g, '').replace(/\s+/g, '');
@@ -391,17 +397,21 @@ export class EsfService implements OnModuleInit, OnModuleDestroy {
    */
   async signData(ctx: OrgContext, ids: string[]) {
     if (!ids?.length) throw new AccError('ESF_EMPTY', 'Не выбраны ЭСФ');
-    const rows = await this.prisma.esfInvoice.findMany({ where: { id: { in: ids }, organizationId: ctx.organizationId, direction: 'OUTBOUND' } });
-    const out: { id: string; num: string; body: string }[] = [];
+    const found = await this.prisma.esfInvoice.findMany({ where: { id: { in: ids }, organizationId: ctx.organizationId, direction: 'OUTBOUND' } });
+    const rows = ids.map((id) => found.find((r) => r.id === id)).filter((r): r is (typeof found)[number] => !!r);
+    const out: { id: string; num: string; body: string; bytesSha256: string; signingToken: string; expiresAt: Date }[] = [];
+    const secret = (() => { try { return signingSecret(); } catch (e) { return signingError(e); } })();
     for (const r of rows) {
       if (r.status !== 'READY') throw new AccError('ESF_STATUS', `ЭСФ № ${r.num} уже отправлен (статус ${r.status})`);
       const fresh = r.sourceDocId ? await this.prepare(ctx, r.sourceDocId, today()) : r;
-      out.push({ id: fresh.id, num: fresh.num, body: fresh.body });
+      // Подписывается ровно эта строка; запрос на подпись привязан к её хэшу, пользователю и сроку.
+      const req = issueSigningRequest(secret, { organizationId: ctx.organizationId, userId: String(ctx.userId), kind: 'INVOICE', subjectId: fresh.id }, fresh.body);
+      out.push({ id: fresh.id, num: fresh.num, body: fresh.body, bytesSha256: req.bytesSha256, signingToken: req.token, expiresAt: req.expiresAt });
     }
     return { version: INVOICE_VERSION, items: out };
   }
 
-  async upload(ctx: OrgContext, b: { certificate: string; items: { id: string; signature: string }[] }) {
+  async upload(ctx: OrgContext, b: { certificate: string; items: { id: string; signature: string; signingToken?: string }[] }) {
     const { env, session } = await this.requireSession(ctx.organizationId);
     const s = await this.prisma.esfSettings.findUnique({ where: { organizationId: ctx.organizationId } });
     if (!b?.certificate) throw new AccError('ESF_CERT', 'Не передан сертификат подписи');
@@ -412,8 +422,9 @@ export class EsfService implements OnModuleInit, OnModuleDestroy {
     const items = b.items.map((i) => {
       if (!i.signature || i.signature.length > 400) throw new AccError('ESF_SIGNATURE', 'Подпись ЭСФ должна быть «сырой» подписью (до 400 символов base64)', { fix: 'Подписывайте через NCALayer в режиме raw ключом подписи (не AUTH).' });
       const r = byId.get(i.id)!;
-      return { row: r, body: r.body, signature: i.signature, signatureType: s?.signatureType ?? 'COMPANY', version: INVOICE_VERSION };
+      return { row: r, body: r.body, signature: i.signature, signingToken: i.signingToken, signatureType: s?.signatureType ?? 'COMPANY', version: INVOICE_VERSION };
     });
+    const evidence = await this.checkSignatures(ctx, s, b.certificate, items.map((it) => ({ kind: 'INVOICE' as const, subjectId: it.row.id, label: `ЭСФ № ${it.row.num}`, bytes: it.body, signature: it.signature, token: it.signingToken })));
     const cert = stripPem(b.certificate);
     const res = await this.wrap(() => this.client(env).syncInvoice(session.sessionId, cert, items), session.id);
     const key = (num: string, date: string) => `${num}|${date}`;
@@ -430,8 +441,30 @@ export class EsfService implements OnModuleInit, OnModuleDestroy {
       const upd = await this.prisma.esfInvoice.update({ where: { id: it.row.id }, data });
       result.push({ id: upd.id, num: upd.num, status: upd.status, errors: upd.errors });
     }
-    await this.prisma.auditLog.create({ data: { userId: ctx.userId, organizationId: ctx.organizationId, action: 'ESF_UPLOAD', entity: 'esf_invoice', entityId: items.map((i) => i.row.id).join(','), after: { environment: env, accepted: res.accepted.length, declined: res.declined.length } as any } });
+    await this.prisma.auditLog.create({ data: { userId: ctx.userId, organizationId: ctx.organizationId, action: 'ESF_UPLOAD', entity: 'esf_invoice', entityId: items.map((i) => i.row.id).join(','), after: { environment: env, accepted: res.accepted.length, declined: res.declined.length, signing: evidence } as any } });
     return { accepted: res.accepted.length, declined: res.declined.length, items: result };
+  }
+
+  /**
+   * FP-016: до сети — запрос на подпись выдан этому пользователю и не устарел, подписаны ровно текущие
+   * байты, сертификат действует, это ключ подписи нужного ИИН/БИН, а RSA-подпись сходится с байтами.
+   */
+  private async checkSignatures(ctx: OrgContext, settings: { signerIin: string | null; signatureType: string } | null, certificate: string, items: { kind: 'INVOICE' | 'ACTION'; subjectId: string; label: string; bytes: string; signature: string; token?: string }[]) {
+    try {
+      const secret = signingSecret();
+      const hashes = items.map((it) => verifySigningRequest(secret, it.token, { organizationId: ctx.organizationId, userId: String(ctx.userId), kind: it.kind, subjectId: it.subjectId }, it.bytes).bytesSha256);
+      const cert = inspectCertificate(certificate);
+      const org = await this.prisma.organization.findUnique({ where: { id: ctx.organizationId }, select: { inn: true } });
+      const problems = checkSigner(cert, { signerIin: settings?.signerIin, organizationBin: org?.inn, signatureType: settings?.signatureType ?? 'COMPANY' });
+      if (problems.length) throw new EsfSigningError('ESF_SIGNER_NOT_AUTHORIZED', 'Сертификат не подходит для подписи ЭСФ этой организации', problems);
+      return items.map((it, k) => {
+        const v = verifyRawSignature(cert, it.bytes, it.signature);
+        if (v === 'INVALID') throw new EsfSigningError('ESF_SIGNATURE_INVALID', `${it.label}: подпись не соответствует подписываемым данным или сертификату — подпишите заново`);
+        return { subjectId: it.subjectId, ...signingEvidence(cert, v, hashes[k]) };
+      });
+    } catch (e) {
+      return signingError(e);
+    }
   }
 
   /** «Отказаться» от ЭСФ, который ещё не отправлен (например, документ будет исправлен). */
@@ -475,13 +508,22 @@ export class EsfService implements OnModuleInit, OnModuleDestroy {
   /** Строка для подписи «сырой» подписью ключом подписи (как generateSignature/signIdList в SDK). */
   async actionData(ctx: OrgContext, b: { action: EsfAction; ids: string[]; reason?: string }) {
     const { rows } = await this.actionRows(ctx, b.action, b.ids, b.reason);
-    return { action: b.action, data: this.signable(b.action, rows, b.reason) };
+    const data = this.signable(b.action, rows, b.reason);
+    const secret = (() => { try { return signingSecret(); } catch (e) { return signingError(e); } })();
+    const req = issueSigningRequest(secret, { organizationId: ctx.organizationId, userId: String(ctx.userId), kind: 'ACTION', subjectId: this.actionSubject(b.action, rows) }, data);
+    return { action: b.action, data, bytesSha256: req.bytesSha256, signingToken: req.token, expiresAt: req.expiresAt };
   }
 
-  async action(ctx: OrgContext, b: { action: EsfAction; ids: string[]; reason?: string; signature: string; certificate: string }) {
+  private actionSubject(action: EsfAction, rows: { id: string }[]) {
+    return `${action}:${rows.map((r) => r.id).sort().join(',')}`;
+  }
+
+  async action(ctx: OrgContext, b: { action: EsfAction; ids: string[]; reason?: string; signature: string; certificate: string; signingToken?: string }) {
     const { def, rows } = await this.actionRows(ctx, b.action, b.ids, b.reason);
     if (!b.signature || !b.certificate) throw new AccError('ESF_SIGNATURE', 'Нет подписи или сертификата');
     const { env, session } = await this.requireSession(ctx.organizationId);
+    const settings = await this.prisma.esfSettings.findUnique({ where: { organizationId: ctx.organizationId } });
+    const evidence = await this.checkSignatures(ctx, settings, b.certificate, [{ kind: 'ACTION', subjectId: this.actionSubject(b.action, rows), label: `Операция «${def.label}»`, bytes: this.signable(b.action, rows, b.reason), signature: b.signature, token: b.signingToken }]);
     const client = this.client(env);
     const cert = stripPem(b.certificate);
     const reason = String(b.reason ?? '').trim();
@@ -511,7 +553,7 @@ export class EsfService implements OnModuleInit, OnModuleDestroy {
       const u = await this.prisma.esfInvoice.update({ where: { id: r.id }, data });
       out.push({ id: u.id, num: u.num, changed: !!c?.isChanged, status: u.status, esfStatus: u.esfStatus, error: c?.isChanged ? null : c?.errorText ?? c?.errorCode ?? 'нет ответа по ЭСФ' });
     }
-    await this.prisma.auditLog.create({ data: { userId: ctx.userId, organizationId: ctx.organizationId, action: `ESF_${b.action}`, entity: 'esf_invoice', entityId: rows.map((r) => r.id).join(','), reason: reason || null, after: { environment: env, results: out } as any } });
+    await this.prisma.auditLog.create({ data: { userId: ctx.userId, organizationId: ctx.organizationId, action: `ESF_${b.action}`, entity: 'esf_invoice', entityId: rows.map((r) => r.id).join(','), reason: reason || null, after: { environment: env, results: out, signing: evidence } as any } });
     return { action: b.action, label: def.label, changed: out.filter((o) => o.changed).length, items: out };
   }
 

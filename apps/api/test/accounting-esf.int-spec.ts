@@ -7,6 +7,7 @@ import { EsfService } from '../src/modules/accounting/esf/esf.service';
 import { esfDate, parseInvoice } from '../src/modules/accounting/esf/invoice-xml';
 import { EsfSoapClient } from '../src/modules/accounting/esf/esf-soap.client';
 import { makeServices, makeOrg, makeTrade } from './accounting-helpers';
+import { makeCertFactory } from './esf-certs';
 
 const prisma = new PrismaService();
 const s = makeServices(prisma);
@@ -57,6 +58,13 @@ async function stockAndSell(ctx: any, t: any, date = '2026-10-05') {
     lines: [{ productId: t.goods.id, qty: '3', price: '2320' }, { productId: t.service.id, qty: '1', price: '1160' }],
   });
 }
+
+// Тестовые ключи «как у НУЦ»: ИИН подписанта = БИН организации в этих тестах (123456789021).
+const certs = makeCertFactory();
+const signer = certs.cert({ iin: '123456789021', bin: '123456789021' });
+const authKey = certs.cert({ iin: '123456789021', bin: '123456789021', keyUsage: 'digitalSignature,keyEncipherment' });
+const certB64 = (pem: string) => pem.replace(/-----[^-]+-----/g, '').replace(/\s+/g, '');
+afterAll(() => certs.cleanup());
 
 beforeAll(async () => {
   await prisma.$connect();
@@ -144,10 +152,10 @@ describe('ЭСФ: вход, подпись, отправка, статусы', (
       createSessionSigned: () => '<sessionId>S-1</sessionId>',
       syncInvoice: (b) => {
         uploaded = b;
-        const nums = [...b.matchAll(/&lt;num&gt;(\d+)&lt;\/num&gt;/g)].map((m) => m[1]);
         const d = esfDate(new Date());
-        return `<acceptedSet><standardResponse><id>9001</id><num>${nums[0]}</num><date>${d}</date></standardResponse></acceptedSet>` +
-          `<declinedSet><standardResponse><num>${nums[1]}</num><date>${d}</date><errors><error><property>customers.customer.tin</property><errorCode>TIN_NOT_FOUND</errorCode><text>Получатель не найден</text></error></errors></standardResponse></declinedSet>`;
+        // решение по номеру ЭСФ, а не по позиции в пакете
+        return `<acceptedSet><standardResponse><id>9001</id><num>${i1.num}</num><date>${d}</date></standardResponse></acceptedSet>` +
+          `<declinedSet><standardResponse><num>${i2.num}</num><date>${d}</date><errors><error><property>customers.customer.tin</property><errorCode>TIN_NOT_FOUND</errorCode><text>Получатель не найден</text></error></errors></standardResponse></declinedSet>`;
       },
       queryInvoiceSummaryById: () => '<invoiceSummaryList><invoiceSummary><invoiceId>9001</invoiceId><invoiceStatus>DELIVERED</invoiceStatus><registrationNumber>ESF-123456789021-20261023-0001</registrationNumber></invoiceSummary></invoiceSummaryList>',
       queryUpdates: () => `<lastEventDate>2026-10-23T10:00:00.000+05:00</lastEventDate><lastBlock>true</lastBlock><invoiceInfoList/>`,
@@ -164,13 +172,38 @@ describe('ЭСФ: вход, подпись, отправка, статусы', (
 
     const sd = await esf.signData(ctx, [i1.id, i2.id]);
     expect(sd.version).toBe('InvoiceV2');
+    expect(sd.items[0].bytesSha256).toMatch(/^[0-9a-f]{64}$/);
     expect(sd.items).toHaveLength(2);
     expect(parseInvoice(sd.items[0].body).date).toBe(esfDate(new Date())); // дата выписки = день подписи
 
     await expectCode(esf.upload(ctx, { certificate: 'MIIC', items: [{ id: i1.id, signature: 'A'.repeat(500) }, { id: i2.id, signature: 'x' }] }), 'ESF_SIGNATURE');
-    const up = await esf.upload(ctx, { certificate: '-----BEGIN CERTIFICATE-----\nMIIC\n-----END CERTIFICATE-----', items: [{ id: i1.id, signature: 'c2ln' }, { id: i2.id, signature: 'c2ln' }] });
+
+    // FP-016: подпись принимается только по запросу на подпись, только ключом подписи, только над теми же байтами
+    const signed = (data: typeof sd, key = signer) => data.items.map((i) => ({ id: i.id, signature: key.sign(i.body), signingToken: i.signingToken }));
+    const noToken = signed(sd).map(({ id, signature }) => ({ id, signature }));
+    await expectCode(esf.upload(ctx, { certificate: signer.pem, items: noToken }), 'ESF_SIGN_REQUEST_INVALID');
+    await expectCode(esf.upload({ ...ctx, userId: 'someone-else' }, { certificate: signer.pem, items: signed(sd) }), 'ESF_SIGN_REQUEST_INVALID');
+    await expectCode(esf.upload(ctx, { certificate: authKey.pem, items: signed(sd, authKey) }), 'ESF_SIGNER_NOT_AUTHORIZED');
+    const wrongBytes = signed(sd).map((x, k) => ({ ...x, signature: signer.sign(sd.items[k].body + ' ') }));
+    await expectCode(esf.upload(ctx, { certificate: signer.pem, items: wrongBytes }), 'ESF_SIGNATURE_INVALID');
+    // документ пересобран после выдачи на подпись (другая дата выписки) — старая подпись устарела
+    const stale = signed(sd);
+    await esf.prepare(ctx, sale1.id, new Date('2026-10-07T00:00:00Z'));
+    await expectCode(esf.upload(ctx, { certificate: signer.pem, items: stale }), 'ESF_STALE_SIGNATURE');
+    expect(fake.calls.filter((c) => c.body.includes('syncInvoiceRequest'))).toHaveLength(0); // ни одна попытка не ушла в ИС ЭСФ
+
+    const sd2 = await esf.signData(ctx, [i1.id, i2.id]);
+    const items = signed(sd2);
+    const up = await esf.upload(ctx, { certificate: signer.pem, items });
     expect(up).toMatchObject({ accepted: 1, declined: 1 });
-    expect(uploaded).toContain('<x509Certificate>MIIC</x509Certificate>');
+    expect(uploaded).toContain(`<x509Certificate>${certB64(signer.pem)}</x509Certificate>`);
+
+    // в журнале — доказательства проверки, но не подпись и не сертификат
+    const audit = await prisma.auditLog.findFirst({ where: { organizationId: ctx.organizationId, action: 'ESF_UPLOAD' }, orderBy: { ts: 'desc' } });
+    const auditText = JSON.stringify(audit);
+    expect((audit!.after as any).signing).toEqual(expect.arrayContaining([expect.objectContaining({ verification: 'VERIFIED', signerIin: '123456789021', keyType: 'rsa' })]));
+    expect(auditText).not.toContain(items[0].signature.slice(0, 32));
+    expect(auditText).not.toContain(certB64(signer.pem).slice(40, 100));
     expect(uploaded).toContain('<signatureType>COMPANY</signatureType>');
     // тело отправлено ровно тем, что подписано
     const sent = await prisma.esfInvoice.findUnique({ where: { id: i1.id } });
@@ -303,7 +336,10 @@ describe('ЭСФ: возврат (дополнительный ЭСФ) и отз
       queryInvoiceSummaryById: () => `<invoiceSummaryList><invoiceSummary><invoiceId>${inv.esfId}</invoiceId><invoiceStatus>REVOKED</invoiceStatus></invoiceSummary></invoiceSummaryList>`,
       queryUpdates: () => `<lastEventDate>2026-10-23T10:00:00.000+05:00</lastEventDate><lastBlock>true</lastBlock><invoiceInfoList/>`,
     }).fetcher;
-    const r = await esf.action(ctx, { action: 'REVOKE', ids: [inv.id], reason: 'Ошибка в цене "А&Б"', signature: 'c2ln', certificate: 'MIIC' });
+    // причина изменилась после выдачи на подпись — подписанные байты уже другие
+    await expectCode(esf.action(ctx, { action: 'REVOKE', ids: [inv.id], reason: 'Другая причина', signature: signer.sign(d.data), certificate: signer.pem, signingToken: d.signingToken }), 'ESF_STALE_SIGNATURE');
+    expect(req).toBe('');
+    const r = await esf.action(ctx, { action: 'REVOKE', ids: [inv.id], reason: 'Ошибка в цене "А&Б"', signature: signer.sign(d.data), certificate: signer.pem, signingToken: d.signingToken });
     expect(r.changed).toBe(1);
     expect(req).toContain('<esf:revokeInvoiceByIdRequest>');
     expect(req).toContain(`<invoiceIdWithReason><id>${inv.esfId}</id><reason>Ошибка в цене "А&amp;Б"</reason></invoiceIdWithReason>`);
@@ -325,15 +361,21 @@ describe('ЭСФ: возврат (дополнительный ЭСФ) и отз
     const base = BigInt(Date.now()) * 100n;
     const add = await mk(base + 1n, 'ADDITIONAL_INVOICE', 'WAITING_CUSTOMER_CONFIRMATION');
     const rev = await mk(base + 2n, 'ORDINARY_INVOICE', 'WAITING_CUSTOMER_REVOKE_CONFIRMATION');
-    expect((await esf.actionData(ctx, { action: 'APPROVE', ids: [add.id] })).data).toBe(`<signedContent><ids><id>${base + 1n}</id></ids></signedContent>`);
+    const approve = await esf.actionData(ctx, { action: 'APPROVE', ids: [add.id] });
+    expect(approve.data).toBe(`<signedContent><ids><id>${base + 1n}</id></ids></signedContent>`);
     await expectCode(esf.actionData(ctx, { action: 'APPROVE', ids: [rev.id] }), 'ESF_ACTION_NOT_ALLOWED');
     const ops: string[] = [];
     esf.fetcher = fakeEsf({
       approveInvoiceById: () => { ops.push('approve'); return `<resultList><changeStatusResult><invoiceSummary><invoiceId>${base + 1n}</invoiceId><invoiceStatus>DELIVERED</invoiceStatus></invoiceSummary><isChanged>true</isChanged></changeStatusResult></resultList>`; },
       revokeConfirmInvoiceById: () => { ops.push('confirmRevoke'); return `<resultList><changeStatusResult><invoiceSummary><invoiceId>${base + 2n}</invoiceId><invoiceStatus>REVOKED</invoiceStatus></invoiceSummary><isChanged>true</isChanged></changeStatusResult></resultList>`; },
     }).fetcher;
-    await esf.action(ctx, { action: 'APPROVE', ids: [add.id], signature: 's', certificate: 'c' });
-    await esf.action(ctx, { action: 'CONFIRM_REVOKE', ids: [rev.id], signature: 's', certificate: 'c' });
+    await expectCode(esf.action(ctx, { action: 'APPROVE', ids: [add.id], signature: 's', certificate: 'c', signingToken: approve.signingToken }), 'ESF_CERT');
+    // токен одной операции не подходит для другой
+    await expectCode(esf.action(ctx, { action: 'CONFIRM_REVOKE', ids: [rev.id], signature: signer.sign(approve.data), certificate: signer.pem, signingToken: approve.signingToken }), 'ESF_SIGN_REQUEST_INVALID');
+    expect(ops).toEqual([]);
+    await esf.action(ctx, { action: 'APPROVE', ids: [add.id], signature: signer.sign(approve.data), certificate: signer.pem, signingToken: approve.signingToken });
+    const confirm = await esf.actionData(ctx, { action: 'CONFIRM_REVOKE', ids: [rev.id] });
+    await esf.action(ctx, { action: 'CONFIRM_REVOKE', ids: [rev.id], signature: signer.sign(confirm.data), certificate: signer.pem, signingToken: confirm.signingToken });
     expect(ops).toEqual(['approve', 'confirmRevoke']);
     expect((await prisma.esfInvoice.findUnique({ where: { id: add.id } }))!.status).toBe('DELIVERED');
     expect((await prisma.esfInvoice.findUnique({ where: { id: rev.id } }))!.status).toBe('REVOKED');

@@ -74,7 +74,7 @@ ssh root@SERVER 'bash /root/flowpos-deploy/scripts/deploy.sh /tmp/flowpos-releas
 - **Рекомендация:** копировать `shared/backups` на второй сервер или в облако, иначе при потере диска пропадут и бэкапы.
 
 ## Безопасность (что сделано)
-- API в боевом режиме **не запускается** без `JWT_SECRET` (≥ 32 символов), `DATABASE_URL` и `CORS_ORIGIN`. Раньше был запасной общеизвестный ключ `flowpos-secret`, и токены можно было подделать.
+- API в боевом режиме **не запускается** без `JWT_SECRET` и `ESF_SIGNING_SECRET` (оба ≥ 32 символов), `DATABASE_URL` и `CORS_ORIGIN`. На уже установленном сервере `ESF_SIGNING_SECRET` нужно **дописать вручную** в `/opt/flowpos/shared/api.env` до обновления (`openssl rand -hex 32`). Раньше был запасной общеизвестный ключ `flowpos-secret`, и токены можно было подделать.
 - Swagger в бою выключен (`SWAGGER_ENABLED=1` — включить временно).
 - API и MCP слушают только 127.0.0.1, снаружи доступ только через nginx с TLS.
 - nginx ограничивает частоту входа (10/мин с IP) и запросов к API, ставит HSTS и запрет встраивания в чужие сайты.

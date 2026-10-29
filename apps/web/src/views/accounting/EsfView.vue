@@ -295,7 +295,7 @@ async function send() {
   try {
     const sd = (await api.post('/accounting/esf/sign-data', { ids: selected.value.map((r) => r.id) })) as any
     const { certificate, signatures } = await signRaw(sd.items.map((i: any) => i.body))
-    const r = (await api.post('/accounting/esf/upload', { certificate, items: sd.items.map((i: any, k: number) => ({ id: i.id, signature: signatures[k] })) })) as any
+    const r = (await api.post('/accounting/esf/upload', { certificate, items: sd.items.map((i: any, k: number) => ({ id: i.id, signature: signatures[k], signingToken: i.signingToken })) })) as any
     if (r.declined) ElMessageBox.alert(`Принято ИС ЭСФ: ${r.accepted}\nОтклонено: ${r.declined} — раскройте строку, чтобы увидеть причину.`, 'Отправка ЭСФ', { confirmButtonText: 'OK', type: 'warning' })
     else ElMessage.success(`Отправлено ЭСФ: ${r.accepted}`)
     await load()
@@ -323,7 +323,7 @@ async function act(action: string, row: any) {
   try {
     const d = (await api.post('/accounting/esf/actions/data', { action, ids: [row.id], reason })) as any
     const { certificate, signatures } = await signRaw([d.data])
-    const r = (await api.post('/accounting/esf/actions', { action, ids: [row.id], reason, signature: signatures[0], certificate })) as any
+    const r = (await api.post('/accounting/esf/actions', { action, ids: [row.id], reason, signature: signatures[0], certificate, signingToken: d.signingToken })) as any
     if (r.changed) ElMessage.success(txt.ok)
     else showError({ message: `ИС ЭСФ не выполнила операцию: ${r.items?.[0]?.error ?? ''}` })
     await load()
