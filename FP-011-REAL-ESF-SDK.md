@@ -502,4 +502,80 @@ const store2 = new EsfStore(':memory:', {
 
 ---
 
-**FP-011 Status: ✅ 75% COMPLETE (Phases 1-3 Done, Phase 4 Coming)**
+### ✅ Phase 4: Document Builder (COMPLETE)
+- EsfDocumentBuilder: Invoice object → canonical XML
+- Field validation: number, date, seller, buyer, items, currency
+- Date format: enforces ISO 8601 (YYYY-MM-DD)
+- Numeric validation: quantity, price, amount (1-2 decimals)
+- Tax calculation: 12% VAT by default
+- Currency rounding: to 2 decimal places
+- XML escaping: special characters (&, <, >, ", ')
+- Hash computation: SHA256 for idempotency
+- MockDocumentBuilder for testing
+- **13/13 tests passing**
+
+---
+
+## Complete Test Summary
+
+```
+Phase 1 (Signing):     11 tests ✅
+Phase 2 (Gateway):     14 tests ✅
+Phase 3 (Schema):      14 tests ✅
+Phase 4 (Builder):     13 tests ✅
+──────────────────────────────────
+Total: 52/52 tests passing ✅
+```
+
+---
+
+## Code Statistics
+
+```
+Module              | Tests | Status
+─────────────────────────────────────
+signing.real.ts     |   11  | ✅
+gateway.real.ts     |   14  | ✅
+schema.real.ts      |   14  | ✅
+document-builder.ts |   13  | ✅
+─────────────────────────────────────
+TOTAL               |   52  | ✅ COMPLETE
+```
+
+---
+
+## Full Workflow Integration
+
+```typescript
+// Canonical workflow: invoice → document → send → registered
+
+// 1. Build document from invoice
+const builder = new EsfDocumentBuilder();
+const doc = builder.build(invoice);
+if (!doc.validated) throw new Error(doc.errors.join(', '));
+
+// 2. Validate against schema
+const schema = new RealEsfSchema('./Invoice_v3.xsd');
+const validation = schema.validate(doc.xml);
+if (!validation.valid) quarantine(validation.errors);
+
+// 3. Sign with ЭЦП
+const signer = new RealSigningProvider();
+const signed = await signer.sign(Buffer.from(doc.xml), principal);
+
+// 4. Send to gateway
+const gateway = new RealEsfGateway(config);
+const result = await gateway.send({
+  ...doc,
+  signature: signed.signature,
+});
+
+// 5. Store result (REGISTERED | REJECTED | UNKNOWN)
+if (result.state === 'UNKNOWN') {
+  // Requires manual reconciliation: gateway.lookup(externalId)
+}
+```
+
+---
+
+**FP-011 Status: ✅ 100% COMPLETE (All 4 Phases Done, 52/52 Tests Passing)**
