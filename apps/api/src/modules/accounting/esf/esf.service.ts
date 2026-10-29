@@ -6,8 +6,9 @@ import { AccError } from '../common/acc-error';
 import { D } from '../common/money';
 import { OrgContext } from '../access/org-context';
 import { TRADE_SOURCE, TradeDoc, tradeLineAmounts } from '../autopilot/trade-rules';
-import { EsfInvoiceData, EsfProduct, INVOICE_VERSION, buildInvoiceV2, esfDate, parseEsfDate, parseInvoice, signableIdList, signableIdWithReasonList } from './invoice-xml';
+import { EsfInvoiceData, EsfProduct, INVOICE_VERSION, esfDate, parseEsfDate, parseInvoice, signableIdList, signableIdWithReasonList } from './invoice-xml';
 import { EsfSoapClient, EsfSoapError, Fetcher } from './esf-soap.client';
+import { EsfSerializationError, serializeInvoice } from './invoice-serializer';
 import { ESF_UNITS } from './units.data';
 
 type Tx = Prisma.TransactionClient;
@@ -21,6 +22,8 @@ const ORIGIN_CODES = ['1', '2', '3', '4', '5', '6'];
 
 const sha256 = (s: string) => createHash('sha256').update(s, 'utf8').digest('hex');
 const money = (v: Prisma.Decimal) => v.toFixed(2);
+// Без округления: лишние знаки после запятой должна увидеть проверка сериализатора, а не toFixed.
+const exact = (v: Prisma.Decimal) => (v.decimalPlaces() <= 2 ? v.toFixed(2) : v.toFixed());
 const today = () => new Date(new Date().toISOString().slice(0, 10) + 'T00:00:00.000Z');
 
 function stripPem(cert: string) {
@@ -137,7 +140,7 @@ export class EsfService implements OnModuleInit, OnModuleDestroy {
     const tradeDoc: TradeDoc = { ...doc, organizationId, lines: doc.lines as any };
     // Дополнительный ЭСФ на возврат: суммовые графы и количество — разница со знаком «минус»; цена за единицу — без изменения
     const sg = extra ? -1 : 1;
-    const sm = (v: Prisma.Decimal) => money(v.times(sg));
+    const sm = (v: Prisma.Decimal) => exact(v.times(sg));
     const products: EsfProduct[] = [];
     let net = new D(0), vat = new D(0), gross = new D(0);
     for (const l of doc.lines) {
@@ -163,8 +166,9 @@ export class EsfService implements OnModuleInit, OnModuleDestroy {
         catalogTruId: String(pa.catalogTruId ?? '1'), // «1» — как в образце SDK КГД для товаров вне «Виртуального склада»
         unitCode: pa.tnvedCode ?? undefined,
         unitNomenclature: unit,
-        quantity: service ? undefined : qty.times(sg).toDecimalPlaces(6).toString(),
-        unitPrice: service || qty.isZero() ? undefined : a.net.div(qty).toDecimalPlaces(6).toString(),
+        quantity: service ? undefined : qty.times(sg).toFixed(),
+        // Цена за единицу — производная величина (G 10), её округление до 6 знаков XSD допускает.
+        unitPrice: service || qty.isZero() ? undefined : a.net.div(qty).toDecimalPlaces(6, D.ROUND_HALF_UP).toFixed(),
         priceWithoutTax: sm(a.net),
         turnoverSize: sm(a.net),
         ndsRate: rateNum,
@@ -255,7 +259,13 @@ export class EsfService implements OnModuleInit, OnModuleDestroy {
         const after = new D(base.totalWithTax).plus(others._sum.totalWithTax ?? 0).plus(totals.gross);
         if (after.lt(0)) throw new AccError('ESF_RETURN_EXCEEDS', `Возврат больше суммы ЭСФ реализации (останется ${money(after)})`, { fix: 'Сумма возвратов по одной реализации не может превышать сумму её ЭСФ.' });
       }
-      const body = buildInvoiceV2(data);
+      let body: string;
+      try {
+        body = serializeInvoice(data, INVOICE_VERSION).xml;
+      } catch (e) {
+        if (!(e instanceof EsfSerializationError)) throw e;
+        throw new AccError(e.code, `ЭСФ по документу ${doc.number ?? ''} не сформирован: данные не проходят проверку формы ${INVOICE_VERSION}`, { fix: e.errors.map((x) => `• ${x.path}: ${x.message}`).join('\n'), details: { errors: e.errors } });
+      }
       const row = {
         organizationId: ctx.organizationId, environment: env, direction: 'OUTBOUND', sourceDocId: doc.id, invoiceType: data.invoiceType, relatedInvoiceId: base?.id ?? null, num,
         date: issueDate, turnoverDate: doc.date, sellerTin: data.sellers[0].tin, sellerName: data.sellers[0].name,

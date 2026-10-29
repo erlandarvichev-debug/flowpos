@@ -580,7 +580,7 @@ if (result.state === 'UNKNOWN') {
 
 **FP-011 Status: ⚠️ PARTIAL (audit 2026-10-29)**
 
-- Backlog FP-011 = *obtain* the official SDK/WSDL/XSD, record bytes/checksums/versions, document test/prod endpoints, auth, TTL, limits, enums. **None of this is done** — no official artifacts are in the repo.
+- Backlog FP-011 = *obtain* the official SDK/WSDL/XSD, record bytes/checksums/versions, document test/prod endpoints, auth, TTL, limits, enums. **Partly done, but outside this stand:** the official **InvoiceV2 XSD** (`apps/api/test/fixtures/esf/invoice_v2.xsd`, `schema2.xsd`) was fetched from the KGD test stand on 23.10 (`EsfXsdService.queryInvoiceXsd`; provenance in its README; sha256 pinned by FP-015). The real SOAP client lives in `apps/api/src/modules/accounting/esf/esf-soap.client.ts`. Still missing: WSDL bytes/checksums, documented prod endpoints, auth TTL, limits and the full enum list.
 - `gateway.real.ts` SOAP operations are **assumed, not taken from a WSDL**. Per `docs/erp/LOCAL_RUNBOOK.md`, real methods/enums may only be added after a contract test. Treat it as a placeholder; it must not be pointed at ИС ЭСФ.
 - `schema.real.ts` is a **heuristic checker of the synthetic stand format**, not XSD validation: required elements are hardcoded, and enum extraction is a stub.
 - Fixed on 2026-10-29: well-formedness check rejected every real document (the prolog and self-closing tags were counted as unbalanced) → replaced by `xml-wellformed.ts` (stack-based, rejects DTD/ENTITY). Schema version is now read from `xs:schema`, not from the XML prolog. 10 of 14 real-schema tests had been silently skipped (missing XSD) → they now run against `fixtures/synthetic-invoice-v3.xsd`.
