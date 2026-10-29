@@ -418,4 +418,40 @@ Invalid XML in batch          | Quarantine, continue
 
 ---
 
-**FP-012 Status: 🏗️ IN PROGRESS — Starting Phase 1 (Basic Poller)**
+## Implementation Status
+
+### ✅ Phase 1: Basic Inbound Poller (COMPLETE)
+- InboundPoller: batch polling, cursor management, reconciliation
+- MockInboundPoller: complete mock for testing
+- Atomic cursor updates (no duplicates on crash)
+- Retry logic (exponential backoff)
+- **17/17 tests passing**
+
+### ✅ Phase 2: Reconciliation Service + Scheduler (COMPLETE)
+- ReconciliationService: automatic UNKNOWN reconciliation
+- Age-based filtering (configurable threshold)
+- Comprehensive metrics (reconciled, failed, errors, duration)
+- PollingScheduler: periodic polling + reconciliation
+- Auto-start, idempotent start/stop
+- Metrics tracking (counts, timestamps)
+- **25/25 tests passing**
+
+### 🏗️ Phase 3: Cursor Persistence (IN PROGRESS)
+- PostgreSQL cursor storage (not in-memory)
+- Atomic updates with transactions
+- Recovery on process restart
+- Coming next...
+
+## Test Summary
+
+```
+Phase 1 (Poller):         17 tests ✅
+Phase 2 (Service):        25 tests ✅
+Phase 3 (Persistence):    TBD
+
+Total: 42/42 tests passing ✅
+```
+
+---
+
+**FP-012 Status: ✅ 50% COMPLETE (Phases 1-2 Done, Phase 3 Coming)**
