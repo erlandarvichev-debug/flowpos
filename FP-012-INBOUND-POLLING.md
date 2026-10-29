@@ -436,22 +436,26 @@ Invalid XML in batch          | Quarantine, continue
 - Metrics tracking (counts, timestamps)
 - **25/25 tests passing**
 
-### 🏗️ Phase 3: Cursor Persistence (IN PROGRESS)
-- PostgreSQL cursor storage (not in-memory)
-- Atomic updates with transactions
-- Recovery on process restart
-- Coming next...
+### ✅ Phase 3: Cursor Persistence (COMPLETE)
+- CursorStore: PostgreSQL cursor storage
+- PersistentInboundPoller: extends InboundPoller
+- Crash recovery (continue from saved cursor)
+- Atomic cursor + document updates
+- Isolation by tenant + organization
+- Status queries (monitoring)
+- MockCursorStore for testing
+- **34/34 tests passing**
 
 ## Test Summary
 
 ```
 Phase 1 (Poller):         17 tests ✅
 Phase 2 (Service):        25 tests ✅
-Phase 3 (Persistence):    TBD
-
-Total: 42/42 tests passing ✅
+Phase 3 (Persistence):    34 tests ✅
+────────────────────────────────────
+Total: 76/76 tests passing ✅
 ```
 
 ---
 
-**FP-012 Status: ✅ 50% COMPLETE (Phases 1-2 Done, Phase 3 Coming)**
+**FP-012 Status: ✅ 100% COMPLETE (All 3 Phases Done, 76/76 Tests Passing)**
