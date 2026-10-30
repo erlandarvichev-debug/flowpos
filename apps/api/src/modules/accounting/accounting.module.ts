@@ -13,13 +13,14 @@ import { AutopilotService } from './autopilot/autopilot.service';
 import { TradeDocumentsService } from './autopilot/trade-documents.service';
 import { BankImportService } from './bank/bank-import.service';
 import { EsfService } from './esf/esf.service';
+import { VatCreditService } from './vat/vat-credit.service';
 import { StatementsService } from './statements/statements.service';
 import { ClosingService } from './closing/closing.service';
 import { PayrollService } from './payroll/payroll.service';
 
 @Module({
   controllers: [AccountingController],
-  providers: [OrgGuard, IdempotencyInterceptor, DocumentsService, ReportsService, ChartService, RefsService, PeriodsService, PostingService, CostService, AutopilotService, TradeDocumentsService, BankImportService, EsfService, StatementsService, ClosingService, PayrollService],
+  providers: [OrgGuard, IdempotencyInterceptor, DocumentsService, ReportsService, ChartService, RefsService, PeriodsService, PostingService, CostService, AutopilotService, TradeDocumentsService, BankImportService, EsfService, StatementsService, ClosingService, PayrollService, VatCreditService],
   exports: [PayrollService, StatementsService, ClosingService, EsfService, AutopilotService, TradeDocumentsService, CostService, DocumentsService, ReportsService, ChartService, RefsService, PeriodsService, PostingService, OrgGuard],
 })
 export class AccountingModule {}

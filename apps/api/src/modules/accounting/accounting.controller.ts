@@ -14,6 +14,7 @@ import { AutopilotService } from './autopilot/autopilot.service';
 import { TradeDocumentsService } from './autopilot/trade-documents.service';
 import { BankImportService } from './bank/bank-import.service';
 import { EsfService } from './esf/esf.service';
+import { VatCreditService } from './vat/vat-credit.service';
 import { StatementsService } from './statements/statements.service';
 import { fileName, toPdf, toXlsx, trialBalanceXlsx } from './statements/statement-export';
 import { AccError } from './common/acc-error';
@@ -45,6 +46,7 @@ export class AccountingController {
     private statements: StatementsService,
     private closing: ClosingService,
     private payroll: PayrollService,
+    private vatCredit: VatCreditService,
   ) {}
 
   // ── Кадры и зарплата ──
@@ -167,6 +169,19 @@ export class AccountingController {
    * FP-018: отзыв (исходящие), подтверждение/отклонение исправленных и дополнительных, подтверждение отзыва (входящие),
    * привязка основания — только решением: предложить (с основанием) → утвердить (acc.esf.approve, MFA) → подписать → исполнить.
    */
+  // ── FP-019: НДС к зачёту по ЭСФ (налоговый регистр) ──
+  @Get('vat/credits') @RequirePermission('acc.reports.read')
+  vatRegister(@Org() ctx: OrgContext, @Query('year') year: string, @Query('quarter') quarter: string) { return this.vatCredit.register(ctx, Number(year), Number(quarter)); }
+
+  @Get('esf/invoices/:id/vat') @RequirePermission('acc.esf.read')
+  vatLedger(@Org() ctx: OrgContext, @Param('id') id: string) { return this.vatCredit.ledger(ctx, id); }
+
+  @Post('vat/credits') @RequirePermission('acc.tax.manage') @RequireMfa()
+  vatAllocate(@Org() ctx: OrgContext, @Body() b: any) { return this.vatCredit.allocate(ctx, b); }
+
+  @Post('vat/credits/:id/reverse') @RequirePermission('acc.tax.manage') @RequireMfa()
+  vatReverse(@Org() ctx: OrgContext, @Param('id') id: string, @Body() b: any) { return this.vatCredit.reverse(ctx, id, b); }
+
   @Get('esf/decisions') @RequirePermission('acc.esf.read')
   esfDecisions(@Org() ctx: OrgContext, @Query() q: any) { return this.esf.decisions(ctx, q); }
 

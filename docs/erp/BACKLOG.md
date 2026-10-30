@@ -75,7 +75,7 @@ ESF | P0 | Methodologist/Backend | M | DONE_LOCAL — см. `FP-018-ESF-DECISION
 Зависимости: FP-012,FP-016. Приёмка: Technical ACK отдельно от business acceptance; сроки/роль/основание; explicit approval.
 
 ## FP-019 · Частичный зачёт НДС и корректировки
-ESF | P0 | Tax methodologist/Backend | L | PLANNED
+ESF | P0 | Tax methodologist/Backend | L | DONE_LOCAL — см. `FP-019-VAT-CREDIT-REGISTER.md` (API; правило — черновик до FP-039; не выкладывалось)
 Зависимости: FP-012,FP-039. Приёмка: Quarter/year/amount/remainder/rule version; нельзя автоматически зачесть весь VAT при download.
 
 ## FP-020 · Рабочее место ESF для реальных пользователей

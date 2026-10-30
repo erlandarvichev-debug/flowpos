@@ -9,6 +9,7 @@ export const PERMISSIONS = [
   'acc.policy.manage',
   'acc.audit.read',
   'acc.esf.read', 'acc.esf.send',
+  'acc.tax.manage', // FP-019: распределение входного НДС (к зачёту / не к зачёту, сторно)
   'acc.esf.approve', // FP-018: утверждение решений по ЭСФ (отзыв, отклонение, подтверждение, основание)
   'hr.read', 'hr.manage', 'payroll.approve',
   'org.members.manage',

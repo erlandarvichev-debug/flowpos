@@ -2202,6 +2202,35 @@ model EsfInvoice {
   @@map("esf_invoices")
 }
 
+/// FP-019: налоговый регистр распределения входного НДС по ЭСФ — что и в каком квартале принято к зачёту.
+/// Строки неизменяемы (триггер); корректировка — строка REVERSAL со ссылкой на исходную. Автоматики нет:
+/// каждая строка — явная команда с основанием, правилом и его версией.
+model VatCreditAllocation {
+  id             String    @id @default(uuid())
+  organizationId String    @map("organization_id")
+  esfInvoiceId   String    @map("esf_invoice_id")
+  kind           String    // CREDIT — к зачёту | NON_CREDITABLE — не принимается к зачёту (в расходы) | REVERSAL — сторно строки
+  year           Int
+  quarter        Int
+  amount         Decimal   @db.Decimal(18, 2) // знак как у НДС ЭСФ; у REVERSAL — противоположный исходной
+  method         String    // FULL | PROPORTIONAL | MANUAL
+  shareNumerator   Decimal? @map("share_numerator") @db.Decimal(18, 2)
+  shareDenominator Decimal? @map("share_denominator") @db.Decimal(18, 2)
+  ruleCode       String    @map("rule_code")
+  ruleVersion    String    @map("rule_version")
+  basis          String
+  reversedId     String?   @unique @map("reversed_id")
+  expenseAccount String?   @map("expense_account")
+  entryId        String?   @map("entry_id") // проводка D расход / C 1420 для NON_CREDITABLE
+  esfSnapshot    String    @map("esf_snapshot")
+  createdBy      String    @map("created_by")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  @@index([organizationId, year, quarter])
+  @@index([esfInvoiceId])
+  @@map("vat_credit_allocations")
+}
+
 /// FP-018: решение по ЭСФ — предложено → утверждено → исполнено (или отклонено/устарело/ошибка).
 /// Утверждение привязано к snapshot_hash состояния ЭСФ: изменилось состояние — решение не исполняется.
 model EsfDecision {

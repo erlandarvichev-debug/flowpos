@@ -50,7 +50,7 @@
             <dt>Товары и запасы (13xx)</dt><dd>{{ fmtMoney(summary.stock) }}</dd>
             <dt>Долги покупателей (1210)</dt><dd>{{ fmtMoney(summary.receivables) }}</dd>
             <dt>Долги поставщикам (3310)</dt><dd>{{ fmtMoney(summary.payables) }}</dd>
-            <dt>НДС к уплате (3130 − 1420)</dt><dd>{{ fmtMoney(summary.vatPayable) }}</dd>
+            <dt title="Сальдо счетов, а не декларация: что принято к зачёту, — в регистре «НДС к зачёту» по ЭСФ (FP-019)">Сальдо НДС по счетам (3130 − 1420)</dt><dd>{{ fmtMoney(summary.vatPayable) }}</dd>
             <dt>Выручка с начала года</dt><dd>{{ fmtMoney(summary.revenueYtd) }}</dd>
             <dt>Валовая прибыль с начала года</dt><dd>{{ fmtMoney(summary.grossProfitYtd) }}</dd>
             <dt>Прибыль с начала года</dt><dd><b>{{ fmtMoney(summary.profitYtd) }}</b></dd>
