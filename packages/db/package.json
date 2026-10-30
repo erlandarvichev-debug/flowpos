@@ -8,7 +8,7 @@
     "seed": "ts-node prisma/seed.ts",
     "studio": "prisma studio",
     "sql": "node scripts/apply-sql.js",
-    "push": "prisma db push && node scripts/apply-sql.js"
+    "push": "node scripts/apply-sql.js --pre && prisma db push && node scripts/apply-sql.js"
   },
   "dependencies": {
     "@prisma/client": "5.22.0"

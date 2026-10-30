@@ -7,9 +7,14 @@ async function main() {
   console.log('Seeding database (new schema)...');
 
   // ── Organization ─────────────────────────────────────────────────────────
+  const tenant = await prisma.tenant.upsert({
+    where: { id: '00000000-0000-0000-0000-000000000001' },
+    create: { id: '00000000-0000-0000-0000-000000000001', name: 'Основной клиент' },
+    update: {},
+  });
   const org = await prisma.organization.upsert({
     where: { id: 'org-default' },
-    create: { id: 'org-default', name: 'ТОО FlowPOS Demo', inn: '123456789012' },
+    create: { tenantId: tenant.id, id: 'org-default', name: 'ТОО FlowPOS Demo', inn: '123456789012' },
     update: {},
   });
 

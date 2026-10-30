@@ -32,8 +32,8 @@ done
 echo "== Бэкап БД перед изменением схемы"
 sudo -u flowpos /usr/local/bin/flowpos-backup pre-deploy
 
-echo "== Схема БД (prisma db push без --accept-data-loss: опасные изменения остановят выкладку) и SQL-инварианты"
-as_app "cd packages/db && npx prisma db push --skip-generate && node scripts/apply-sql.js"
+echo "== Схема БД: подготовка данных (sql/pre), prisma db push без --accept-data-loss (опасные изменения остановят выкладку), SQL-инварианты"
+as_app "cd packages/db && node scripts/apply-sql.js --pre && npx prisma db push --skip-generate && node scripts/apply-sql.js"
 
 echo "== Переключение"
 ln -sfn "$REL" $ROOT/current

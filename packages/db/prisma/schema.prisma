@@ -10,8 +10,27 @@ datasource db {
 
 // ─── CORE: Auth & RBAC ───────────────────────────────────────────────────────
 
+model Tenant {
+  id        String   @id @default(uuid())
+  name      String
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  organizations      Organization[]
+  products           Product[]
+  productGroups      ProductGroup[]
+  uoms               Uom[]
+  priceTypes         PriceType[]
+  counterparties     Counterparty[]
+  counterpartyGroups CounterpartyGroup[]
+  documents          Document[]
+
+  @@map("tenants")
+}
+
 model Organization {
   id        String   @id @default(uuid())
+  tenantId       String  @default(dbgenerated("NULLIF(current_setting('flowpos.tenant_id', true), '')")) @map("tenant_id")
   name      String
   inn       String?  // БИН/ИИН
   kpp       String?
@@ -24,12 +43,19 @@ model Organization {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
+  tenant              Tenant             @relation(fields: [tenantId], references: [id])
   users               User[]
   documents           Document[]
   posTerminals        POSTerminal[]
   onecConnections     OnecConnection[]
   moyskladConnections MoyskladConnection[]
+  memberships         OrgMembership[]
+  products            Product[]
+  counterparties      Counterparty[]
+  stores              Store[]
 
+  @@unique([tenantId, id])
+  @@index([tenantId])
   @@map("organizations")
 }
 
@@ -44,15 +70,18 @@ model User {
   isActive       Boolean   @default(true) @map("is_active")
   lastLoginAt    DateTime? @map("last_login_at")
   organizationId String    @map("organization_id")
+  tenantId       String  @default(dbgenerated("NULLIF(current_setting('flowpos.tenant_id', true), '')")) @map("tenant_id")
   createdAt      DateTime  @default(now()) @map("created_at")
   updatedAt      DateTime  @updatedAt @map("updated_at")
 
-  organization  Organization       @relation(fields: [organizationId], references: [id])
+  organization  Organization       @relation(fields: [tenantId, organizationId], references: [tenantId, id])
+  memberships   OrgMembership[]
   refreshTokens RefreshToken[]
   userRoles     UserRole[]
   auditLogs     AuditLog[]
   employee      Employee?
 
+  @@unique([tenantId, id])
   @@map("users")
 }
 
@@ -303,6 +332,7 @@ enum SyncDir {
 
 model ProductGroup {
   id         String   @id @default(uuid())
+  tenantId       String  @default(dbgenerated("NULLIF(current_setting('flowpos.tenant_id', true), '')")) @map("tenant_id")
   name       String
   code       String?
   parentId   String?  @map("parent_id")
@@ -321,18 +351,21 @@ model ProductGroup {
   createdAt  DateTime @default(now()) @map("created_at")
   updatedAt  DateTime @updatedAt @map("updated_at")
 
-  parent   ProductGroup?  @relation("GroupTree", fields: [parentId], references: [id])
+  tenant   Tenant         @relation(fields: [tenantId], references: [id])
+  parent   ProductGroup?  @relation("GroupTree", fields: [tenantId, parentId], references: [tenantId, id])
   children ProductGroup[] @relation("GroupTree")
   products Product[]
 
   @@unique([onecBase, onecGuid])
   @@unique([msAccountId, msId])
   @@index([syncStatus])
+  @@unique([tenantId, id])
   @@map("product_groups")
 }
 
 model Uom {
   id         String  @id @default(uuid())
+  tenantId       String  @default(dbgenerated("NULLIF(current_setting('flowpos.tenant_id', true), '')")) @map("tenant_id")
   name       String
   shortName  String  @map("short_name")
   code       String?
@@ -349,8 +382,10 @@ model Uom {
   deleted    Boolean @default(false)
   createdAt  DateTime @default(now()) @map("created_at")
 
+  tenant   Tenant    @relation(fields: [tenantId], references: [id])
   products Product[]
 
+  @@unique([tenantId, id])
   @@map("uoms")
 }
 
@@ -378,14 +413,17 @@ model Product {
   syncStatus SyncStatus  @default(SYNCED) @map("sync_status")
   owner      Owner       @default(C1) @map("owner")
   deleted    Boolean     @default(false)
-  organizationId String?  @map("organization_id") // null — общий справочник
+  organizationId String?  @map("organization_id") // null — общий справочник тенанта
+  tenantId       String  @default(dbgenerated("NULLIF(current_setting('flowpos.tenant_id', true), '')")) @map("tenant_id")
   createdAt  DateTime    @default(now()) @map("created_at")
   updatedAt  DateTime    @updatedAt @map("updated_at")
   updatedBy  String?     @map("updated_by")
 
-  group      ProductGroup? @relation(fields: [groupId], references: [id])
-  uom        Uom           @relation(fields: [uomId], references: [id])
-  parent     Product?      @relation("ProductVariants", fields: [parentId], references: [id])
+  tenant       Tenant        @relation(fields: [tenantId], references: [id])
+  organization Organization? @relation(fields: [tenantId, organizationId], references: [tenantId, id])
+  group      ProductGroup? @relation(fields: [tenantId, groupId], references: [tenantId, id])
+  uom        Uom           @relation(fields: [tenantId, uomId], references: [tenantId, id])
+  parent     Product?      @relation("ProductVariants", fields: [tenantId, parentId], references: [tenantId, id])
   variants   Product[]     @relation("ProductVariants")
   barcodes   ProductBarcode[]
   prices     Price[]
@@ -396,6 +434,8 @@ model Product {
   @@unique([msAccountId, msId])
   @@index([name])
   @@index([syncStatus])
+  @@unique([tenantId, id])
+  @@index([tenantId])
   @@map("products")
 }
 
@@ -408,11 +448,12 @@ enum ProductKind {
 
 model ProductBarcode {
   id        String @id @default(uuid())
+  tenantId       String  @default(dbgenerated("NULLIF(current_setting('flowpos.tenant_id', true), '')")) @map("tenant_id")
   productId String @map("product_id")
   barcode   String @unique
   kind      String @default("EAN13")
 
-  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [tenantId, productId], references: [tenantId, id], onDelete: Cascade)
 
   @@index([barcode])
   @@map("product_barcodes")
@@ -420,6 +461,7 @@ model ProductBarcode {
 
 model PriceType {
   id         String  @id @default(uuid())
+  tenantId       String  @default(dbgenerated("NULLIF(current_setting('flowpos.tenant_id', true), '')")) @map("tenant_id")
   name       String
   currency   String  @default("KZT")
   isDefault  Boolean @default(false) @map("is_default")
@@ -430,13 +472,16 @@ model PriceType {
   deleted    Boolean @default(false)
   createdAt  DateTime @default(now()) @map("created_at")
 
+  tenant Tenant  @relation(fields: [tenantId], references: [id])
   prices Price[]
 
+  @@unique([tenantId, id])
   @@map("price_types")
 }
 
 model Price {
   id          String   @id @default(uuid())
+  tenantId       String  @default(dbgenerated("NULLIF(current_setting('flowpos.tenant_id', true), '')")) @map("tenant_id")
   productId   String   @map("product_id")
   priceTypeId String   @map("price_type_id")
   price       Decimal  @db.Decimal(18,2)
@@ -446,8 +491,8 @@ model Price {
   syncStatus  SyncStatus @default(SYNCED) @map("sync_status")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
-  product   Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
-  priceType PriceType @relation(fields: [priceTypeId], references: [id])
+  product   Product   @relation(fields: [tenantId, productId], references: [tenantId, id], onDelete: Cascade)
+  priceType PriceType @relation(fields: [tenantId, priceTypeId], references: [tenantId, id])
 
   @@unique([productId, priceTypeId])
   @@map("prices")
@@ -459,6 +504,7 @@ model Store {
   code           String?
   address        String?
   organizationId String  @map("organization_id")
+  tenantId       String  @default(dbgenerated("NULLIF(current_setting('flowpos.tenant_id', true), '')")) @map("tenant_id")
   isRetail       Boolean @default(false) @map("is_retail")
   isActive       Boolean @default(true) @map("is_active")
   // sync fields — 1С
@@ -475,6 +521,7 @@ model Store {
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
 
+  organization Organization @relation(fields: [tenantId, organizationId], references: [tenantId, id])
   bins         Bin[]
   stocks       Stock[]
   posTerminals POSTerminal[]
@@ -483,11 +530,14 @@ model Store {
 
   @@unique([onecBase, onecGuid])
   @@unique([msAccountId, msId])
+  @@unique([tenantId, id])
+  @@unique([organizationId, id])
   @@map("stores")
 }
 
 model Bin {
   id      String  @id @default(uuid())
+  tenantId       String  @default(dbgenerated("NULLIF(current_setting('flowpos.tenant_id', true), '')")) @map("tenant_id")
   storeId String  @map("store_id")
   name    String
   code    String?
@@ -495,14 +545,16 @@ model Bin {
   section String?
   level   String?
 
-  store  Store   @relation(fields: [storeId], references: [id])
+  store  Store   @relation(fields: [tenantId, storeId], references: [tenantId, id])
   stocks Stock[]
 
+  @@unique([tenantId, id])
   @@map("bins")
 }
 
 model Stock {
   id        String  @id @default(uuid())
+  tenantId       String  @default(dbgenerated("NULLIF(current_setting('flowpos.tenant_id', true), '')")) @map("tenant_id")
   productId String  @map("product_id")
   storeId   String  @map("store_id")
   binId     String? @map("bin_id")
@@ -510,9 +562,9 @@ model Stock {
   reserved  Decimal @default(0) @db.Decimal(18,3)
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  product Product @relation(fields: [productId], references: [id])
-  store   Store   @relation(fields: [storeId], references: [id])
-  bin     Bin?    @relation(fields: [binId], references: [id])
+  product Product @relation(fields: [tenantId, productId], references: [tenantId, id])
+  store   Store   @relation(fields: [tenantId, storeId], references: [tenantId, id])
+  bin     Bin?    @relation(fields: [tenantId, binId], references: [tenantId, id])
 
   @@unique([productId, storeId, binId])
   @@index([productId])
@@ -543,12 +595,15 @@ model Counterparty {
   syncStatus SyncStatus      @default(SYNCED) @map("sync_status")
   owner      Owner           @default(C1) @map("owner")
   deleted    Boolean         @default(false)
-  organizationId String?  @map("organization_id") // null — общий справочник
+  organizationId String?  @map("organization_id") // null — общий справочник тенанта
+  tenantId       String  @default(dbgenerated("NULLIF(current_setting('flowpos.tenant_id', true), '')")) @map("tenant_id")
   createdAt  DateTime        @default(now()) @map("created_at")
   updatedAt  DateTime        @updatedAt @map("updated_at")
   updatedBy  String?         @map("updated_by")
 
-  group      CounterpartyGroup? @relation(fields: [groupId], references: [id])
+  tenant       Tenant             @relation(fields: [tenantId], references: [id])
+  organization Organization?      @relation(fields: [tenantId, organizationId], references: [tenantId, id])
+  group      CounterpartyGroup? @relation(fields: [tenantId, groupId], references: [tenantId, id])
   contracts  Contract[]
   documents  Document[]
 
@@ -556,6 +611,8 @@ model Counterparty {
   @@unique([msAccountId, msId])
   @@index([name])
   @@index([syncStatus])
+  @@unique([tenantId, id])
+  @@index([tenantId])
   @@map("counterparties")
 }
 
@@ -569,16 +626,20 @@ model CounterpartyGroup {
   id     String @id @default(uuid())
   name   String
   parentId String? @map("parent_id")
+  tenantId       String  @default(dbgenerated("NULLIF(current_setting('flowpos.tenant_id', true), '')")) @map("tenant_id")
 
-  parent   CounterpartyGroup?  @relation("CPTree", fields: [parentId], references: [id])
+  tenant   Tenant              @relation(fields: [tenantId], references: [id])
+  parent   CounterpartyGroup?  @relation("CPTree", fields: [tenantId, parentId], references: [tenantId, id])
   children CounterpartyGroup[] @relation("CPTree")
   members  Counterparty[]
 
+  @@unique([tenantId, id])
   @@map("counterparty_groups")
 }
 
 model Contract {
   id             String   @id @default(uuid())
+  tenantId       String  @default(dbgenerated("NULLIF(current_setting('flowpos.tenant_id', true), '')")) @map("tenant_id")
   counterpartyId String   @map("counterparty_id")
   number         String
   name           String?
@@ -590,7 +651,7 @@ model Contract {
   onecGuid       String?  @map("onec_guid")
   createdAt      DateTime @default(now()) @map("created_at")
 
-  counterparty Counterparty @relation(fields: [counterpartyId], references: [id])
+  counterparty Counterparty @relation(fields: [tenantId, counterpartyId], references: [tenantId, id])
 
   @@map("contracts")
 }
@@ -604,6 +665,7 @@ model Document {
   date           DateTime
   status         DocStatus   @default(DRAFT)
   organizationId String?     @map("organization_id")
+  tenantId       String  @default(dbgenerated("NULLIF(current_setting('flowpos.tenant_id', true), '')")) @map("tenant_id")
   counterpartyId String?     @map("counterparty_id")
   storeId        String?     @map("store_id")
   storeToId      String?     @map("store_to_id")
@@ -624,16 +686,19 @@ model Document {
   updatedAt      DateTime    @updatedAt @map("updated_at")
   updatedBy      String?     @map("updated_by")
 
-  organization Organization? @relation(fields: [organizationId], references: [id])
-  counterparty Counterparty? @relation(fields: [counterpartyId], references: [id])
-  store        Store?        @relation("DocumentStore", fields: [storeId], references: [id])
-  storeTo      Store?        @relation("DocumentStoreTo", fields: [storeToId], references: [id])
+  tenant       Tenant        @relation(fields: [tenantId], references: [id])
+  organization Organization? @relation(fields: [tenantId, organizationId], references: [tenantId, id])
+  counterparty Counterparty? @relation(fields: [tenantId, counterpartyId], references: [tenantId, id])
+  store        Store?        @relation("DocumentStore", fields: [tenantId, storeId], references: [tenantId, id])
+  storeTo      Store?        @relation("DocumentStoreTo", fields: [tenantId, storeToId], references: [tenantId, id])
   lines        DocumentLine[]
 
   @@unique([onecBase, onecGuid])
   @@index([docType, date])
   @@index([syncStatus])
   @@index([status])
+  @@unique([tenantId, id])
+  @@index([tenantId])
   @@map("documents")
 }
 
@@ -684,6 +749,7 @@ enum Owner {
 
 model DocumentLine {
   id         String   @id @default(uuid())
+  tenantId       String  @default(dbgenerated("NULLIF(current_setting('flowpos.tenant_id', true), '')")) @map("tenant_id")
   documentId String   @map("document_id")
   lineNo     Int      @map("line_no")
   productId  String   @map("product_id")
@@ -694,8 +760,8 @@ model DocumentLine {
   amount     Decimal? @db.Decimal(18,2)
   attributes Json?
 
-  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
-  product  Product  @relation(fields: [productId], references: [id])
+  document Document @relation(fields: [tenantId, documentId], references: [tenantId, id], onDelete: Cascade)
+  product  Product  @relation(fields: [tenantId, productId], references: [tenantId, id])
 
   @@unique([documentId, lineNo])
   @@map("document_lines")
@@ -708,6 +774,7 @@ model POSTerminal {
   name           String
   code           String  @unique
   organizationId String  @map("organization_id")
+  tenantId       String  @default(dbgenerated("NULLIF(current_setting('flowpos.tenant_id', true), '')")) @map("tenant_id")
   storeId        String? @map("store_id")
   priceTypeId    String? @map("price_type_id")
   isActive       Boolean @default(true) @map("is_active")
@@ -715,8 +782,8 @@ model POSTerminal {
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
 
-  organization Organization @relation(fields: [organizationId], references: [id])
-  store        Store?       @relation(fields: [storeId], references: [id])
+  organization Organization @relation(fields: [tenantId, organizationId], references: [tenantId, id])
+  store        Store?       @relation(fields: [organizationId, storeId], references: [organizationId, id])
   shifts       POSShift[]
 
   @@map("pos_terminals")
@@ -779,10 +846,11 @@ model Department {
   kind           String   @default("STORE") // STORE | WAREHOUSE | OFFICE
   costAccount    String   @default("7020") @map("cost_account") // план ред. 2025: 7020 расходы по реализации, 7030 административные
 
-  parent   Department?  @relation("DeptTree", fields: [parentId], references: [id])
+  parent   Department?  @relation("DeptTree", fields: [organizationId, parentId], references: [organizationId, id])
   children Department[] @relation("DeptTree")
   employees Employee[]
 
+  @@unique([organizationId, id])
   @@map("departments")
 }
 
@@ -1262,6 +1330,7 @@ model Individual {
   contracts HrContract[]
 
   @@unique([organizationId, iin])
+  @@unique([organizationId, id])
   @@map("individuals")
 }
 
@@ -1279,6 +1348,7 @@ model SalaryGrade {
   slots      StaffingSlot[]
 
   @@index([organizationId, gradeLevel])
+  @@unique([organizationId, id])
   @@map("salary_grades")
 }
 
@@ -1294,20 +1364,22 @@ model RateType {
   history    EmploymentHistory[]
 
   @@unique([organizationId, code])
+  @@unique([organizationId, id])
   @@map("rate_types")
 }
 
 // Матрица Грейд × Тип ставки → оклад
 model GradeRateValue {
   id         String   @id @default(uuid())
+  organizationId String   @default(dbgenerated("NULLIF(current_setting('flowpos.organization_id', true), '')")) @map("organization_id")
   gradeId    String   @map("grade_id")
   rateTypeId String   @map("rate_type_id")
   value      Decimal  @db.Decimal(15, 2)
   validFrom  DateTime @map("valid_from") @db.Date
   validTo    DateTime @default(dbgenerated("'9999-12-31'::date")) @map("valid_to") @db.Date
 
-  grade    SalaryGrade @relation(fields: [gradeId], references: [id], onDelete: Restrict)
-  rateType RateType    @relation(fields: [rateTypeId], references: [id], onDelete: Restrict)
+  grade    SalaryGrade @relation(fields: [organizationId, gradeId], references: [organizationId, id], onDelete: Restrict)
+  rateType RateType    @relation(fields: [organizationId, rateTypeId], references: [organizationId, id], onDelete: Restrict)
 
   @@index([gradeId, rateTypeId])
   @@map("grade_rate_values")
@@ -1325,7 +1397,7 @@ model StaffingSlot {
   validFrom      DateTime @map("valid_from") @db.Date
   validTo        DateTime @default(dbgenerated("'9999-12-31'::date")) @map("valid_to") @db.Date
 
-  grade SalaryGrade? @relation(fields: [gradeId], references: [id])
+  grade SalaryGrade? @relation(fields: [organizationId, gradeId], references: [organizationId, id])
 
   @@index([organizationId, departmentId, positionId])
   @@map("staffing_table")
@@ -1349,7 +1421,7 @@ model HrContract {
   createdAt             DateTime  @default(now()) @map("created_at")
   updatedAt             DateTime  @updatedAt @map("updated_at")
 
-  individual   Individual          @relation(fields: [individualId], references: [id], onDelete: Restrict)
+  individual   Individual          @relation(fields: [organizationId, individualId], references: [organizationId, id], onDelete: Restrict)
   employee     Employee?           @relation(fields: [employeeId], references: [id])
   history      EmploymentHistory[]
   bankDetails  EmployeeBankDetail[]
@@ -1358,12 +1430,14 @@ model HrContract {
   terminations EmployeeTermination[]
 
   @@unique([organizationId, contractNumber])
+  @@unique([organizationId, id])
   @@map("employment_contracts")
 }
 
 // Главный темпоральный (bitemporal) регистр кадровой истории
 model EmploymentHistory {
   id                  String    @id @default(uuid())
+  organizationId String   @default(dbgenerated("NULLIF(current_setting('flowpos.organization_id', true), '')")) @map("organization_id")
   contractId          String    @map("contract_id")
   validFrom           DateTime  @map("valid_from")
   validTo             DateTime  @default(dbgenerated("'9999-12-31 23:59:59'::timestamp")) @map("valid_to")
@@ -1382,8 +1456,8 @@ model EmploymentHistory {
   createdBy           String?   @map("created_by")
   comment             String?
 
-  contract HrContract @relation(fields: [contractId], references: [id], onDelete: Cascade)
-  rateType RateType?  @relation(fields: [rateTypeId], references: [id])
+  contract HrContract @relation(fields: [organizationId, contractId], references: [organizationId, id], onDelete: Cascade)
+  rateType RateType?  @relation(fields: [organizationId, rateTypeId], references: [organizationId, id])
 
   @@index([contractId, validFrom])
   @@index([contractId, systemInvalidatedAt])
@@ -1437,12 +1511,14 @@ model PayrollPeriod {
   journal JournalEntry[]
 
   @@unique([organizationId, period])
+  @@unique([organizationId, id])
   @@map("payroll_periods")
 }
 
 // Результат расчёта ЗП по договору за месяц
 model PayrollResult {
   id               String   @id @default(uuid())
+  organizationId String   @default(dbgenerated("NULLIF(current_setting('flowpos.organization_id', true), '')")) @map("organization_id")
   payrollPeriodId  String   @map("payroll_period_id")
   contractId       String   @map("contract_id")
   period           DateTime @db.Date
@@ -1468,8 +1544,8 @@ model PayrollResult {
   isClosed         Boolean  @default(false) @map("is_closed")
   createdAt        DateTime @default(now()) @map("created_at")
 
-  payrollPeriod PayrollPeriod @relation(fields: [payrollPeriodId], references: [id], onDelete: Cascade)
-  contract      HrContract    @relation(fields: [contractId], references: [id])
+  payrollPeriod PayrollPeriod @relation(fields: [organizationId, payrollPeriodId], references: [organizationId, id], onDelete: Cascade)
+  contract      HrContract    @relation(fields: [organizationId, contractId], references: [organizationId, id])
 
   @@unique([payrollPeriodId, contractId])
   @@index([contractId, period])
@@ -1534,9 +1610,13 @@ model OrgMembership {
   id             String   @id @default(uuid())
   userId         String   @map("user_id")
   organizationId String   @map("organization_id")
+  tenantId       String  @default(dbgenerated("NULLIF(current_setting('flowpos.tenant_id', true), '')")) @map("tenant_id")
   role           String   // owner|admin|chief_accountant|accountant|hr|cashier|storekeeper|manager|auditor
   isActive       Boolean  @default(true) @map("is_active")
   createdAt      DateTime @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [tenantId, organizationId], references: [tenantId, id])
+  user         User         @relation(fields: [tenantId, userId], references: [tenantId, id])
 
   @@unique([userId, organizationId])
   @@index([organizationId])
@@ -1676,6 +1756,7 @@ model AccEntry {
 
   @@index([organizationId, sourceType, sourceId])
   @@index([organizationId, date])
+  @@unique([organizationId, id])
   @@map("acc_entries")
 }
 
@@ -1707,7 +1788,7 @@ model AccPosting {
   settlementDocId String? @map("settlement_doc_id")
   memo           String?
 
-  entry   AccEntry   @relation(fields: [entryId], references: [id], onDelete: Restrict)
+  entry   AccEntry   @relation(fields: [organizationId, entryId], references: [organizationId, id], onDelete: Restrict)
   account AccAccount @relation(fields: [accountId], references: [id])
 
   @@index([organizationId, accountId, date])

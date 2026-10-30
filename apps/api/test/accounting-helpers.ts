@@ -36,8 +36,16 @@ export function makeServices(prisma: PrismaService) {
 }
 
 /** Новая изолированная организация с пользователем заданной роли. */
+export const DEFAULT_TENANT = '00000000-0000-0000-0000-000000000001';
+
+/** Клиент по умолчанию тестовой БД (его же создаёт sql/pre для существующих баз). */
+export async function defaultTenant(prisma: PrismaService) {
+  return prisma.tenant.upsert({ where: { id: DEFAULT_TENANT }, create: { id: DEFAULT_TENANT, name: 'Основной клиент' }, update: {} });
+}
+
 export async function makeOrg(prisma: PrismaService, role = 'chief_accountant'): Promise<OrgContext> {
-  const org = await prisma.organization.create({ data: { name: `Тест ТОО ${randomUUID().slice(0, 8)}` } });
+  const tenant = await defaultTenant(prisma);
+  const org = await prisma.organization.create({ data: { tenantId: tenant.id, name: `Тест ТОО ${randomUUID().slice(0, 8)}` } });
   const user = await prisma.user.create({
     data: { email: `u-${randomUUID()}@test.local`, passwordHash: 'x', firstName: 'Тест', lastName: 'Бухгалтер', organizationId: org.id },
   });

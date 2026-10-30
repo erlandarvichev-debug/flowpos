@@ -38,7 +38,9 @@ try {
 
   const password = randomBytes(12).toString('base64url');
   const result = await prisma.$transaction(async (tx) => {
-    const org = await tx.organization.create({ data: { name: args.org, inn: args.bin, legalForm: args.legal || 'TOO' } });
+    // Первичная установка: новый клиент (tenant) и его первая организация.
+    const tenant = await tx.tenant.create({ data: { name: args.org } });
+    const org = await tx.organization.create({ data: { tenantId: tenant.id, name: args.org, inn: args.bin, legalForm: args.legal || 'TOO' } });
     const user = await tx.user.create({ data: { email, passwordHash: await bcrypt.hash(password, 10), firstName: args.first, lastName: args.last, organizationId: org.id } });
     await tx.userRole.create({ data: { userId: user.id, roleId: adminRole.id } });
     await tx.orgMembership.create({ data: { userId: user.id, organizationId: org.id, role: 'owner' } });

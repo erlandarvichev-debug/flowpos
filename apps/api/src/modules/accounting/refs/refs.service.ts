@@ -169,7 +169,10 @@ export class RefsService {
   async createOrganization(userId: string, input: { name: string; inn?: string; legalForm?: string; nameKk?: string; vatPayer?: boolean; taxRegime?: string }) {
     if (!input.name) throw new AccError('NAME_REQUIRED', 'Укажите наименование организации');
     return this.prisma.$transaction(async (tx) => {
-      const org = await tx.organization.create({ data: { name: input.name, inn: input.inn, legalForm: input.legalForm ?? 'TOO', nameKk: input.nameKk } });
+      // Новая организация — у того же клиента (tenant), что и её создатель: доступ не выходит за клиента.
+      const creator = await tx.user.findUnique({ where: { id: userId }, select: { tenantId: true } });
+      if (!creator) throw new AccError('USER_NOT_FOUND', 'Пользователь не найден', { status: 404 });
+      const org = await tx.organization.create({ data: { tenantId: creator.tenantId, name: input.name, inn: input.inn, legalForm: input.legalForm ?? 'TOO', nameKk: input.nameKk } });
       await tx.orgMembership.create({ data: { userId, organizationId: org.id, role: 'owner' } });
       const chart = await tx.accChart.findFirst({ where: { code: 'KZ-TYPICAL' }, orderBy: { version: 'desc' } });
       await tx.accPolicy.create({
