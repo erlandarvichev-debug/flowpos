@@ -55,8 +55,8 @@ export async function makeOrg(prisma: PrismaService, role = 'chief_accountant'):
   return ctxFor(org.id, user.id, role);
 }
 
-export function ctxFor(organizationId: string, userId: string, role: string): OrgContext {
-  return { organizationId, userId, role, can: (p) => hasPermission(role, p) };
+export function ctxFor(organizationId: string, userId: string, role: string, tenantId = DEFAULT_TENANT): OrgContext {
+  return { tenantId, organizationId, userId, role, can: (p) => hasPermission(role, p) };
 }
 
 export async function makeBankAndCash(prisma: PrismaService, ctx: OrgContext) {

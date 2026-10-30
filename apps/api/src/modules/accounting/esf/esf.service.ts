@@ -739,8 +739,11 @@ export class EsfService implements OnModuleInit, OnModuleDestroy {
     this.running = true;
     try {
       const orgs = await this.prisma.esfSettings.findMany();
+      const tenantOf = new Map((await this.prisma.organization.findMany({ where: { id: { in: orgs.map((s) => s.organizationId) } }, select: { id: true, tenantId: true } })).map((o) => [o.id, o.tenantId]));
       for (const s of orgs) {
-        const ctx: OrgContext = { organizationId: s.organizationId, userId: 'system:esf', role: 'system', can: () => true };
+        const tenantId = tenantOf.get(s.organizationId);
+        if (!tenantId) continue;
+        const ctx: OrgContext = { tenantId, organizationId: s.organizationId, userId: 'system:esf', role: 'system', can: () => true };
         if (s.autoPrepare) {
           for (const d of await this.pendingDocs(this.prisma, s.organizationId, s.environment, 50)) {
             try { await this.prepare(ctx, d.id); } catch (e: any) { /* нехватка данных видна в списке «ожидают ЭСФ» */ }

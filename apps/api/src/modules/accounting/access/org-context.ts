@@ -6,6 +6,8 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { Permission, hasPermission } from './roles';
 
 export interface OrgContext {
+  /** Клиент организации — из членства в БД, не из запроса. */
+  tenantId: string;
   organizationId: string;
   userId: string;
   role: string;
@@ -52,7 +54,7 @@ export class OrgGuard implements CanActivate {
     }
     const role = membership.role;
     req.orgContext = {
-      organizationId, userId: user.sub, role,
+      tenantId: membership.tenantId, organizationId, userId: user.sub, role,
       can: (p: Permission) => hasPermission(role, p),
     } as OrgContext;
 

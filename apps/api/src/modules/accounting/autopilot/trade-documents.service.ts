@@ -74,12 +74,12 @@ export class TradeDocumentsService {
     }
     if (input.counterpartyId) {
       const c = await tx.counterparty.findUnique({ where: { id: input.counterpartyId } });
-      if (!c || (c.organizationId && c.organizationId !== ctx.organizationId)) throw new AccError('REF_FOREIGN', 'Контрагент не найден в этой организации');
+      if (!c || c.tenantId !== ctx.tenantId || (c.organizationId && c.organizationId !== ctx.organizationId)) throw new AccError('REF_FOREIGN', 'Контрагент не найден в этой организации');
     }
     const ids = [...new Set((input.lines || []).map((l) => l.productId))];
     if (ids.length) {
       const ps = await tx.product.findMany({ where: { id: { in: ids } } });
-      const bad = ids.filter((id) => { const p = ps.find((x) => x.id === id); return !p || (p.organizationId && p.organizationId !== ctx.organizationId); });
+      const bad = ids.filter((id) => { const p = ps.find((x) => x.id === id); return !p || p.tenantId !== ctx.tenantId || (p.organizationId && p.organizationId !== ctx.organizationId); });
       if (bad.length) throw new AccError('REF_FOREIGN', 'В строках указана номенклатура, которой нет в этой организации', { details: { productIds: bad } });
     }
   }

@@ -106,6 +106,36 @@ export class PostingService {
   }
 
   /**
+   * Аналитики проводок принадлежат клиенту и организации записи (FP-007). Справочник клиента без организации
+   * (товар, контрагент) — общий для его организаций; объекты организации (склад, счёт, касса, проект, статья,
+   * подразделение) — только свои. Сотрудник и документ расчётов пока не привязаны к организации — FP-007 фаза 3.
+   */
+  private async checkDimOwnership(tx: Prisma.TransactionClient, ctx: OrgContext, rows: Record<string, any>[]) {
+    const ids = (col: string) => [...new Set(rows.map((r) => r[col]).filter(Boolean) as string[])];
+    const org = ctx.organizationId;
+    const tenantShared = { tenantId: ctx.tenantId, OR: [{ organizationId: null }, { organizationId: org }] };
+    const checks: [Dim, string[], (x: string[]) => Promise<number>][] = [
+      ['COUNTERPARTY', ids('counterpartyId'), (x) => tx.counterparty.count({ where: { id: { in: x }, ...tenantShared } })],
+      ['PRODUCT', ids('productId'), (x) => tx.product.count({ where: { id: { in: x }, ...tenantShared } })],
+      ['CONTRACT', ids('contractId'), (x) => tx.contract.count({ where: { id: { in: x }, tenantId: ctx.tenantId, counterparty: { OR: [{ organizationId: null }, { organizationId: org }] } } })],
+      ['STORE', ids('storeId'), (x) => tx.store.count({ where: { id: { in: x }, organizationId: org } })],
+      ['DEPARTMENT', ids('departmentId'), (x) => tx.department.count({ where: { id: { in: x }, organizationId: org } })],
+      ['BANK_ACCOUNT', ids('bankAccountId'), (x) => tx.orgBankAccount.count({ where: { id: { in: x }, organizationId: org } })],
+      ['CASHBOX', ids('cashboxId'), (x) => tx.cashbox.count({ where: { id: { in: x }, organizationId: org } })],
+      ['PROJECT', ids('projectId'), (x) => tx.project.count({ where: { id: { in: x }, organizationId: org } })],
+      ['ITEM', ids('itemId'), (x) => tx.accItem.count({ where: { id: { in: x }, organizationId: org } })],
+    ];
+    for (const [dim, list, count] of checks) {
+      if (list.length && (await count(list)) !== list.length) {
+        throw new AccError('REF_FOREIGN', `Аналитика «${DIM_LABEL[dim]}»: указан объект, которого нет в этой организации`, {
+          fix: `Выберите «${DIM_LABEL[dim]}» из справочника текущей организации.`,
+          details: { dim },
+        });
+      }
+    }
+  }
+
+  /**
    * Записывает движения источника. Идемпотентно: если активная запись той же версии источника и правила
    * уже есть — возвращает её. Иначе предыдущая запись помечается SUPERSEDED (история сохраняется).
    */
@@ -117,6 +147,7 @@ export class PostingService {
       return { entry: existing, reused: true };
     }
     const rows = await this.validate(tx, ctx.organizationId, input.date, input.postings, input.allowEmpty);
+    await this.checkDimOwnership(tx, ctx, rows);
     if (existing) await this.closeEntry(tx, existing.id, 'SUPERSEDED');
     const entry = await tx.accEntry.create({
       data: {

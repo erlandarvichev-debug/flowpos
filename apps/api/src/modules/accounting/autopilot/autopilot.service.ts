@@ -12,9 +12,9 @@ import { NO_ACCOUNTING, TRADE_RULE_VERSION, TRADE_SOURCE, TradeDoc, buildTradeEn
 
 type Tx = Prisma.TransactionClient;
 
-export function systemCtx(organizationId: string, userId?: string | null): OrgContext {
+export function systemCtx(tenantId: string, organizationId: string, userId?: string | null): OrgContext {
   // Автопилот не может переопределять закрытый период
-  return { organizationId, userId: userId ?? 'system:autopilot', role: 'system', can: (p) => p !== 'acc.period.override' && hasPermission('chief_accountant', p) };
+  return { tenantId, organizationId, userId: userId ?? 'system:autopilot', role: 'system', can: (p) => p !== 'acc.period.override' && hasPermission('chief_accountant', p) };
 }
 
 export interface SyncResult { status: 'POSTED' | 'CANCELLED' | 'SKIPPED' | 'UNCHANGED'; reason?: string; entryId?: string }
@@ -102,7 +102,7 @@ export class AutopilotService implements OnModuleInit, OnModuleDestroy {
     const organizationId = await this.orgOf(tx, doc);
     if (!organizationId) throw new AccError('ORG_UNKNOWN', `Документ ${doc.number ?? id}: не определена организация`, { fix: 'Укажите организацию документа или склада.' });
     if (opts.organizationId && opts.organizationId !== organizationId) throw new AccError('DOC_NOT_FOUND', 'Документ не найден', { status: 404 });
-    const ctx = systemCtx(organizationId, opts.userId);
+    const ctx = systemCtx((doc as any).tenantId, organizationId, opts.userId);
     const settings = await this.accountsFor(tx, organizationId, doc.date);
     const existing = await tx.accEntry.findFirst({ where: { organizationId, sourceType: TRADE_SOURCE, sourceId: id, status: 'ACTIVE' } });
     const oldProducts = existing ? (await tx.accStockMove.findMany({ where: { entryId: existing.id }, select: { productId: true } })).map((m) => m.productId) : [];

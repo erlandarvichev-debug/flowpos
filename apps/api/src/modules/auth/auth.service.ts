@@ -35,7 +35,7 @@ export class AuthService {
       .flatMap((ur) => ur.role.permissions)
       .map((rp) => `${rp.permission.module}:${rp.permission.action}:${rp.permission.resource}`);
 
-    const accessToken = this.signAccess(user.id, user.email, user.organizationId, roles);
+    const accessToken = this.signAccess(user.id, user.email, user.tenantId, user.organizationId, roles);
     const refreshToken = await this.createRefreshToken(user.id);
 
     return {
@@ -46,6 +46,7 @@ export class AuthService {
         email: user.email,
         firstName: user.firstName,
         lastName: user.lastName,
+        tenantId: user.tenantId,
         organizationId: user.organizationId,
         organization: user.organization,
         roles,
@@ -70,7 +71,7 @@ export class AuthService {
     if (!user || !user.isActive) throw new UnauthorizedException('Пользователь неактивен');
 
     const roles = user.userRoles.map((ur) => ur.role.name);
-    const accessToken = this.signAccess(user.id, user.email, user.organizationId, roles);
+    const accessToken = this.signAccess(user.id, user.email, user.tenantId, user.organizationId, roles);
     const newRefreshToken = await this.createRefreshToken(user.id);
 
     return { accessToken, refreshToken: newRefreshToken };
@@ -90,8 +91,9 @@ export class AuthService {
     });
   }
 
-  private signAccess(sub: string, email: string, organizationId: string, roles: string[]) {
-    return this.jwt.sign({ sub, email, organizationId, roles });
+  /** tenantId/organizationId в токене — подсказка для клиента; права и область сервер берёт из БД. */
+  private signAccess(sub: string, email: string, tenantId: string, organizationId: string, roles: string[]) {
+    return this.jwt.sign({ sub, email, tenantId, organizationId, roles });
   }
 
   private async createRefreshToken(userId: string) {
