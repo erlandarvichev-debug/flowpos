@@ -67,8 +67,8 @@ describe('FP-008: сессии — отзыв и срок действия', () 
   });
 
   it('смена пароля и отключение пользователя закрывают все его сессии', async () => {
-    const admin = await makeUser(h, DEFAULT_TENANT, orgId, { name: 'Админ' });
-    const u = await makeUser(h, DEFAULT_TENANT, orgId);
+    const admin = await makeUser(h, DEFAULT_TENANT, orgId, { name: 'Админ', role: 'admin' });
+    const u = await makeUser(h, DEFAULT_TENANT, orgId, { role: 'cashier' });
     const adminToken = (await login(h, admin.email)).token;
     const t1 = (await login(h, u.email)).token;
     const t2 = (await login(h, u.email)).token;

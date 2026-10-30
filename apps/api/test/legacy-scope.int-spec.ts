@@ -47,7 +47,8 @@ let uomA: string, uomB: string;
 async function scopeIn(tenantId: string, name: string): Promise<Scope> {
   const org = await prisma.organization.create({ data: { tenantId, name: `${name} ${uid()}` } });
   const user = await prisma.user.create({ data: { tenantId, organizationId: org.id, email: `${name}-${uid()}@scope.local`, passwordHash: 'x', firstName: name, lastName: 'Тест' } });
-  return { tenantId, organizationId: org.id, userId: user.id };
+  await prisma.orgMembership.create({ data: { userId: user.id, organizationId: org.id, role: 'owner' } });
+  return { tenantId, organizationId: org.id, userId: user.id, role: 'owner' };
 }
 
 async function code(p: Promise<unknown>) {
@@ -90,6 +91,8 @@ afterAll(async () => {
   await prisma.position.deleteMany({ where: { organizationId: { in: orgs } } });
   await prisma.workSchedule.deleteMany({ where: { organizationId: { in: orgs } } });
   await prisma.store.deleteMany({ where: { tenantId: t2 } });
+  await prisma.orgMembership.deleteMany({ where: { tenantId: t2 } });
+  await prisma.authSession.deleteMany({ where: { tenantId: t2 } });
   await prisma.user.deleteMany({ where: { tenantId: t2 } });
   await prisma.organization.deleteMany({ where: { id: { in: orgs } } });
   await prisma.tenant.delete({ where: { id: t2 } });
@@ -161,7 +164,7 @@ describe('FP-007: пользователи', () => {
     expect(await code(users.findOne(A2, A.userId))).toBe(404);
     expect((await prisma.user.findUniqueOrThrow({ where: { id: B.userId } })).passwordHash).toBe(victim.passwordHash);
 
-    const u = await users.create(A, { email: `new-${uid()}@scope.local`, password: 'пароль-123', firstName: 'Н', lastName: 'Н', tenantId: t2, organizationId: undefined, passwordHash: 'подмена', id: 'x' });
+    const u = await users.create(A, { role: 'cashier', email: `new-${uid()}@scope.local`, password: 'пароль-123', firstName: 'Н', lastName: 'Н', tenantId: t2, organizationId: undefined, passwordHash: 'подмена', id: 'x' });
     const row = await prisma.user.findUniqueOrThrow({ where: { id: u.id } });
     expect([row.tenantId, row.organizationId, row.passwordHash === 'подмена', row.id === 'x']).toEqual([DEFAULT_TENANT, A.organizationId, false, false]);
     expect((await users.findAll(A)).map((x) => x.id)).toContain(u.id);

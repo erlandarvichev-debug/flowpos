@@ -3,7 +3,7 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { AccError } from '../common/acc-error';
 import { money } from '../common/money';
 import { OrgContext } from '../access/org-context';
-import { ROLES, ROLE_LABELS, ROLE_PERMISSIONS } from '../access/roles';
+import { ROLES, canGrant, ROLE_LABELS, ROLE_PERMISSIONS } from '../access/roles';
 
 const IBAN_RE = /^KZ\d{2}[0-9A-Z]{16}$/;
 
@@ -151,11 +151,16 @@ export class RefsService {
 
   async setMember(ctx: OrgContext, input: { email: string; role: string; isActive?: boolean }) {
     if (!ROLES.includes(input.role as any)) throw new AccError('BAD_ROLE', 'Неизвестная роль');
-    if (input.role === 'owner' && ctx.role !== 'owner') throw new AccError('FORBIDDEN', 'Назначить владельца может только владелец', { status: 403 });
-    const user = await this.prisma.user.findUnique({ where: { email: input.email } });
+    // FP-008: назначить можно только роль, все права которой есть у назначающего (владельца — только владелец).
+    if (!canGrant(ctx.role, input.role)) throw new AccError('ROLE_ESCALATION', `Нельзя назначить роль «${input.role}»: у вас нет всех её прав`, { status: 403 });
+    // Участником может стать только пользователь того же клиента (FP-007): чужой email — «не найден».
+    const user = await this.prisma.user.findFirst({ where: { email: input.email, tenantId: ctx.tenantId } });
     if (!user) throw new AccError('USER_NOT_FOUND', `Пользователь ${input.email} не найден`, { fix: 'Сначала создайте пользователя в разделе «Пользователи».' });
     if (user.id === ctx.userId && input.role !== ctx.role) throw new AccError('SELF_ROLE', 'Нельзя менять собственную роль');
     const before = await this.prisma.orgMembership.findUnique({ where: { userId_organizationId: { userId: user.id, organizationId: ctx.organizationId } } });
+    if (before && user.id !== ctx.userId && !canGrant(ctx.role, before.role)) {
+      throw new AccError('ROLE_ESCALATION', `Нельзя менять участника с ролью «${before.role}»: у вас нет всех её прав`, { status: 403 });
+    }
     const row = await this.prisma.orgMembership.upsert({
       where: { userId_organizationId: { userId: user.id, organizationId: ctx.organizationId } },
       create: { userId: user.id, organizationId: ctx.organizationId, role: input.role, isActive: input.isActive ?? true },

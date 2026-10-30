@@ -37,18 +37,12 @@ export class OrgGuard implements CanActivate {
     const header = req.headers['x-organization-id'];
     const organizationId = (Array.isArray(header) ? header[0] : header) || user.organizationId;
 
-    let membership = await this.prisma.orgMembership.findUnique({
+    // Доступ к организации — только по членству (FP-008). Прежнее «ленивое» назначение владельцем по роли
+    // admin из токена убрано: роли в токене не проверяются сервером, а членства старых пользователей
+    // созданы миграцией sql/pre/030.
+    const membership = await this.prisma.orgMembership.findUnique({
       where: { userId_organizationId: { userId: user.sub, organizationId } },
     });
-    // Ленивая миграция: администратор платформы получает роль владельца в своей организации
-    if (!membership && organizationId === user.organizationId && (user.roles || []).includes('admin')) {
-      membership = await this.prisma.orgMembership.create({
-        data: { userId: user.sub, organizationId, role: 'owner' },
-      });
-      await this.prisma.auditLog.create({
-        data: { userId: user.sub, organizationId, action: 'MEMBERSHIP_AUTO_OWNER', entity: 'OrgMembership', entityId: membership.id },
-      });
-    }
     if (!membership || !membership.isActive) {
       throw new ForbiddenException('Нет доступа к этой организации');
     }

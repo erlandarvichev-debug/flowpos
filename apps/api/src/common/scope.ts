@@ -1,5 +1,6 @@
-// FP-007: область данных для старых модулей (каталог, торговля, HR, касса, аналитика, пользователи).
-// Клиент и организация — из пользователя, которого JwtStrategy проверил по БД; из запроса — никогда.
+// FP-007/FP-008: область данных для старых модулей (каталог, торговля, HR, касса, аналитика, пользователи, обмен).
+// Клиент и организация — из членства, которое проверил OrgGuard (организация из X-Organization-Id или своя,
+// членство активно, право из @RequirePermission); из тела запроса — никогда.
 import { BadRequestException, ExecutionContext, ForbiddenException, NotFoundException, UnauthorizedException, createParamDecorator } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
@@ -7,12 +8,15 @@ export interface Scope {
   tenantId: string;
   organizationId: string;
   userId: string;
+  /** Роль в организации (из членства). */
+  role?: string;
 }
 
+/** Область запроса. Только под OrgGuard: без проверенного членства — отказ, а не «организация пользователя по умолчанию». */
 export const CurrentScope = createParamDecorator((_: unknown, ctx: ExecutionContext): Scope => {
-  const user = ctx.switchToHttp().getRequest().user;
-  if (!user?.sub || !user?.tenantId || !user?.organizationId) throw new UnauthorizedException('Нет пользователя');
-  return { tenantId: user.tenantId, organizationId: user.organizationId, userId: user.sub };
+  const oc = ctx.switchToHttp().getRequest().orgContext;
+  if (!oc?.tenantId || !oc?.organizationId || !oc?.userId) throw new UnauthorizedException('Нет проверенного доступа к организации');
+  return { tenantId: oc.tenantId, organizationId: oc.organizationId, userId: oc.userId, role: oc.role };
 });
 
 /** Справочник клиента: общий (без организации) или своей организации. */
