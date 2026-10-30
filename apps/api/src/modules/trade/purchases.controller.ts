@@ -1,6 +1,7 @@
 import { Controller, Get, Post, Put, Param, Body, Query, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { CurrentScope, Scope } from '../../common/scope';
 import { PurchasesService } from './purchases.service';
 
 @ApiTags('trade/purchases')
@@ -11,32 +12,32 @@ export class PurchasesController {
   constructor(private purchases: PurchasesService) {}
 
   @Get('purchase-orders')
-  findOrders(@Query() query: any) {
-    return this.purchases.findOrders(query);
+  findOrders(@CurrentScope() s: Scope, @Query() query: any) {
+    return this.purchases.findOrders(s, query);
   }
 
   @Get('purchase-orders/:id')
-  findOrder(@Param('id') id: string) {
-    return this.purchases.findOrder(id);
+  findOrder(@CurrentScope() s: Scope, @Param('id') id: string) {
+    return this.purchases.findOrder(s, id);
   }
 
   @Post('purchase-orders')
-  createOrder(@Body() body: any) {
-    return this.purchases.createOrder(body);
+  createOrder(@CurrentScope() s: Scope, @Body() body: any) {
+    return this.purchases.createOrder(s, body);
   }
 
   @Put('purchase-orders/:id')
-  updateOrder(@Param('id') id: string, @Body() body: any) {
-    return this.purchases.updateOrder(id, body);
+  updateOrder(@CurrentScope() s: Scope, @Param('id') id: string, @Body() body: any) {
+    return this.purchases.updateOrder(s, id, body);
   }
 
   @Get('goods-receipts')
-  findReceipts(@Query() query: any) {
-    return this.purchases.findReceipts(query);
+  findReceipts(@CurrentScope() s: Scope, @Query() query: any) {
+    return this.purchases.findReceipts(s, query);
   }
 
   @Post('goods-receipts')
-  createReceipt(@Body() body: any) {
-    return this.purchases.createReceipt(body);
+  createReceipt(@CurrentScope() s: Scope, @Body() body: any) {
+    return this.purchases.createReceipt(s, body);
   }
 }

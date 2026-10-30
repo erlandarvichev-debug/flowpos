@@ -1,6 +1,9 @@
+import { Prisma } from '@prisma/client';
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { OutboxService } from '../../common/outbox/outbox.service';
+import { Scope } from '../../common/scope';
+import { assertTradeRefs, docHeader, nextNumber, orgDocs } from './trade-scope';
 
 @Injectable()
 export class PurchasesService {
@@ -9,7 +12,7 @@ export class PurchasesService {
     private outbox: OutboxService,
   ) {}
 
-  async findOrders(query: { search?: string; status?: string; cursor?: string; limit?: number }) {
+  async findOrders(s: Scope, query: { search?: string; status?: string; cursor?: string; limit?: number }) {
     const limit = Math.min(Number(query.limit) || 50, 200);
     const where: any = { docType: 'PURCHASE_ORDER' };
     if (query.status) where.status = query.status;
@@ -22,7 +25,7 @@ export class PurchasesService {
     if (query.cursor) where.date = { lt: new Date(query.cursor) };
 
     const rows = await this.prisma.document.findMany({
-      where,
+      where: orgDocs(s, where),
       take: limit + 1,
       include: { counterparty: true },
       orderBy: { date: 'desc' },
@@ -35,25 +38,23 @@ export class PurchasesService {
     return { data, meta: { nextCursor, hasMore } };
   }
 
-  async findOrder(id: string) {
-    const order = await this.prisma.document.findUnique({
-      where: { id },
+  async findOrder(s: Scope, id: string) {
+    const order = await this.prisma.document.findFirst({
+      where: orgDocs(s, { id, docType: 'PURCHASE_ORDER' }),
       include: { counterparty: true, lines: { include: { product: { include: { uom: true } } } } },
     });
     if (!order) throw new NotFoundException('Заказ поставщику не найден');
     return order;
   }
 
-  async createOrder(data: any) {
-    const { items, ...rest } = data;
-    const count = await this.prisma.document.count({ where: { docType: 'PURCHASE_ORDER' } });
-    const number = `ЗП-${String(count + 1).padStart(6, '0')}`;
-    const total = items.reduce((s: number, i: any) => s + i.qty * i.price, 0);
+  async createOrder(s: Scope, data: any) {
+    const items: any[] = data?.items ?? [];
+    const rest = docHeader(s, data);
+    const total = items.reduce((sum: number, i: any) => sum + i.qty * i.price, 0);
 
     return this.prisma.$transaction(async (tx) => {
-      if (rest.date && typeof rest.date === 'string' && !rest.date.includes('T')) {
-        rest.date = new Date(rest.date + 'T00:00:00.000Z');
-      }
+      await assertTradeRefs(tx, s, { counterpartyId: rest.counterpartyId, contractId: rest.contractId, storeIds: [rest.storeId], productIds: items.map((i) => i.productId) });
+      const number = await nextNumber(tx, s, 'PURCHASE_ORDER', 'ЗП', 6);
       const created = await tx.document.create({
         data: {
           docType: 'PURCHASE_ORDER',
@@ -69,7 +70,7 @@ export class PurchasesService {
               amount: i.qty * i.price,
             })),
           },
-        },
+        } as Prisma.DocumentUncheckedCreateInput,
         include: { counterparty: true, lines: { include: { product: true } } },
       });
 
@@ -85,10 +86,11 @@ export class PurchasesService {
     });
   }
 
-  async updateOrder(id: string, data: any) {
-    await this.findOrder(id);
-    const { items, ...rest } = data;
+  async updateOrder(s: Scope, id: string, data: any) {
+    await this.findOrder(s, id);
+    const { tenantId, organizationId, ...rest } = docHeader(s, data);
     return this.prisma.$transaction(async (tx) => {
+      await assertTradeRefs(tx, s, { counterpartyId: rest.counterpartyId, contractId: rest.contractId, storeIds: [rest.storeId] });
       const updated = await tx.document.update({ where: { id }, data: rest });
 
       await this.outbox.enqueueInTx(tx, {
@@ -103,14 +105,14 @@ export class PurchasesService {
     });
   }
 
-  async findReceipts(query: { status?: string; cursor?: string; limit?: number }) {
+  async findReceipts(s: Scope, query: { status?: string; cursor?: string; limit?: number }) {
     const limit = Math.min(Number(query.limit) || 50, 200);
     const where: any = { docType: 'SUPPLY' };
     if (query.status) where.status = query.status;
     if (query.cursor) where.date = { lt: new Date(query.cursor) };
 
     const rows = await this.prisma.document.findMany({
-      where,
+      where: orgDocs(s, where),
       take: limit + 1,
       orderBy: { date: 'desc' },
     });
@@ -122,16 +124,14 @@ export class PurchasesService {
     return { data, meta: { nextCursor, hasMore } };
   }
 
-  async createReceipt(data: any) {
-    const { items, ...rest } = data;
-    if (rest.date && typeof rest.date === 'string' && !rest.date.includes('T')) {
-      rest.date = new Date(rest.date + 'T00:00:00.000Z');
-    }
-    const count = await this.prisma.document.count({ where: { docType: 'SUPPLY' } });
-    const number = `ПТ-${String(count + 1).padStart(6, '0')}`;
-    const total = items.reduce((s: number, i: any) => s + i.qty * i.price, 0);
+  async createReceipt(s: Scope, data: any) {
+    const items: any[] = data?.items ?? [];
+    const rest = docHeader(s, data);
+    const total = items.reduce((sum: number, i: any) => sum + i.qty * i.price, 0);
 
     return this.prisma.$transaction(async (tx) => {
+      await assertTradeRefs(tx, s, { counterpartyId: rest.counterpartyId, contractId: rest.contractId, storeIds: [rest.storeId], productIds: items.map((i) => i.productId) });
+      const number = await nextNumber(tx, s, 'SUPPLY', 'ПТ', 6);
       const receipt = await tx.document.create({
         data: {
           docType: 'SUPPLY',
@@ -147,7 +147,7 @@ export class PurchasesService {
               amount: i.qty * i.price,
             })),
           },
-        },
+        } as Prisma.DocumentUncheckedCreateInput,
         include: { lines: { include: { product: true } } },
       });
 

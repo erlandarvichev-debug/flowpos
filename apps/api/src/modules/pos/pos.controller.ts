@@ -1,6 +1,7 @@
-import { Controller, Get, Post, Put, Param, Body, Query, UseGuards, Request } from '@nestjs/common';
+import { Controller, Get, Post, Put, Param, Body, Query, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { CurrentScope, Scope } from '../../common/scope';
 import { PosService } from './pos.service';
 
 @ApiTags('pos')
@@ -11,52 +12,52 @@ export class PosController {
   constructor(private pos: PosService) {}
 
   @Get('terminals')
-  findTerminals(@Request() req) {
-    return this.pos.findTerminals(req.user.organizationId);
+  findTerminals(@CurrentScope() s: Scope) {
+    return this.pos.findTerminals(s);
   }
 
   @Post('terminals')
-  createTerminal(@Body() body: any, @Request() req) {
-    return this.pos.createTerminal({ ...body, organizationId: req.user.organizationId });
+  createTerminal(@CurrentScope() s: Scope, @Body() body: any) {
+    return this.pos.createTerminal(s, body);
   }
 
   @Get('terminals/:id/active-shift')
-  getActiveShift(@Param('id') id: string) {
-    return this.pos.getActiveShift(id);
+  getActiveShift(@CurrentScope() s: Scope, @Param('id') id: string) {
+    return this.pos.getActiveShift(s, id);
   }
 
   @Post('terminals/:id/open-shift')
-  openShift(@Param('id') id: string, @Body() body: any) {
-    return this.pos.openShift(id, body);
+  openShift(@CurrentScope() s: Scope, @Param('id') id: string, @Body() body: any) {
+    return this.pos.openShift(s, id, body);
   }
 
   @Get('shifts')
-  findShifts(@Query() query: any) {
-    return this.pos.findShifts(query);
+  findShifts(@CurrentScope() s: Scope, @Query() query: any) {
+    return this.pos.findShifts(s, query);
   }
 
   @Put('shifts/:id/close')
-  closeShift(@Param('id') id: string) {
-    return this.pos.closeShift(id);
+  closeShift(@CurrentScope() s: Scope, @Param('id') id: string) {
+    return this.pos.closeShift(s, id);
   }
 
   @Post('shifts/:id/cash-in')
-  cashIn(@Param('id') id: string, @Body() body: { amount: number; comment?: string }) {
-    return this.pos.cashIn(id, body.amount, body.comment);
+  cashIn(@CurrentScope() s: Scope, @Param('id') id: string, @Body() body: { amount: number; comment?: string }) {
+    return this.pos.cashIn(s, id, body.amount, body.comment);
   }
 
   @Post('shifts/:id/cash-out')
-  cashOut(@Param('id') id: string, @Body() body: { amount: number; comment?: string }) {
-    return this.pos.cashOut(id, body.amount, body.comment);
+  cashOut(@CurrentScope() s: Scope, @Param('id') id: string, @Body() body: { amount: number; comment?: string }) {
+    return this.pos.cashOut(s, id, body.amount, body.comment);
   }
 
   @Get('receipts')
-  findReceipts(@Query() query: any) {
-    return this.pos.findReceipts(query);
+  findReceipts(@CurrentScope() s: Scope, @Query() query: any) {
+    return this.pos.findReceipts(s, query);
   }
 
   @Post('receipts')
-  createReceipt(@Body() body: any) {
-    return this.pos.createReceipt(body);
+  createReceipt(@CurrentScope() s: Scope, @Body() body: any) {
+    return this.pos.createReceipt(s, body);
   }
 }

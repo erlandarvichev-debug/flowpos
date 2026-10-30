@@ -10,6 +10,11 @@ import { CounterpartiesService } from '../src/modules/catalog/counterparties.ser
 import { WarehousesService } from '../src/modules/catalog/warehouses.service';
 import { UsersService } from '../src/modules/users/users.service';
 import { AnalyticsService } from '../src/modules/analytics/analytics.service';
+import { OutboxService } from '../src/common/outbox/outbox.service';
+import { SalesService } from '../src/modules/trade/sales.service';
+import { PurchasesService } from '../src/modules/trade/purchases.service';
+import { StockOpsService } from '../src/modules/trade/stock-ops.service';
+import { PosService } from '../src/modules/pos/pos.service';
 import { DEFAULT_TENANT, defaultTenant } from './accounting-helpers';
 
 const prisma = new PrismaService();
@@ -18,6 +23,11 @@ const cps = new CounterpartiesService(prisma);
 const stores = new WarehousesService(prisma);
 const users = new UsersService(prisma);
 const analytics = new AnalyticsService(prisma);
+const outbox = new OutboxService(prisma);
+const sales = new SalesService(prisma, outbox);
+const purchases = new PurchasesService(prisma, outbox);
+const stockOps = new StockOpsService(prisma);
+const pos = new PosService(prisma);
 const uid = () => randomUUID().slice(0, 8);
 
 let t2: string;
@@ -31,7 +41,7 @@ async function scopeIn(tenantId: string, name: string): Promise<Scope> {
 }
 
 async function code(p: Promise<unknown>) {
-  try { await p; return 'OK'; } catch (e: any) { return e instanceof NotFoundException ? 404 : e instanceof ForbiddenException ? 403 : e?.status ?? e?.message; }
+  try { await p; return 'OK'; } catch (e: any) { return e instanceof NotFoundException ? 404 : e instanceof ForbiddenException ? 403 : e?.response?.code ?? e?.status ?? e?.message; }
 }
 
 beforeAll(async () => {
@@ -48,7 +58,12 @@ beforeAll(async () => {
 afterAll(async () => {
   // Второй клиент и всё его — удалить, чтобы тестовая БД снова была с одним клиентом.
   const orgs = (await prisma.organization.findMany({ where: { tenantId: t2 }, select: { id: true } })).map((o) => o.id);
+  const docs = (await prisma.document.findMany({ where: { tenantId: t2 }, select: { id: true } })).map((d) => d.id);
+  await prisma.outbox.deleteMany({ where: { localId: { in: docs } } });
   await prisma.document.deleteMany({ where: { tenantId: t2 } });
+  await prisma.pOSCashOp.deleteMany({ where: { shift: { terminal: { tenantId: t2 } } } });
+  await prisma.pOSShift.deleteMany({ where: { terminal: { tenantId: t2 } } });
+  await prisma.pOSTerminal.deleteMany({ where: { tenantId: t2 } });
   await prisma.stock.deleteMany({ where: { tenantId: t2 } });
   await prisma.productBarcode.deleteMany({ where: { tenantId: t2 } });
   await prisma.product.deleteMany({ where: { tenantId: t2 } });
@@ -154,3 +169,61 @@ describe('FP-007: аналитика', () => {
     expect((await analytics.getStockReport(A)).map((x) => x.storeId)).not.toContain(storeB.id);
   });
 });
+
+describe('FP-007: торговля и касса', () => {
+  async function setup() {
+    const storeA = await stores.create(A, { name: `Склад A ${uid()}` });
+    const storeA2 = await stores.create(A2, { name: `Склад A2 ${uid()}` });
+    const storeB = await stores.create(B, { name: `Склад B ${uid()}` });
+    const productA = await items.create(A, { name: `Товар A ${uid()}`, uomId: uomA });
+    const productB = await items.create(B, { name: `Товар B ${uid()}`, uomId: uomB });
+    const cpA = await cps.create(A, { name: `Покупатель A ${uid()}` });
+    const cpB = await cps.create(B, { name: `Покупатель B ${uid()}` });
+    return { storeA, storeA2, storeB, productA, productB, cpA, cpB };
+  }
+  const line = (productId: string) => [{ productId, qty: 1, price: 100 }];
+
+  it('документ создаётся в своей организации; клиент и организация из тела игнорируются; чужие ссылки — REF_FOREIGN', async () => {
+    const w = await setup();
+    const order = await sales.createOrder(A, { date: '2026-10-30', counterpartyId: w.cpA.id, storeId: w.storeA.id, items: line(w.productA.id), tenantId: t2, organizationId: B.organizationId, number: 'ПОДМЕНА', total: 1 });
+    expect([order.tenantId, order.organizationId, order.number === 'ПОДМЕНА', Number(order.total)]).toEqual([DEFAULT_TENANT, A.organizationId, false, 100]);
+
+    expect(await code(sales.createOrder(A, { date: '2026-10-30', counterpartyId: w.cpB.id, items: line(w.productA.id) }))).toBe('REF_FOREIGN');
+    expect(await code(sales.createShipment(A, { date: '2026-10-30', storeId: w.storeA2.id, items: line(w.productA.id) }))).toBe('REF_FOREIGN');
+    expect(await code(purchases.createReceipt(A, { date: '2026-10-30', storeId: w.storeA.id, items: line(w.productB.id) }))).toBe('REF_FOREIGN');
+    expect(await code(stockOps.createTransfer(A, { storeId: w.storeA.id, storeToId: w.storeB.id, items: line(w.productA.id) }))).toBe('REF_FOREIGN');
+    expect(await code(sales.createPosSale(A, { storeId: w.storeA.id, items: [{ barcode: `нет-${uid()}`, qty: 1, price: 1 }] }, `k-${uid()}`))).toBe('REF_FOREIGN');
+  });
+
+  it('документы другой организации не видны и не меняются', async () => {
+    const w = await setup();
+    const po = await purchases.createOrder(A, { date: '2026-10-30', counterpartyId: w.cpA.id, items: line(w.productA.id) });
+    expect(await code(purchases.findOrder(A2, po.id))).toBe(404);
+    expect(await code(purchases.findOrder(B, po.id))).toBe(404);
+    expect(await code(purchases.updateOrder(B, po.id, { comment: 'захват' }))).toBe(404);
+    expect((await purchases.findOrders(B, { limit: 200 })).data.map((d) => d.id)).not.toContain(po.id);
+    expect((await purchases.findOrders(A, { limit: 200 })).data.map((d) => d.id)).toContain(po.id);
+    // updateOrder не переносит документ в другую организацию
+    await purchases.updateOrder(A, po.id, { comment: 'ok', organizationId: B.organizationId, tenantId: t2 });
+    expect((await prisma.document.findUniqueOrThrow({ where: { id: po.id } })).organizationId).toBe(A.organizationId);
+  });
+
+  it('касса: чужая касса и смена недоступны; продажи смены — только свои чеки с момента открытия', async () => {
+    const w = await setup();
+    const tA = await pos.createTerminal(A, { name: 'Касса A', code: `KA-${uid()}`, storeId: w.storeA.id, apiKey: 'подмена' });
+    expect(tA.apiKey).not.toBe('подмена');
+    expect(await code(pos.createTerminal(A, { name: 'Касса', code: `K-${uid()}`, storeId: w.storeA2.id }))).toBe('REF_FOREIGN');
+    expect(await code(pos.openShift(B, tA.id, {}))).toBe(404);
+
+    const before = new Date(Date.now() - 60_000);
+    await prisma.document.create({ data: { docType: 'RETAIL_DEMAND', date: before, createdAt: before, status: 'POSTED', total: 999, organizationId: A.organizationId, storeId: w.storeA.id } });
+    const shift = await pos.openShift(A, tA.id, {});
+    await pos.createReceipt(A, { storeId: w.storeA.id, status: 'POSTED', items: line(w.productA.id) });
+    await prisma.document.create({ data: { docType: 'RETAIL_DEMAND', date: new Date(), status: 'POSTED', total: 5000, organizationId: B.organizationId, storeId: w.storeB.id } });
+    expect(await code(pos.closeShift(B, shift.id))).toBe(404);
+    expect(await code(pos.cashIn(A2, shift.id, 10))).toBe(404);
+    const closed = await pos.closeShift(A, shift.id);
+    expect(Number(closed.totalSales)).toBe(100);
+  });
+});
+
