@@ -678,3 +678,53 @@ describe('FP-018: решения по исправлению, дополнени
     expect(await prisma.auditLog.count({ where: { entity: 'esf_decision', entityId: d.id } })).toBe(3); // предложено, утверждено, исполнено
   });
 });
+
+describe('FP-020: рабочее место — списки, фильтры, карточка', () => {
+  async function org3() {
+    const { ctx } = await setupOrg();
+    await esf.updateSettings(ctx, { signerIin: '123456789021' });
+    const base = BigInt(Date.now()) * 100n;
+    const mk = (n: number, d: Record<string, unknown>) => prisma.esfInvoice.create({ data: { organizationId: ctx.organizationId, direction: 'INBOUND', invoiceType: 'ORDINARY_INVOICE', num: String(base + BigInt(n)), date: new Date('2026-10-10'), turnoverDate: new Date('2026-10-10'), status: 'DELIVERED', esfStatus: 'DELIVERED', esfId: base + BigInt(n), body: '<x/>', bodyHash: 'x', ...d } });
+    const plain = await mk(1, {});
+    const waiting = await mk(2, { invoiceType: 'ADDITIONAL_INVOICE', status: 'WAITING_CUSTOMER_CONFIRMATION', esfStatus: 'WAITING_CUSTOMER_CONFIRMATION', relatedInvoiceId: plain.id });
+    const unknown = await mk(3, { direction: 'OUTBOUND', status: 'UNKNOWN', esfStatus: null, sentAt: new Date(Date.now() - 3600_000) });
+    const rejected = await mk(4, { direction: 'OUTBOUND', status: 'REJECTED', errors: [{ errorCode: 'TIN_NOT_FOUND', text: 'нет' }], date: new Date('2026-09-01') });
+    // Доставлен, но с замечаниями ИС ЭСФ — тоже во вкладке «Ошибки».
+    const warned = await mk(5, { errors: [{ errorCode: 'W_ADDRESS', text: 'адрес' }] });
+    return { ctx, mk, plain, waiting, unknown, rejected, warned };
+  }
+  const ids = (r: any) => r.items.map((i: any) => i.id);
+
+  it('«Требуют решения» и «Ошибки»; фильтры по периоду, коду ошибки, виду', async () => {
+    const w = await org3();
+    expect(ids(await esf.list(w.ctx, { view: 'NEEDS_DECISION' })).sort()).toEqual([w.waiting.id, w.unknown.id].sort());
+    expect(ids(await esf.list(w.ctx, { view: 'ERRORS' })).sort()).toEqual([w.unknown.id, w.rejected.id, w.warned.id].sort());
+    expect(ids(await esf.list(w.ctx, { errorCode: 'TIN_NOT_FOUND' }))).toEqual([w.rejected.id]);
+    expect(ids(await esf.list(w.ctx, { from: '2026-10-01', to: '2026-10-31' }))).not.toContain(w.rejected.id);
+    expect(ids(await esf.list(w.ctx, { invoiceType: 'ADDITIONAL_INVOICE' }))).toEqual([w.waiting.id]);
+  });
+
+  it('карточка: XML как есть, форма, цепочка в обе стороны, история; UNKNOWN — повтор только после сверки', async () => {
+    const w = await org3();
+    const card = await esf.get(w.ctx, w.waiting.id);
+    expect(card.chain.original?.id).toBe(w.plain.id);
+    expect(card.body).toBe('<x/>');
+    expect(card.parseError).toMatch(/не соответствует формату ЭСФ/); // испорченное тело не скрывается — видна причина
+    expect(card.parseErrorDetail).toBeTruthy();
+    expect((await esf.get(w.ctx, w.plain.id)).chain.corrections.map((c: any) => c.id)).toEqual([w.waiting.id]);
+    const d = await esf.proposeDecision(w.ctx, { kind: 'APPROVE', ids: [w.waiting.id], basis: 'Сверено с поставкой' });
+    // Решение по другому ЭСФ в карточку не попадает.
+    const other = await w.mk(6, { invoiceType: 'ADDITIONAL_INVOICE', relatedInvoiceId: w.plain.id, status: 'WAITING_CUSTOMER_CONFIRMATION', esfStatus: 'WAITING_CUSTOMER_CONFIRMATION' });
+    await esf.proposeDecision(w.ctx, { kind: 'APPROVE', ids: [other.id], basis: 'Другой' });
+    expect((await esf.get(w.ctx, w.waiting.id)).decisions.map((x: any) => x.id)).toEqual([d.id]);
+    expect((await esf.get(w.ctx, w.waiting.id)).timeline.map((x: any) => x.action)).toContain('ESF_DECISION_PROPOSED');
+
+    const u = await esf.get(w.ctx, w.unknown.id);
+    expect(u.unknown).toMatchObject({ canRelease: false });
+    // Сверка внутри «тихого» периода (ИС ЭСФ могла ещё не зарегистрировать ЭСФ) — не доказательство.
+    await prisma.auditLog.create({ data: { organizationId: w.ctx.organizationId, action: 'ESF_RECONCILE_NOT_FOUND', entity: 'esf_invoice', entityId: w.unknown.id, ts: new Date(w.unknown.sentAt!.getTime() + 60_000) } });
+    expect((await esf.get(w.ctx, w.unknown.id)).unknown).toMatchObject({ canRelease: false });
+    await prisma.auditLog.create({ data: { organizationId: w.ctx.organizationId, action: 'ESF_RECONCILE_NOT_FOUND', entity: 'esf_invoice', entityId: w.unknown.id } });
+    expect((await esf.get(w.ctx, w.unknown.id)).unknown).toMatchObject({ canRelease: true });
+  });
+});

@@ -18,7 +18,7 @@ FP-016,ESF,P0,Security/Signing engineer,L,"FP-008,FP-011,FP-013",PLANNED,Signing
 FP-017,ESF,P0,Integration engineer,L,"FP-015,FP-016,FP-021",PLANNED,Отправка и reconciliation результата,Lost response/restart → UNKNOWN; status lookup доказан; нет слепого resend
 FP-018,ESF,P0,Methodologist/Backend,M,"FP-012,FP-016",DONE_LOCAL,Решения по исправлению дополнению отзыву,Technical ACK отдельно от business acceptance; сроки/роль/основание; explicit approval
 FP-019,ESF,P0,Tax methodologist/Backend,L,"FP-012,FP-039",DONE_LOCAL,Частичный зачёт НДС и корректировки,Quarter/year/amount/remainder/rule version; нельзя автоматически зачесть весь VAT при download
-FP-020,ESF,P1,Frontend,L,"FP-008,FP-012,FP-017,FP-018",PLANNED,Рабочее место ESF для реальных пользователей,Tabs/filters/card/raw/history; UNKNOWN только сверка; partial bulk result; доступность клавиатурой
+FP-020,ESF,P1,Frontend,L,"FP-008,FP-012,FP-017,FP-018",DONE_LOCAL,Рабочее место ESF для реальных пользователей,Tabs/filters/card/raw/history; UNKNOWN только сверка; partial bulk result; доступность клавиатурой
 FP-021,Platform,P0,Backend,M,FP-009,DONE_LOCAL,Jobs lease fencing retry и DLQ,Stale worker не подтверждает чужой lease; jitter/Retry-After; unsafe stage не retry
 FP-022,ESF,P1,SRE/Integration,M,"FP-012,FP-017,FP-024",PLANNED,Метрики и runbook ESF,Alerts по lag/UNKNOWN/quarantine; trace и ответственный; secret redaction
 FP-023,ESF,P0,QA/Methodologist,L,"FP-017,FP-018,FP-019,FP-020,FP-022",PLANNED,Уполномоченный ESF sandbox pilot,Документы приняты реальным тестовым контуром; duplicate/correction/timeout доказательства; sign-off

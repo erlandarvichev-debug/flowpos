@@ -142,7 +142,12 @@ export class AccountingController {
   esfList(@Org() ctx: OrgContext, @Query() q: any) { return this.esf.list(ctx, q); }
 
   @Get('esf/invoices/:id') @RequirePermission('acc.esf.read')
-  esfGet(@Org() ctx: OrgContext, @Param('id') id: string) { return this.esf.get(ctx, id); }
+  async esfGet(@Org() ctx: OrgContext, @Param('id') id: string) {
+    const card = await this.esf.get(ctx, id);
+    // Входящий: распределение НДС по регистру (FP-019) — в карточке.
+    const vat = card.direction === 'INBOUND' ? await this.vatCredit.ledger(ctx, id).then((l) => ({ credited: l.credited, nonCreditable: l.nonCreditable, remainder: l.remainder, allocations: l.allocations })) : null;
+    return { ...card, vat };
+  }
 
   @Post('esf/prepare/:docId') @RequirePermission('acc.esf.send')
   esfPrepare(@Org() ctx: OrgContext, @Param('docId') docId: string) { return this.esf.prepare(ctx, docId); }

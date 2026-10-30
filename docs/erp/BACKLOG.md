@@ -79,7 +79,7 @@ ESF | P0 | Tax methodologist/Backend | L | DONE_LOCAL — см. `FP-019-VAT-CRED
 Зависимости: FP-012,FP-039. Приёмка: Quarter/year/amount/remainder/rule version; нельзя автоматически зачесть весь VAT при download.
 
 ## FP-020 · Рабочее место ESF для реальных пользователей
-ESF | P1 | Frontend | L | PLANNED
+ESF | P1 | Frontend | L | DONE_LOCAL — см. `FP-020-ESF-WORKPLACE.md` (API+веб, проверено в браузере; подпись NCALayer и экранный диктор — не проверены; не выкладывалось)
 Зависимости: FP-008,FP-012,FP-017,FP-018. Приёмка: Tabs/filters/card/raw/history; UNKNOWN только сверка; partial bulk result; доступность клавиатурой.
 
 ## FP-021 · Jobs lease fencing retry и DLQ

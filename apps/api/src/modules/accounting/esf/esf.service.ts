@@ -315,12 +315,30 @@ export class EsfService implements OnModuleInit, OnModuleDestroy {
   async list(ctx: OrgContext, q: any) {
     const env = (await this.prisma.esfSettings.findUnique({ where: { organizationId: ctx.organizationId } }))?.environment ?? 'TEST';
     const where: Prisma.EsfInvoiceWhereInput = { organizationId: ctx.organizationId, environment: env };
+    const and: Prisma.EsfInvoiceWhereInput[] = [];
     if (q.direction) where.direction = q.direction;
     if (q.status) where.status = { in: String(q.status).split(',') };
-    if (q.search) where.OR = [{ num: { contains: q.search } }, { registrationNumber: { contains: q.search } }, { customerName: { contains: q.search, mode: 'insensitive' } }, { sellerName: { contains: q.search, mode: 'insensitive' } }];
+    if (q.esfStatus) where.esfStatus = { in: String(q.esfStatus).split(',') };
+    if (q.invoiceType) where.invoiceType = { in: String(q.invoiceType).split(',') };
+    if (q.counterpartyId) where.counterpartyId = String(q.counterpartyId);
+    if (q.from || q.to) where.date = { ...(q.from ? { gte: new Date(String(q.from).slice(0, 10) + 'T00:00:00Z') } : {}), ...(q.to ? { lte: new Date(String(q.to).slice(0, 10) + 'T00:00:00Z') } : {}) };
+    if (q.errorCode) where.errors = { array_contains: [{ errorCode: String(q.errorCode) }] };
+    if (q.search) and.push({ OR: [{ num: { contains: q.search } }, { registrationNumber: { contains: q.search } }, { customerName: { contains: q.search, mode: 'insensitive' } }, { sellerName: { contains: q.search, mode: 'insensitive' } }, { customerTin: { contains: q.search } }, { sellerTin: { contains: q.search } }] });
+    // FP-020: представления «Требуют решения» и «Ошибки» (вкладки рабочего места).
+    if (q.view === 'NEEDS_DECISION') {
+      and.push({ OR: [
+        { esfStatus: { in: ['WAITING_CUSTOMER_CONFIRMATION', 'WAITING_CUSTOMER_REVOKE_CONFIRMATION'] }, direction: 'INBOUND' },
+        { status: 'UNKNOWN' },
+        { outdated: true, status: { notIn: ['REVOKED', 'CANCELLED', 'CANCELED'] } },
+        { direction: 'INBOUND', sourceDocId: null, suggestedSourceDocId: { not: null } },
+      ] });
+    } else if (q.view === 'ERRORS') {
+      and.push({ OR: [{ status: { in: ['REJECTED', 'FAILED', 'UNKNOWN'] } }, { errors: { not: Prisma.DbNull } }] });
+    }
+    if (and.length) where.AND = and;
     const page = Math.max(1, Number(q.page) || 1), limit = Math.min(200, Number(q.limit) || 50);
     const [items, total] = await Promise.all([
-      this.prisma.esfInvoice.findMany({ where, orderBy: [{ date: 'desc' }, { num: 'desc' }], skip: (page - 1) * limit, take: limit, select: { id: true, direction: true, invoiceType: true, num: true, date: true, turnoverDate: true, sellerTin: true, sellerName: true, customerTin: true, customerName: true, totalWithoutTax: true, totalNds: true, totalWithTax: true, status: true, esfStatus: true, esfId: true, registrationNumber: true, errors: true, outdated: true, sourceDocId: true, sentAt: true, cancelReason: true, relatedInvoiceId: true } }),
+      this.prisma.esfInvoice.findMany({ where, orderBy: [{ date: 'desc' }, { num: 'desc' }], skip: (page - 1) * limit, take: limit, select: { id: true, direction: true, invoiceType: true, num: true, date: true, turnoverDate: true, sellerTin: true, sellerName: true, customerTin: true, customerName: true, totalWithoutTax: true, totalNds: true, totalWithTax: true, status: true, esfStatus: true, esfId: true, registrationNumber: true, errors: true, outdated: true, sourceDocId: true, sentAt: true, cancelReason: true, relatedInvoiceId: true, deliveryConfirmedAt: true, businessDecision: true, suggestedSourceDocId: true, counterpartyId: true } }),
       this.prisma.esfInvoice.count({ where }),
     ]);
     // Реализации, по которым ЭСФ ещё не сформирован
@@ -328,12 +346,51 @@ export class EsfService implements OnModuleInit, OnModuleDestroy {
     return { items: items.map((i) => this.view(i)), total, page, limit, pending };
   }
 
+  /**
+   * FP-020: карточка ЭСФ — реквизиты и строки (разбор), исходный XML как получен/подписан, форма и хэш, цепочка
+   * исправлений, решения, история действий; для UNKNOWN — можно ли разрешить повтор (только после сверки).
+   */
   async get(ctx: OrgContext, id: string) {
     const r = await this.prisma.esfInvoice.findFirst({ where: { id, organizationId: ctx.organizationId } });
     if (!r) throw new AccError('NOT_FOUND', 'ЭСФ не найден', { status: 404 });
     let parsed: any = null;
-    try { parsed = parseInvoice(r.body); } catch { /* тело ЭСФ показываем как есть */ }
-    return { ...this.view(r), parsed };
+    let parseError: string | null = null;
+    let parseErrorDetail: string | null = null;
+    try {
+      parsed = parseInvoice(r.body);
+      // Название единицы по классификатору ИС ЭСФ рядом с кодом (код 796 без названия читается как часть количества).
+      parsed.products = parsed.products.map((p: any) => ({ ...p, unitName: p.unitNomenclature ? ESF_UNITS[p.unitNomenclature] ?? null : null }));
+    } catch (e: any) {
+      // Бухгалтеру — что случилось; техническая причина — отдельно, для поддержки.
+      parseError = 'XML не соответствует формату ЭСФ: реквизиты и строки прочитать не удалось';
+      parseErrorDetail = String(e?.message ?? e).slice(0, 300);
+    }
+    const formVersion = /xmlns:v2="v2\.esf"|<v2:invoice/.test(r.body) ? INVOICE_VERSION : null;
+    const brief = { id: true, num: true, date: true, invoiceType: true, status: true, esfStatus: true, registrationNumber: true, totalWithTax: true, totalNds: true };
+    const [original, corrections, decisions, timeline] = await Promise.all([
+      r.relatedInvoiceId ? this.prisma.esfInvoice.findFirst({ where: { id: r.relatedInvoiceId, organizationId: ctx.organizationId }, select: brief }) : null,
+      this.prisma.esfInvoice.findMany({ where: { organizationId: ctx.organizationId, relatedInvoiceId: r.id }, select: brief, orderBy: { date: 'asc' } }),
+      this.prisma.esfDecision.findMany({ where: { organizationId: ctx.organizationId, invoiceIds: { has: r.id } }, orderBy: { proposedAt: 'desc' } }),
+      this.prisma.auditLog.findMany({
+        where: { organizationId: ctx.organizationId, OR: [{ entityId: r.id }, { entity: 'esf_invoice', entityId: { contains: r.id } }, { entity: 'esf_decision', after: { path: ['invoiceIds'], array_contains: r.id } }] },
+        orderBy: { ts: 'asc' }, take: 200, select: { id: true, ts: true, action: true, userId: true, reason: true, entity: true },
+      }),
+    ]);
+    return {
+      ...this.view(r), parsed, parseError, parseErrorDetail, formVersion,
+      chain: { original, corrections },
+      decisions, timeline,
+      unknown: r.status === 'UNKNOWN' ? await this.unknownRelease(ctx, r) : null,
+    };
+  }
+
+  /** Можно ли разрешить повторную отправку UNKNOWN: только если сверка после «тихого» периода не нашла ЭСФ. */
+  private async unknownRelease(ctx: OrgContext, r: { id: string; sentAt: Date | null; updatedAt: Date }) {
+    const quietFrom = new Date((r.sentAt ?? r.updatedAt).getTime() + EsfService.RECONCILE_QUIET_MS);
+    const proof = await this.prisma.auditLog.findFirst({ where: { organizationId: ctx.organizationId, action: 'ESF_RECONCILE_NOT_FOUND', entityId: r.id, ts: { gte: quietFrom } }, orderBy: { ts: 'desc' } });
+    return proof
+      ? { canRelease: true, reconciledAt: proof.ts, message: 'Сверка по дате и номеру не нашла этот ЭСФ в ИС ЭСФ — повторная отправка допустима.' }
+      : { canRelease: false, reconcileAfter: quietFrom, message: `Результат отправки неизвестен: ЭСФ мог быть принят. Сверьте статус не раньше ${quietFrom.toISOString().slice(0, 16).replace('T', ' ')} UTC — если ИС ЭСФ его найдёт, статус обновится сам.` };
   }
 
   /** Проведённые реализации с действующими проводками без ЭСФ. */
