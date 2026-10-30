@@ -5,11 +5,14 @@ import * as bcrypt from 'bcryptjs';
 import { createHash, randomBytes } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LoginDto } from './dto/login.dto';
+import { MfaService } from './mfa.service';
 
 /** Сессия живёт не дольше этого срока, сколько бы раз ни обновлялся токен. */
 export const SESSION_TTL_DAYS = 30;
 /** Access-токен короткий: отзыв сессии действует не позже чем через этот срок даже без проверки сессии. */
 export const ACCESS_TTL = process.env.JWT_EXPIRES_IN || '15m';
+/** Сколько ждать код второго фактора после верного пароля. */
+export const MFA_CHALLENGE_TTL = '5m';
 
 /** В БД хранится только хэш refresh-токена: утечка таблицы не даёт рабочих токенов. */
 export const hashToken = (raw: string) => createHash('sha256').update(raw, 'utf8').digest('hex');
@@ -33,6 +36,7 @@ export class AuthService {
   constructor(
     private prisma: PrismaService,
     private jwt: JwtService,
+    private mfa: MfaService,
   ) {}
 
   async login(dto: LoginDto, client: ClientInfo = {}) {
@@ -49,6 +53,35 @@ export class AuthService {
     const valid = await bcrypt.compare(dto.password, user.passwordHash);
     if (!valid) throw new UnauthorizedException('Неверный email или пароль');
 
+    // Второй фактор включён — сессии ещё нет: короткий токен-вызов, который обменивается на сессию по коду.
+    if (user.mfaEnabledAt) {
+      return { mfaRequired: true as const, mfaToken: this.jwt.sign({ sub: user.id, purpose: 'mfa' }, { expiresIn: MFA_CHALLENGE_TTL }) };
+    }
+    return this.openSession(user.id, 'password', client, null);
+  }
+
+  /** Второй шаг входа: токен-вызов + код из приложения (или код восстановления) → сессия, подтверждённая MFA. */
+  async completeMfaLogin(mfaToken: string, code: string, client: ClientInfo = {}) {
+    let payload: any;
+    try {
+      payload = this.jwt.verify(mfaToken);
+    } catch {
+      throw new UnauthorizedException({ code: 'MFA_CHALLENGE_INVALID', message: 'Время подтверждения истекло — войдите снова' });
+    }
+    if (payload?.purpose !== 'mfa' || !payload.sub) throw new UnauthorizedException({ code: 'MFA_CHALLENGE_INVALID', message: 'Недействительный вызов' });
+    await this.mfa.checkCode(payload.sub, code);
+    return this.openSession(payload.sub, 'password', client, new Date());
+  }
+
+  private async openSession(userId: string, authMethod: string, client: ClientInfo, mfaAt: Date | null) {
+    const user = await this.prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+      include: {
+        userRoles: { include: { role: { include: { permissions: { include: { permission: true } } } } } },
+        organization: true,
+      },
+    });
+    if (!user.isActive) throw new UnauthorizedException('Пользователь неактивен');
     await this.prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
 
     const roles = user.userRoles.map((ur) => ur.role.name);
@@ -58,7 +91,7 @@ export class AuthService {
 
     const session = await this.prisma.authSession.create({
       data: {
-        tenantId: user.tenantId, userId: user.id, authMethod: 'password',
+        tenantId: user.tenantId, userId: user.id, authMethod, mfaAt,
         expiresAt: new Date(Date.now() + SESSION_TTL_DAYS * 86_400_000),
         ip: client.ip?.slice(0, 64), userAgent: client.userAgent?.slice(0, 256),
       },
@@ -67,6 +100,7 @@ export class AuthService {
     const refreshToken = await this.createRefreshToken(this.prisma, user.id, session.id, session.expiresAt);
 
     return {
+      mfaRequired: false as const,
       accessToken,
       refreshToken,
       user: {
@@ -79,6 +113,7 @@ export class AuthService {
         organization: user.organization,
         roles,
         permissions: [...new Set(permissions)],
+        mfaEnabled: !!user.mfaEnabledAt,
       },
     };
   }

@@ -2,11 +2,12 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { AuthService } from './auth.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { JwtService } from '@nestjs/jwt';
+import { MfaService } from './mfa.service';
 import { UnauthorizedException } from '@nestjs/common';
 import * as bcrypt from 'bcryptjs';
 
 const mockPrisma = {
-  user: { findUnique: jest.fn(), update: jest.fn() },
+  user: { findUnique: jest.fn(), findUniqueOrThrow: jest.fn(), update: jest.fn() },
   refreshToken: { create: jest.fn(), findUnique: jest.fn(), update: jest.fn() },
   authSession: { create: jest.fn().mockResolvedValue({ id: 'session1', expiresAt: new Date(Date.now() + 86_400_000) }) },
 };
@@ -50,6 +51,7 @@ describe('AuthService', () => {
         AuthService,
         { provide: PrismaService, useValue: mockPrisma },
         { provide: JwtService, useValue: mockJwt },
+        { provide: MfaService, useValue: {} },
       ],
     }).compile();
 
@@ -59,6 +61,7 @@ describe('AuthService', () => {
   describe('login', () => {
     it('возвращает токены при правильных учётных данных', async () => {
       mockPrisma.user.findUnique.mockResolvedValue(mockUser);
+      mockPrisma.user.findUniqueOrThrow.mockResolvedValue(mockUser);
       mockPrisma.user.update.mockResolvedValue(mockUser);
       mockPrisma.refreshToken.create.mockResolvedValue({ token: 'refresh-token' });
 
@@ -66,7 +69,8 @@ describe('AuthService', () => {
 
       expect(result).toHaveProperty('accessToken');
       expect(result).toHaveProperty('refreshToken');
-      expect(result.user.email).toBe('test@vpnet.kz');
+      expect(result.mfaRequired).toBe(false);
+      expect((result as any).user.email).toBe('test@vpnet.kz');
     });
 
     it('выбрасывает UnauthorizedException если пользователь не найден', async () => {
@@ -87,8 +91,18 @@ describe('AuthService', () => {
         .rejects.toThrow(UnauthorizedException);
     });
 
+    it('при включённой MFA сессия не открывается: только короткий токен-вызов', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue({ ...mockUser, mfaEnabledAt: new Date() });
+      const result = await service.login({ email: 'test@vpnet.kz', password: 'Password123' });
+      expect(result).toEqual({ mfaRequired: true, mfaToken: 'mock.jwt.token' });
+      expect(mockJwt.sign).toHaveBeenCalledWith({ sub: 'user1', purpose: 'mfa' }, { expiresIn: '5m' });
+      expect(mockPrisma.authSession.create).not.toHaveBeenCalled();
+      expect(mockPrisma.refreshToken.create).not.toHaveBeenCalled();
+    });
+
     it('обновляет lastLoginAt при успешном входе', async () => {
       mockPrisma.user.findUnique.mockResolvedValue(mockUser);
+      mockPrisma.user.findUniqueOrThrow.mockResolvedValue(mockUser);
       mockPrisma.user.update.mockResolvedValue(mockUser);
       mockPrisma.refreshToken.create.mockResolvedValue({ token: 'refresh-token' });
 

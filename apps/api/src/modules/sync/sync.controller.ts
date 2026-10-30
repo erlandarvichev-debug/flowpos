@@ -1,7 +1,7 @@
 import { Controller, Get, Post, Param, Body, Query, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { OrgGuard, RequirePermission } from '../accounting/access/org-context';
+import { OrgGuard, RequireMfa, RequirePermission } from '../accounting/access/org-context';
 import { CurrentScope, Scope } from '../../common/scope';
 import { SyncService } from './sync.service';
 
@@ -44,6 +44,7 @@ export class SyncController {
 
   @Post('conflicts/:id/resolve')
   @RequirePermission('sync.manage')
+  @RequireMfa()
   resolveConflict(@CurrentScope() s: Scope, @Param('id') id: string, @Body() body: { resolution: 'keep_local' | 'take_1c' }) {
     return this.sync.resolveConflict(s, id, body.resolution);
   }
@@ -56,12 +57,14 @@ export class SyncController {
 
   @Post('instances')
   @RequirePermission('sync.manage')
+  @RequireMfa()
   createInstance(@CurrentScope() s: Scope, @Body() body: any) {
     return this.sync.createInstance(s, body);
   }
 
   @Post('instances/:id/sync')
   @RequirePermission('sync.manage')
+  @RequireMfa()
   triggerSync(@CurrentScope() s: Scope, @Param('id') id: string) {
     return this.sync.triggerSync(s, id);
   }

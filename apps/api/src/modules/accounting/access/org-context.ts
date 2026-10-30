@@ -4,6 +4,7 @@ import {
 import { Reflector } from '@nestjs/core';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { Permission, hasPermission } from './roles';
+import { MfaService } from '../../auth/mfa.service';
 
 export interface OrgContext {
   /** Клиент организации — из членства в БД, не из запроса. */
@@ -16,6 +17,14 @@ export interface OrgContext {
 
 export const REQUIRE_PERMISSION = 'acc:permission';
 export const RequirePermission = (p: Permission) => SetMetadata(REQUIRE_PERMISSION, p);
+
+/**
+ * FP-008: привилегированная операция — сессия должна быть подтверждена вторым фактором.
+ * Действует в production; вне его — при MFA_ENFORCE=1 (в веб-интерфейсе ещё нет экрана MFA).
+ */
+export const REQUIRE_MFA = 'acc:mfa';
+export const RequireMfa = () => SetMetadata(REQUIRE_MFA, true);
+export const mfaEnforced = () => process.env.MFA_ENFORCE === '1' || (process.env.NODE_ENV === 'production' && process.env.MFA_ENFORCE !== '0');
 
 export const Org = createParamDecorator((_: unknown, ctx: ExecutionContext): OrgContext => {
   return ctx.switchToHttp().getRequest().orgContext;
@@ -55,6 +64,9 @@ export class OrgGuard implements CanActivate {
     const required = this.reflector.getAllAndOverride<Permission>(REQUIRE_PERMISSION, [ctx.getHandler(), ctx.getClass()]);
     if (required && !hasPermission(role, required)) {
       throw new ForbiddenException(`Недостаточно прав: требуется «${required}» (ваша роль: ${role})`);
+    }
+    if (mfaEnforced() && this.reflector.getAllAndOverride<boolean>(REQUIRE_MFA, [ctx.getHandler(), ctx.getClass()])) {
+      MfaService.requireStepUp(user.mfaAt);
     }
     return true;
   }

@@ -69,6 +69,13 @@ model User {
   phone          String?
   isActive       Boolean   @default(true) @map("is_active")
   lastLoginAt    DateTime? @map("last_login_at")
+  // FP-008: TOTP. Секрет — только зашифрованным (AES-256-GCM, ключ MFA_SECRET_KEY); коды восстановления — хэши.
+  mfaSecretEnc     String?   @map("mfa_secret_enc")
+  mfaEnabledAt     DateTime? @map("mfa_enabled_at")
+  mfaLastStep      Int?      @map("mfa_last_step") // последний принятый шаг TOTP: код не принимается повторно
+  mfaRecoveryCodes String[]  @default([]) @map("mfa_recovery_codes")
+  mfaFailedCount   Int       @default(0) @map("mfa_failed_count") // подряд неверных кодов
+  mfaLockedUntil   DateTime? @map("mfa_locked_until") // перебор кода: блокировка второго фактора
   organizationId String    @map("organization_id")
   tenantId       String  @default(dbgenerated("NULLIF(current_setting('flowpos.tenant_id', true), '')")) @map("tenant_id")
   createdAt      DateTime  @default(now()) @map("created_at")
@@ -97,6 +104,7 @@ model AuthSession {
   expiresAt     DateTime  @map("expires_at")
   revokedAt     DateTime? @map("revoked_at")
   revokedReason String?   @map("revoked_reason")
+  mfaAt         DateTime? @map("mfa_at") // сессия открыта со вторым фактором
   ip            String?
   userAgent     String?   @map("user_agent")
 

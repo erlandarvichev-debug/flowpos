@@ -6,6 +6,8 @@ import { PrismaService } from '../../prisma/prisma.service';
 export interface AuthUser {
   sub: string;
   sid: string;
+  /** Когда сессия подтверждена вторым фактором; null — не подтверждена. */
+  mfaAt: Date | null;
   email: string;
   tenantId: string;
   organizationId: string;
@@ -31,7 +33,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     const session = payload?.sub && payload?.sid
       ? await this.prisma.authSession.findUnique({
           where: { id: payload.sid },
-          select: { userId: true, revokedAt: true, expiresAt: true, user: { select: { tenantId: true, organizationId: true, isActive: true } } },
+          select: { userId: true, revokedAt: true, expiresAt: true, mfaAt: true, user: { select: { tenantId: true, organizationId: true, isActive: true } } },
         })
       : null;
     if (!session || session.userId !== payload.sub || session.revokedAt || session.expiresAt <= new Date()) {
@@ -42,6 +44,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     return {
       sub: payload.sub,
       sid: payload.sid,
+      mfaAt: session.mfaAt,
       email: payload.email,
       tenantId: user.tenantId,
       organizationId: user.organizationId,

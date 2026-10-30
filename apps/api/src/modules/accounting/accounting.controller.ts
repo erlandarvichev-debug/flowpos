@@ -3,7 +3,7 @@ import type { Response } from 'express';
 import { ApiBearerAuth, ApiHeader, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { Org, OrgContext, OrgGuard, RequirePermission } from './access/org-context';
+import { Org, OrgContext, OrgGuard, RequirePermission, RequireMfa } from './access/org-context';
 import { IdempotencyInterceptor } from './common/idempotency.interceptor';
 import { DocumentsService } from './documents/documents.service';
 import { ReportsService } from './reports/reports.service';
@@ -123,14 +123,14 @@ export class AccountingController {
   @Post('closing/:period/close') @RequirePermission('acc.period.lock') @ApiHeader(IDEMP_HEADER)
   closingClose(@Org() ctx: OrgContext, @Param('period') period: string) { return this.closing.close(ctx, period); }
 
-  @Post('closing/:period/reopen') @RequirePermission('acc.period.override')
+  @Post('closing/:period/reopen') @RequirePermission('acc.period.override') @RequireMfa()
   closingReopen(@Org() ctx: OrgContext, @Param('period') period: string, @Body() b: any) { return this.closing.reopen(ctx, period, b?.reason); }
 
   // ── ЭСФ (ИС ЭСФ КГД) ──
   @Get('esf/settings') @RequirePermission('acc.esf.read')
   esfSettings(@Org() ctx: OrgContext) { return this.esf.settings(ctx); }
 
-  @Put('esf/settings') @RequirePermission('acc.policy.manage')
+  @Put('esf/settings') @RequirePermission('acc.policy.manage') @RequireMfa()
   esfSettingsUpdate(@Org() ctx: OrgContext, @Body() b: any) { return this.esf.updateSettings(ctx, b); }
 
   @Get('esf/summary') @RequirePermission('acc.esf.read')
@@ -306,7 +306,7 @@ export class AccountingController {
   @Get('periods/lock') @RequirePermission('acc.doc.read')
   getLock(@Org() ctx: OrgContext) { return this.periods.getLock(ctx.organizationId); }
 
-  @Put('periods/lock') @RequirePermission('acc.period.lock') @ApiHeader(IDEMP_HEADER)
+  @Put('periods/lock') @RequirePermission('acc.period.lock') @RequireMfa() @ApiHeader(IDEMP_HEADER)
   setLock(@Org() ctx: OrgContext, @Body() b: { lockedUntil: string | null; reason?: string }) {
     return this.periods.setLock(ctx, b.lockedUntil, b.reason);
   }
@@ -345,7 +345,7 @@ export class AccountingController {
   @Get('policy') @RequirePermission('acc.refs.read')
   policies(@Org() ctx: OrgContext) { return this.refs.policies(ctx); }
 
-  @Post('policy') @RequirePermission('acc.policy.manage')
+  @Post('policy') @RequirePermission('acc.policy.manage') @RequireMfa()
   addPolicy(@Org() ctx: OrgContext, @Body() b: any) { return this.refs.addPolicy(ctx, b); }
 
   // ── Организации, роли, доступ, аудит ──
@@ -361,7 +361,7 @@ export class AccountingController {
   @Get('members') @RequirePermission('org.members.manage')
   members(@Org() ctx: OrgContext) { return this.refs.members(ctx); }
 
-  @Post('members') @RequirePermission('org.members.manage')
+  @Post('members') @RequirePermission('org.members.manage') @RequireMfa()
   setMember(@Org() ctx: OrgContext, @Body() b: any) { return this.refs.setMember(ctx, b); }
 
   @Get('audit') @RequirePermission('acc.audit.read')
