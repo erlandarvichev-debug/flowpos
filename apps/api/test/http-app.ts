@@ -18,7 +18,8 @@ export interface HttpApp {
 }
 
 export async function startApp(): Promise<HttpApp> {
-  const app = await NestFactory.create(AppModule, { logger: false });
+  // TEST_HTTP_LOG=1 — журнал Nest (ошибки 500 с причиной) при разборе падений.
+  const app = await NestFactory.create(AppModule, { logger: process.env.TEST_HTTP_LOG === '1' ? ['error', 'warn'] : false });
   app.use(cookieParser());
   app.setGlobalPrefix('api/v1');
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: false }));

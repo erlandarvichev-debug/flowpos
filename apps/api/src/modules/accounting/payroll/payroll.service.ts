@@ -74,7 +74,8 @@ export class PayrollService {
     if (!/^\d{12}$/.test(b.iin)) throw new AccError('BAD_IIN', 'ИИН — 12 цифр');
     const salary = new D(b.salary);
     if (salary.lte(0)) throw new AccError('BAD_SALARY', 'Оклад должен быть больше нуля');
-    const dept = await this.prisma.department.findFirst({ where: { id: b.departmentId, OR: [{ organizationId: ctx.organizationId }, { organizationId: null }] } });
+    // Подразделение — только своей организации: «общих» подразделений без организации у клиентов нет (FP-007).
+    const dept = await this.prisma.department.findFirst({ where: { id: b.departmentId, organizationId: ctx.organizationId } });
     if (!dept) throw new AccError('REF_FOREIGN', 'Подразделение не найдено в организации');
     return this.prisma.$transaction(async (tx) => {
       const ind = await tx.individual.upsert({

@@ -4,6 +4,9 @@ import { AccError } from '../common/acc-error';
 import { money } from '../common/money';
 import { OrgContext } from '../access/org-context';
 import { ROLES, canGrant, ROLE_LABELS, ROLE_PERMISSIONS } from '../access/roles';
+import { redactPay } from '../../../common/pay-fields';
+
+const PAY_AUDIT_ENTITIES = new Set(['employment_contract', 'payroll_period']);
 
 const IBAN_RE = /^KZ\d{2}[0-9A-Z]{16}$/;
 
@@ -188,10 +191,13 @@ export class RefsService {
     });
   }
 
-  audit_log(ctx: OrgContext, q: { entity?: string; entityId?: string; limit?: number }) {
-    return this.prisma.auditLog.findMany({
+  async audit_log(ctx: OrgContext, q: { entity?: string; entityId?: string; limit?: number }) {
+    const rows = await this.prisma.auditLog.findMany({
       where: { organizationId: ctx.organizationId, ...(q.entity ? { entity: q.entity } : {}), ...(q.entityId ? { entityId: q.entityId } : {}) },
       orderBy: { ts: 'desc' }, take: Math.min(500, Number(q.limit) || 100),
     });
+    // Оклад и суммы в кадровых/зарплатных записях — только с payroll.read (FP-008); остальной журнал без изменений.
+    if (ctx.can('payroll.read')) return rows;
+    return rows.map((r) => (PAY_AUDIT_ENTITIES.has(r.entity) ? { ...r, before: redactPay(r.before), after: redactPay(r.after) } : r));
   }
 }

@@ -1511,7 +1511,7 @@ model EmploymentHistory {
 model EmployeeBankDetail {
   id         String   @id @default(uuid())
   contractId String   @map("contract_id")
-  iban       String   @unique @db.VarChar(20)
+  iban       String   @db.VarChar(20)
   bic        String   @db.VarChar(11)
   bankName   String   @map("bank_name")
   isActive   Boolean  @default(true) @map("is_active")
@@ -1519,6 +1519,9 @@ model EmployeeBankDetail {
 
   contract HrContract @relation(fields: [contractId], references: [id], onDelete: Cascade)
 
+  // IBAN был уникален на всю базу: один счёт нельзя было указать в договорах двух организаций,
+  // а совпадение у другого клиента выдавало, что такой счёт в базе есть (FP-008).
+  @@unique([contractId, iban])
   @@map("employee_bank_details")
 }
 

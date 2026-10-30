@@ -19,6 +19,7 @@ import { fileName, toPdf, toXlsx, trialBalanceXlsx } from './statements/statemen
 import { AccError } from './common/acc-error';
 import { ClosingService } from './closing/closing.service';
 import { PayrollService } from './payroll/payroll.service';
+import { payView } from '../../common/pay-fields';
 import { MONEY_OPERATIONS, MONEY_OPERATION_LABELS } from './core/rules/money-rules';
 
 const ORG_HEADER = { name: 'X-Organization-Id', required: false, description: 'Организация (по умолчанию — организация пользователя)' };
@@ -48,7 +49,7 @@ export class AccountingController {
 
   // ── Кадры и зарплата ──
   @Get('hr/employees') @RequirePermission('hr.read')
-  hrEmployees(@Org() ctx: OrgContext) { return this.payroll.employees(ctx); }
+  hrEmployees(@Org() ctx: OrgContext) { return this.payroll.employees(ctx).then((r) => payView(r, ctx.can('payroll.read'))); }
 
   @Post('hr/hire') @RequirePermission('hr.manage') @ApiHeader(IDEMP_HEADER)
   hrHire(@Org() ctx: OrgContext, @Body() b: any) { return this.payroll.hire(ctx, b); }
@@ -60,12 +61,12 @@ export class AccountingController {
   hrTerminate(@Org() ctx: OrgContext, @Param('id') id: string, @Body() b: any) { return this.payroll.terminate(ctx, id, b); }
 
   @Post('hr/contracts/:id/accruals') @RequirePermission('hr.manage')
-  hrAccrual(@Org() ctx: OrgContext, @Param('id') id: string, @Body() b: any) { return this.payroll.addAccrual(ctx, id, b); }
+  hrAccrual(@Org() ctx: OrgContext, @Param('id') id: string, @Body() b: any) { return this.payroll.addAccrual(ctx, id, b).then((r) => payView(r, ctx.can('payroll.read'))); }
 
-  @Get('payroll/:period') @RequirePermission('hr.read')
+  @Get('payroll/:period') @RequirePermission('payroll.read')
   payrollGet(@Org() ctx: OrgContext, @Param('period') period: string) { return this.payroll.get(ctx, period); }
 
-  @Post('payroll/:period/calculate') @RequirePermission('hr.manage')
+  @Post('payroll/:period/calculate') @RequirePermission('payroll.read') // расчёт возвращает все суммы
   payrollCalc(@Org() ctx: OrgContext, @Param('period') period: string, @Body() b: any) { return this.payroll.calculate(ctx, period, b?.overrides ?? {}); }
 
   @Post('payroll/:period/approve') @RequirePermission('payroll.approve') @ApiHeader(IDEMP_HEADER)
@@ -74,7 +75,7 @@ export class AccountingController {
   @Post('payroll/:period/unapprove') @RequirePermission('payroll.approve')
   payrollUnapprove(@Org() ctx: OrgContext, @Param('period') period: string, @Body() b: any) { return this.payroll.unapprove(ctx, period, b?.reason); }
 
-  @Get('payroll/:period/payout') @RequirePermission('hr.read')
+  @Get('payroll/:period/payout') @RequirePermission('payroll.read')
   payrollPayoutLines(@Org() ctx: OrgContext, @Param('period') period: string) { return this.payroll.payoutLines(ctx, period); }
 
   @Post('payroll/:period/payout') @RequirePermission('acc.doc.write') @ApiHeader(IDEMP_HEADER)

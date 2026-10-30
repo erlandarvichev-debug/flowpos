@@ -2,8 +2,12 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { Scope, scopeError, writable } from '../../common/scope';
+import { payView } from '../../common/pay-fields';
+import { hasPermission } from '../accounting/access/roles';
 
 const own = (s: Scope) => ({ organizationId: s.organizationId });
+/** Оклад и ставка сотрудника — только с payroll.read (FP-008). */
+const pay = <T>(s: Scope, v: T) => payView(v, !!s.role && hasPermission(s.role, 'payroll.read'));
 
 /** Кадры старого модуля: сотрудники, отметки, графики, табель, начисления — только своей организации (FP-007). */
 @Injectable()
@@ -30,7 +34,7 @@ export class HrService {
       }),
       this.prisma.employee.count({ where }),
     ]);
-    return { employees, total, page, limit };
+    return { employees: pay(s, employees), total, page, limit };
   }
 
   async findEmployee(s: Scope, id: string) {
@@ -39,7 +43,7 @@ export class HrService {
       include: { timeEvents: { orderBy: { ts: 'desc' }, take: 30 } },
     });
     if (!emp) throw new NotFoundException('Сотрудник не найден');
-    return emp;
+    return pay(s, emp);
   }
 
   /** Пользователь, привязанный к сотруднику, — только своей организации. */
@@ -52,14 +56,14 @@ export class HrService {
   async createEmployee(s: Scope, body: any) {
     const { data } = writable(body, s);
     await this.assertUser(s, (data as any).userId);
-    return this.prisma.employee.create({ data: { ...(data as any), ...own(s) } }).catch(scopeError);
+    return pay(s, await this.prisma.employee.create({ data: { ...(data as any), ...own(s) } }).catch(scopeError));
   }
 
   async updateEmployee(s: Scope, id: string, body: any) {
     await this.findEmployee(s, id);
     const { data } = writable(body, s);
     await this.assertUser(s, (data as any).userId);
-    return this.prisma.employee.update({ where: { id }, data: data as any }).catch(scopeError);
+    return pay(s, await this.prisma.employee.update({ where: { id }, data: data as any }).catch(scopeError));
   }
 
   async checkIn(s: Scope, employeeId: string) {

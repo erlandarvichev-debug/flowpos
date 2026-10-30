@@ -40,6 +40,16 @@ BEGIN
     RAISE EXCEPTION 'FP-007: у % сотрудников не определяется организация (организаций в базе: %). Назначьте её: UPDATE employees SET organization_id = ''<id организации>'' WHERE organization_id IS NULL; и повторите выкладку', n, orgs_n;
   END IF;
 
+  -- Подразделения без организации, в которых числятся сотрудники одной организации, — этой организации.
+  -- Сотрудники разных организаций в одном «ничьём» подразделении — решает человек (проверка ниже).
+  UPDATE departments d SET organization_id = x.org FROM (
+    SELECT department_id, min(organization_id) AS org FROM employees WHERE department_id IS NOT NULL GROUP BY department_id HAVING count(DISTINCT organization_id) = 1
+  ) x WHERE d.organization_id IS NULL AND d.id = x.department_id;
+  SELECT count(*) INTO n FROM employees e JOIN departments d ON d.id = e.department_id WHERE d.organization_id IS NULL;
+  IF n > 0 THEN
+    RAISE EXCEPTION 'FP-007: % сотрудников разных организаций числятся в общем подразделении без организации — разделите подразделения (departments.organization_id)', n;
+  END IF;
+
   -- Смены по складам — организация склада.
   UPDATE shift_plans p SET organization_id = s.organization_id FROM stores s WHERE p.organization_id IS NULL AND s.id = p.store_id;
   UPDATE open_shifts p SET organization_id = s.organization_id FROM stores s WHERE p.organization_id IS NULL AND s.id = p.store_id;
