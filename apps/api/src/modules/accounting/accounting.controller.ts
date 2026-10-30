@@ -19,7 +19,6 @@ import { fileName, toPdf, toXlsx, trialBalanceXlsx } from './statements/statemen
 import { AccError } from './common/acc-error';
 import { ClosingService } from './closing/closing.service';
 import { PayrollService } from './payroll/payroll.service';
-import { payrollRegistryXlsx } from './payroll/payroll-export';
 import { MONEY_OPERATIONS, MONEY_OPERATION_LABELS } from './core/rules/money-rules';
 
 const ORG_HEADER = { name: 'X-Organization-Id', required: false, description: 'Организация (по умолчанию — организация пользователя)' };
@@ -80,18 +79,6 @@ export class AccountingController {
 
   @Post('payroll/:period/payout') @RequirePermission('acc.doc.write') @ApiHeader(IDEMP_HEADER)
   payrollPayout(@Org() ctx: OrgContext, @Param('period') period: string, @Body() b: any) { return this.payroll.createPayout(ctx, period, b); }
-
-  /** Реестры: salary (ведомость для банка), pension (ОПВ/ОПВР), so (СО), osms (ВОСМС/ООСМС). */
-  @Get('payroll/:period/registry/:kind') @RequirePermission('hr.read')
-  async payrollRegistry(@Org() ctx: OrgContext, @Param('period') period: string, @Param('kind') kind: string, @Res() res: Response) {
-    const p = await this.payroll.get(ctx, period);
-    const org = await this.statements.organizationInfo(ctx);
-    const emps = await this.payroll.employees(ctx);
-    const { buf, name } = await payrollRegistryXlsx(kind, period, p, org, emps);
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
-    res.send(buf);
-  }
 
   // ── Финансовая отчётность (формы приказа № 404) ──
   @Get('statements/balance') @RequirePermission('acc.reports.read')

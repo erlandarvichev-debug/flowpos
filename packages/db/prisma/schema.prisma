@@ -8,29 +8,10 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// ─── CORE: Tenancy & Auth & RBAC ────────────────────────────────────────────
-
-model Tenant {
-  id        String   @id @default(uuid())
-  name      String   // e.g. "ACME Inc" customer name
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
-
-  organizations      Organization[]
-  users              User[]
-  grants             Grant[]
-  auditLogs          AuditLog[]
-  outboxes           Outbox[] // FP-009: Event sourcing
-  jobs               Jobs[] // FP-009: Durable task queue
-  posInbox           PosOperationInbox[] @relation("PosInboxTenant")
-
-  @@map("tenants")
-}
+// ─── CORE: Auth & RBAC ───────────────────────────────────────────────────────
 
 model Organization {
   id        String   @id @default(uuid())
-  tenantId  String   @map("tenant_id")
   name      String
   inn       String?  // БИН/ИИН
   kpp       String?
@@ -39,32 +20,22 @@ model Organization {
   email     String?
   legalForm String   @default("TOO") @map("legal_form") // TOO | IP | AO | OTHER
   nameKk    String?  @map("name_kk")
-
-  // FP-004: Backoffice system selection
-  backofficeSystem String @default("internal") @map("backoffice_system") // internal | onec | moysklad | other
-
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  tenant              Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   users               User[]
   documents           Document[]
   posTerminals        POSTerminal[]
   onecConnections     OnecConnection[]
   moyskladConnections MoyskladConnection[]
-  grants              Grant[]
 
-  @@unique([tenantId, id])
-  @@index([tenantId])
   @@map("organizations")
 }
 
 model User {
   id             String    @id @default(uuid())
-  tenantId       String    @map("tenant_id")
-  organizationId String    @map("organization_id")
-  email          String
+  email          String    @unique
   passwordHash   String    @map("password_hash")
   firstName      String    @map("first_name")
   lastName       String    @map("last_name")
@@ -72,47 +43,21 @@ model User {
   phone          String?
   isActive       Boolean   @default(true) @map("is_active")
   lastLoginAt    DateTime? @map("last_login_at")
+  organizationId String    @map("organization_id")
   createdAt      DateTime  @default(now()) @map("created_at")
   updatedAt      DateTime  @updatedAt @map("updated_at")
 
-  tenant        Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  organization  Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization  Organization       @relation(fields: [organizationId], references: [id])
   refreshTokens RefreshToken[]
   userRoles     UserRole[]
   auditLogs     AuditLog[]
-  grants        Grant[]
   employee      Employee?
 
-  @@unique([tenantId, email])
-  @@unique([tenantId, organizationId, id])
-  @@index([tenantId])
-  @@index([organizationId])
   @@map("users")
-}
-
-model Grant {
-  id             String   @id @default(uuid())
-  tenantId       String   @map("tenant_id")
-  organizationId String   @map("organization_id")
-  userId         String   @map("user_id")
-  action         String   // read, draft, approve, send, reconcile, etc.
-  scope          String   @default("organization") // organization, department, project
-  expiresAt      DateTime? @map("expires_at")
-  createdAt      DateTime @default(now()) @map("created_at")
-
-  tenant        Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  organization  Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([tenantId, organizationId, userId, action])
-  @@index([tenantId])
-  @@index([userId])
-  @@map("grants")
 }
 
 model RefreshToken {
   id        String   @id @default(uuid())
-  tenantId  String   @map("tenant_id")
   userId    String   @map("user_id")
   token     String   @unique
   expiresAt DateTime @map("expires_at")
@@ -121,7 +66,6 @@ model RefreshToken {
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@index([tenantId])
   @@index([userId])
   @@map("refresh_tokens")
 }
@@ -175,22 +119,19 @@ model RolePermission {
 
 model AuditLog {
   id        String   @id @default(uuid())
-  tenantId  String   @map("tenant_id")
   userId    String?  @map("user_id")
-  organizationId String? @map("organization_id")
   action    String
   entity    String
   entityId  String?  @map("entity_id")
   before    Json?
   after     Json?
   ipAddress String?  @map("ip_address")
+  organizationId String? @map("organization_id")
   reason    String?
   ts        DateTime @default(now())
 
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  user   User?  @relation(fields: [userId], references: [id])
+  user User? @relation(fields: [userId], references: [id])
 
-  @@index([tenantId])
   @@index([entity, entityId])
   @@index([ts])
   @@map("audit_log")
@@ -658,7 +599,6 @@ model Contract {
 
 model Document {
   id             String      @id @default(uuid())
-  tenantId       String      @map("tenant_id")
   docType        DocType     @map("doc_type")
   number         String?
   date           DateTime
@@ -684,16 +624,13 @@ model Document {
   updatedAt      DateTime    @updatedAt @map("updated_at")
   updatedBy      String?     @map("updated_by")
 
-  tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   organization Organization? @relation(fields: [organizationId], references: [id])
   counterparty Counterparty? @relation(fields: [counterpartyId], references: [id])
   store        Store?        @relation("DocumentStore", fields: [storeId], references: [id])
   storeTo      Store?        @relation("DocumentStoreTo", fields: [storeToId], references: [id])
   lines        DocumentLine[]
 
-  @@unique([tenantId, onecBase, onecGuid])
-  @@index([tenantId])
-  @@index([organizationId])
+  @@unique([onecBase, onecGuid])
   @@index([docType, date])
   @@index([syncStatus])
   @@index([status])
@@ -828,166 +765,6 @@ model POSCashOp {
 enum CashOpType {
   IN
   OUT
-}
-
-// ─── FP-005: SERVER INBOX FOR POS (Stable operation identity) ──────────────
-
-model PosOperationInbox {
-  id               String   @id @default(uuid())
-  tenantId         String   @map("tenant_id")
-  organizationId   String   @map("organization_id")
-  operationId      String   @map("operation_id")
-
-  deviceId         String   @map("device_id")
-  terminalId       String?  @map("terminal_id")
-  shiftId          String?  @map("shift_id")
-
-  operationType    String   @map("operation_type") // SALE, RETURN, REFUND, MIXED_PAYMENT
-  payloadHash      String   @map("payload_hash") // SHA256 immutable
-
-  // FP-005: Inbox state machine
-  status           String   @default("RECEIVED") // RECEIVED, PROCESSING, CONFIRMED, FAILED
-  processingError  String?  @map("processing_error")
-
-  // Server ACK sent back to device
-  ackSentAt        DateTime? @map("ack_sent_at")
-  ackToken         String?   @map("ack_token") // idempotency for ACK message
-
-  receivedAt       DateTime @default(now()) @map("received_at")
-  processedAt      DateTime? @map("processed_at")
-  createdAt        DateTime @default(now()) @map("created_at")
-
-  // Relations
-  tenant           Tenant   @relation("PosInboxTenant", fields: [tenantId], references: [id], onDelete: Cascade)
-
-  @@unique([tenantId, organizationId, operationId]) // FP-005: Stable identity
-  @@index([status])
-  @@index([deviceId, terminalId])
-  @@index([receivedAt])
-  @@map("pos_operation_inbox")
-}
-
-model DeviceMigration {
-  id               String   @id @default(uuid())
-  tenantId         String   @map("tenant_id")
-  organizationId   String   @map("organization_id")
-
-  oldDeviceId      String   @map("old_device_id")
-  newDeviceId      String   @map("new_device_id")
-
-  migratedAt       DateTime @default(now()) @map("migrated_at")
-  migrationReason  String?  @map("migration_reason") // DEVICE_REPLACEMENT | UPGRADE | RELOCATION
-
-  @@unique([tenantId, organizationId, oldDeviceId])
-  @@index([newDeviceId])
-  @@map("device_migrations")
-}
-
-// ─── FP-003: DURABLE PAYMENT & FISCAL STATE MACHINES ─────────────────────────
-
-model PaymentAttempt {
-  id           String   @id @default(uuid())
-  saleId       String   @map("sale_id")
-  paymentId    String   @map("payment_id")
-
-  // FP-003: State machine (CREATED → PENDING → CONFIRMED | REJECTED | UNKNOWN)
-  status       String   @default("CREATED") // CREATED, PENDING, CONFIRMED, REJECTED, UNKNOWN, RECONCILING
-  amount       Int // in minor units
-  paymentMethod String @map("payment_method") // CASH, CARD, QR, MIXED
-
-  // External provider tracking
-  providerId   String?  @map("provider_id")
-  providerStatus String? @map("provider_status") // raw status from gateway
-
-  // FP-003: Timeout tracking (UNKNOWN survives restart)
-  timeoutAt    DateTime? @map("timeout_at") // when payment was sent
-  lastAttemptAt DateTime? @map("last_attempt_at")
-  retryCount   Int      @default(0) @map("retry_count")
-  maxRetries   Int      @default(3) @map("max_retries")
-
-  // Error tracking
-  errorCode    String?  @map("error_code")
-  errorMessage String?  @map("error_message")
-
-  confirmedAt  DateTime? @map("confirmed_at")
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
-
-  sale         PosSales @relation(fields: [saleId], references: [id], onDelete: Cascade)
-  reconciliation PaymentReconciliation?
-
-  @@index([saleId])
-  @@index([status])
-  @@index([timeoutAt])
-  @@map("payment_attempts")
-}
-
-model FiscalAttempt {
-  id           String   @id @default(uuid())
-  saleId       String   @map("sale_id")
-  receiptNumber String @map("receipt_number")
-  payloadHash  String   @map("payload_hash")
-
-  // FP-003: State machine (CREATED → SENT → REGISTERED | FAILED | UNKNOWN)
-  status       String   @default("CREATED") // CREATED, SENT, REGISTERED, FAILED, UNKNOWN
-  fiscalNumber String?  @map("fiscal_number")
-  fiscalDate   DateTime? @map("fiscal_date")
-
-  // Printer tracking
-  printerId    String?  @map("printer_id")
-  printerStatus String? @map("printer_status")
-
-  // FP-003: Timeout tracking (UNKNOWN survives restart)
-  timeoutAt    DateTime? @map("timeout_at")
-  lastAttemptAt DateTime? @map("last_attempt_at")
-  retryCount   Int      @default(0) @map("retry_count")
-  maxRetries   Int      @default(3) @map("max_retries")
-
-  // Error tracking
-  errorCode    String?  @map("error_code")
-  errorMessage String?  @map("error_message")
-
-  registeredAt DateTime? @map("registered_at")
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
-
-  sale         PosSales @relation(fields: [saleId], references: [id], onDelete: Cascade)
-  reconciliation FiscalReconciliation?
-
-  @@index([saleId])
-  @@index([status])
-  @@index([timeoutAt])
-  @@map("fiscal_attempts")
-}
-
-model PaymentReconciliation {
-  id              String   @id @default(uuid())
-  paymentAttemptId String @unique @map("payment_attempt_id")
-
-  lastLookupAt    DateTime? @map("last_lookup_at")
-  lastKnownStatus String?   @map("last_known_status")
-  lastKnownProviderStatus String? @map("last_known_provider_status")
-
-  updatedAt       DateTime @updatedAt @map("updated_at")
-
-  paymentAttempt  PaymentAttempt @relation(fields: [paymentAttemptId], references: [id], onDelete: Cascade)
-
-  @@map("payment_reconciliations")
-}
-
-model FiscalReconciliation {
-  id              String   @id @default(uuid())
-  fiscalAttemptId String @unique @map("fiscal_attempt_id")
-
-  lastLookupAt    DateTime? @map("last_lookup_at")
-  lastKnownStatus String?   @map("last_known_status")
-  lastKnownFiscalNumber String? @map("last_known_fiscal_number")
-
-  updatedAt       DateTime @updatedAt @map("updated_at")
-
-  fiscalAttempt   FiscalAttempt @relation(fields: [fiscalAttemptId], references: [id], onDelete: Cascade)
-
-  @@map("fiscal_reconciliations")
 }
 
 // ─── HR ──────────────────────────────────────────────────────────────────────
@@ -2251,65 +2028,4 @@ model AccPeriodClose {
 
   @@index([organizationId, period])
   @@map("acc_period_closes")
-}
-
-// ─── FP-009: OUTBOX PATTERN (Event Sourcing) ───────────────────────────────────
-
-model Outbox {
-  id               String   @id @default(uuid())
-  tenantId         String   @map("tenant_id")
-  organizationId   String?  @map("organization_id")
-  aggregateType    String   @map("aggregate_type")
-  aggregateId      String   @map("aggregate_id")
-  eventType        String   @map("event_type")
-  data             Json
-  metadata         Json?
-  version          BigInt   @default(1)
-  published        Boolean  @default(false)
-  publishedAt      DateTime? @map("published_at")
-  createdAt        DateTime @default(now()) @map("created_at")
-
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-
-  @@index([tenantId, published])
-  @@index([aggregateType, aggregateId])
-  @@index([createdAt])
-  @@map("outbox")
-}
-
-// ─── FP-009: JOBS SCHEDULER (Durable Task Queue) ──────────────────────────────
-
-model Jobs {
-  id            String   @id @default(uuid())
-  tenantId      String   @map("tenant_id")
-  name          String
-  status        String   @default("pending") // pending, started, completed, failed, dead
-  data          Json
-  result        Json?
-  error         String?
-
-  // FP-021: Lease fencing — prevent stale worker confirmation
-  leaseUntil    DateTime? @map("lease_until")
-  leaseOwner    String?   @map("lease_owner")
-  leaseWorkerId String?   @map("lease_worker_id") // which worker claimed this lease
-  leaseVersion  Int       @default(1) @map("lease_version") // for fencing check
-  fencedAt      DateTime? @map("fenced_at") // when lease was recovered
-
-  attempt       Int      @default(0)
-  maxAttempts   Int      @default(3) @map("max_attempts")
-
-  nextRunAt     DateTime @default(now()) @map("next_run_at")
-  startedAt     DateTime? @map("started_at")
-  completedAt   DateTime? @map("completed_at")
-  deadLetterReason String? @map("dead_letter_reason") // why moved to DLQ
-
-  createdAt     DateTime @default(now()) @map("created_at")
-  updatedAt     DateTime @updatedAt @map("updated_at")
-
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-
-  @@index([tenantId, status])
-  @@index([nextRunAt])
-  @@index([leaseUntil])
-  @@map("jobs")
 }

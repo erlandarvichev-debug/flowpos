@@ -83,7 +83,7 @@ const dict: Record<string, { ru: string; kk: string }> = {
   issues: { ru: 'Проблемы', kk: 'Мәселелер' },
   bankImport: { ru: 'Импорт выписки', kk: 'Үзінді көшірмені импорттау' },
   esf: { ru: 'ЭСФ', kk: 'ЭШФ' },
-  closing: { ru: 'Закрытие месяца', kk: 'Айды жабу' },
+  monthClosing: { ru: 'Закрытие месяца', kk: 'Айды жабу' },
   statements: { ru: 'Финансовая отчётность', kk: 'Қаржылық есептілік' },
   bankAccount: { ru: 'Банковский счёт', kk: 'Банк шоты' },
   cashbox: { ru: 'Касса', kk: 'Касса' },

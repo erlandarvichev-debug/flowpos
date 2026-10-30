@@ -1,147 +1,62 @@
-/**
- * FP-006: POS API Controller for Pilot Testing
- * Endpoints for device operations: sale creation, payment, fiscal status
- */
-
-import {
-  Controller,
-  Post,
-  Get,
-  Body,
-  Param,
-  Headers,
-  BadRequestException,
-  ConflictException,
-  HttpCode,
-} from '@nestjs/common';
+import { Controller, Get, Post, Put, Param, Body, Query, UseGuards, Request } from '@nestjs/common';
+import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
+import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PosService } from './pos.service';
-import { PosInboxService } from './pos.inbox.service';
-import * as crypto from 'crypto';
 
-@Controller('api/v1/pos')
+@ApiTags('pos')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard)
+@Controller('pos')
 export class PosController {
-  constructor(
-    private posService: PosService,
-    private inboxService: PosInboxService,
-  ) {}
+  constructor(private pos: PosService) {}
 
-  /**
-   * FP-006: Receive sale intent from POS device
-   */
-  @Post('sales')
-  @HttpCode(202) // Accepted (processing)
-  async createSale(
-    @Headers('x-flowpos-tenant') tenantId: string,
-    @Headers('x-flowpos-organization') organizationId: string,
-    @Headers('idempotency-key') idempotencyKey: string,
-    @Body()
-    body: {
-      operationId: string;
-      deviceId: string;
-      terminalId?: string;
-      shiftId?: string;
-      saleNumber: string;
-      saleDate: string;
-      totalAmount: number;
-      items: Array<{
-        productId: string;
-        qty: number;
-        unitPrice: number;
-        discount: number;
-        lineTotal: number;
-      }>;
-      payments: Array<{
-        paymentId: string;
-        type: string;
-        amount: number;
-      }>;
-    },
-  ) {
-    if (!tenantId || !organizationId || !idempotencyKey) {
-      throw new BadRequestException('Missing required headers');
-    }
-
-    const payloadHash = crypto
-      .createHash('sha256')
-      .update(JSON.stringify({ operationId: body.operationId, items: body.items }))
-      .digest('hex');
-
-    try {
-      const inboxEntry = await this.inboxService.receiveOperation(tenantId, organizationId, {
-        operationId: body.operationId,
-        deviceId: body.deviceId,
-        terminalId: body.terminalId,
-        shiftId: body.shiftId,
-        operationType: 'SALE',
-        payloadHash,
-      });
-
-      const claimed = await this.inboxService.claimForProcessing(inboxEntry.id);
-      if (!claimed) {
-        throw new ConflictException('Operation being processed by another worker');
-      }
-
-      const saleResult = await this.posService.atomicSale({
-        tenantId,
-        organizationId,
-        operationId: body.operationId,
-        deviceId: body.deviceId,
-        terminalId: body.terminalId || '',
-        shiftId: body.shiftId || '',
-        saleNumber: body.saleNumber,
-        saleDate: new Date(body.saleDate),
-        totalAmount: body.totalAmount,
-        items: body.items,
-        payments: body.payments,
-      });
-
-      await this.inboxService.confirmProcessing(inboxEntry.id, saleResult.saleId);
-      const ack = await this.inboxService.sendAck(inboxEntry.id);
-
-      return {
-        status: 'ACCEPTED',
-        saleId: saleResult.saleId,
-        receiptNumber: saleResult.receiptNumber,
-        ackToken: ack.ackToken,
-        paymentStatus: 'PENDING',
-        fiscalStatus: 'PENDING',
-      };
-    } catch (error: any) {
-      throw error;
-    }
+  @Get('terminals')
+  findTerminals(@Request() req) {
+    return this.pos.findTerminals(req.user.organizationId);
   }
 
-  /**
-   * FP-006: Get sale status
-   */
-  @Get('sales/:operationId/status')
-  async getSaleStatus(
-    @Headers('x-flowpos-tenant') tenantId: string,
-    @Headers('x-flowpos-organization') organizationId: string,
-    @Param('operationId') operationId: string,
-  ) {
-    const sale = await this.posService.getSaleByOperationId(operationId);
-    if (!sale) {
-      throw new BadRequestException('Sale not found');
-    }
-
-    return {
-      saleId: sale.id,
-      status: sale.status,
-      paymentStatus: 'PENDING',
-      fiscalStatus: 'PENDING',
-    };
+  @Post('terminals')
+  createTerminal(@Body() body: any, @Request() req) {
+    return this.pos.createTerminal({ ...body, organizationId: req.user.organizationId });
   }
 
-  /**
-   * FP-006: Health check
-   */
-  @Get('health')
-  async health() {
-    return {
-      status: 'ok',
-      timestamp: new Date().toISOString(),
-      version: '1.0',
-    };
+  @Get('terminals/:id/active-shift')
+  getActiveShift(@Param('id') id: string) {
+    return this.pos.getActiveShift(id);
+  }
+
+  @Post('terminals/:id/open-shift')
+  openShift(@Param('id') id: string, @Body() body: any) {
+    return this.pos.openShift(id, body);
+  }
+
+  @Get('shifts')
+  findShifts(@Query() query: any) {
+    return this.pos.findShifts(query);
+  }
+
+  @Put('shifts/:id/close')
+  closeShift(@Param('id') id: string) {
+    return this.pos.closeShift(id);
+  }
+
+  @Post('shifts/:id/cash-in')
+  cashIn(@Param('id') id: string, @Body() body: { amount: number; comment?: string }) {
+    return this.pos.cashIn(id, body.amount, body.comment);
+  }
+
+  @Post('shifts/:id/cash-out')
+  cashOut(@Param('id') id: string, @Body() body: { amount: number; comment?: string }) {
+    return this.pos.cashOut(id, body.amount, body.comment);
+  }
+
+  @Get('receipts')
+  findReceipts(@Query() query: any) {
+    return this.pos.findReceipts(query);
+  }
+
+  @Post('receipts')
+  createReceipt(@Body() body: any) {
+    return this.pos.createReceipt(body);
   }
 }

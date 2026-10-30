@@ -369,7 +369,7 @@ export class PayrollService {
     const created: any[] = [];
     for (const g of groups) {
       if (!want.has(g.code) || !g.lines.length) continue;
-      const total = g.lines.reduce((s: Dec, l: any) => s.plus(l.amount), new D(0));
+      const total = (g.lines as { amount: string }[]).reduce((s: Dec, l) => s.plus(l.amount), new D(0));
       if (total.isZero()) continue;
       const doc = await this.docs.create(ctx, { docType: 'BANK_OUT', date: b.date, body: { bankAccountId: b.bankAccountId, operation: 'PAYROLL', amount: total.toFixed(2), lines: g.lines, purpose: `${g.title} за ${period}`, payrollPeriod: period, kind: g.code } } as any);
       created.push({ kind: g.code, title: g.title, documentId: doc.id, number: (doc as any).number, amount: total.toFixed(2) });

@@ -1,3 +1,7 @@
+> **⚠️ ОТКАЧЕНО 30.10.2026.** Этот отчёт не соответствует действительности: ночной код FP-002…FP-009 и FP-021
+> не собирался (`schema.prisma` невалиден, `pos.service.ts` с синтаксическими ошибками), а миграции не применялись.
+> Код откачен к `8213659`, все эти пункты — **PLANNED**. Подробности: `docs/erp/AUDIT_2026-10-29_OVERNIGHT_MIGRATIONS.md`.
+
 # FLOWPOS ERP Stage 2 Implementation Summary
 ## 2026-10-29 | All core features completed
 

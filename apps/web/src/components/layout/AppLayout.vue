@@ -75,7 +75,7 @@
             {{ t('autopilot') }}
             <el-badge v-if="autopilotIssues" :value="autopilotIssues" type="danger" style="margin-left: 8px; line-height: 1;" />
           </el-menu-item>
-          <el-menu-item index="/accounting/closing">{{ t('closing') }}</el-menu-item>
+          <el-menu-item index="/accounting/closing">{{ t('monthClosing') }}</el-menu-item>
           <el-menu-item index="/accounting/statements">{{ t('statements') }}</el-menu-item>
           <el-menu-item index="/accounting/reports/stock">{{ t('stockReport') }}</el-menu-item>
           <el-menu-item index="/accounting/reports/settlements">{{ t('settlements') }}</el-menu-item>

@@ -33,3 +33,33 @@
 
 - Работа FP-010…FP-017 сама по себе корректна, но проверялась только на старой схеме. После исправления схемы её тесты нужно прогнать заново.
 - FP-008 (OIDC/RBAC) и код в `apps/api/src/common/jobs`, `outbox`, `modules/backoffice`, `atomic-sale.rs` в этом аудите по существу не проверялись. Это следующая часть аудита.
+
+## Сделано 30.10: откат (вариант 1)
+
+Код, схема и миграции ночных коммитов возвращены к `8213659` одним коммитом (пересечений с FP-011…FP-017 нет):
+`packages/db/prisma/schema.prisma`, 7 папок `packages/db/prisma/migrations/2026102*`, `apps/api/src/modules/pos/*`
+(в т.ч. `atomic-sale.rs`, `pos.inbox.service.ts`), `apps/api/src/modules/auth/*` (FP-008, `oidc.service.ts`),
+`apps/api/src/common/{guards/rbac.guard.ts,jobs/*,outbox/outbox.service.ts}`, `apps/api/src/modules/backoffice/*`,
+`packages/shared-types/src/index.ts`, `.env.example`. FP-002…FP-009 и FP-021 — **PLANNED** (в `BACKLOG.csv` они и не менялись).
+
+При проверке нашлись две поломки, которые были **ещё до ночи** (с первого коммита `a68d5bf`), и тоже исправлены:
+
+- `accounting.controller.ts` импортировал `./payroll/payroll-export`, которого не существовало ни в git, ни в бэкапах
+  (импорт добавлен 23.10, файл не был написан). Недописанный эндпоинт `GET payroll/:period/registry/:kind`
+  (реестры ЗП для банка/ОПВ/СО/ОСМС в XLSX) **удалён**; фронт его не вызывал. Реестры — не сделаны, нужны форматы банков.
+  Там же исправлен тип суммы в `PayrollService.createPayout`.
+- `apps/web`: ключ `closing` в `useI18n.ts` объявлен дважды — `vue-tsc` падал, а в ОСВ и карточке счёта колонка
+  «Сальдо на конец» показывалась как «Закрытие месяца». Пункт меню переименован в `monthClosing`.
+
+Проверка после отката:
+
+| Проверка | Результат |
+|---|---|
+| `prisma validate` | valid |
+| Сборка как в `deploy.sh`: api, web, mcp, 4 воркера | все exit 0 |
+| Юнит-тесты apps/api | 50 pass / 18 fail — те же 18 в catalog и pos, что и до ночи; набор pos снова компилируется |
+| Интеграционные apps/api (`flowpos_test`) | 46 pass, 1 skip (живой стенд ИС ЭСФ, `ESF_LIVE=1`) |
+| `npm run test:esf` | 230 / 230 |
+
+Не проверено: `prisma db push` откаченной схемы на копии боевой БД (боевой БД ещё нет — сервер не развёрнут).
+

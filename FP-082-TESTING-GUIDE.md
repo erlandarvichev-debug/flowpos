@@ -1,3 +1,6 @@
+> **⚠️ 30.10.2026:** предпосылки этого руководства (миграции FP-007/FP-009 в `packages/db`) откачены — см.
+> `docs/erp/AUDIT_2026-10-29_OVERNIGHT_MIGRATIONS.md`. Отдельный SQL `erp/postgres/082_runtime_rls_concurrent.sql` не тронут и сам по себе не проверялся.
+
 # FP-082: PostgreSQL RLS + Concurrent Sessions Testing Guide
 
 ## Overview
