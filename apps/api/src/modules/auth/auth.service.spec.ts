@@ -8,6 +8,7 @@ import * as bcrypt from 'bcryptjs';
 const mockPrisma = {
   user: { findUnique: jest.fn(), update: jest.fn() },
   refreshToken: { create: jest.fn(), findUnique: jest.fn(), update: jest.fn() },
+  authSession: { create: jest.fn().mockResolvedValue({ id: 'session1', expiresAt: new Date(Date.now() + 86_400_000) }) },
 };
 
 const mockJwt = {
@@ -22,6 +23,7 @@ const mockUser = {
   firstName: 'Эрлан',
   lastName: 'Дарвичев',
   isActive: true,
+  tenantId: 'tenant1',
   organizationId: 'org1',
   lastLoginAt: null,
   organization: { id: 'org1', name: 'VPNET' },

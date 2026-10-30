@@ -44,10 +44,12 @@ describe('FP-007: клиент в сессии', () => {
   it('JWT: клиент и организация — из БД, подмена в токене игнорируется; отключённый пользователь — 401', async () => {
     const ctx = await makeOrg(prisma);
     const strategy = new JwtStrategy(prisma);
-    const user = await strategy.validate({ sub: ctx.userId, email: 'x', tenantId: 'чужой', organizationId: 'чужая', roles: [] });
+    const session = await prisma.authSession.create({ data: { tenantId: DEFAULT_TENANT, userId: ctx.userId, expiresAt: new Date(Date.now() + 3_600_000) } });
+    const user = await strategy.validate({ sub: ctx.userId, sid: session.id, email: 'x', tenantId: 'чужой', organizationId: 'чужая', roles: [] });
     expect([user.tenantId, user.organizationId]).toEqual([DEFAULT_TENANT, ctx.organizationId]);
     await prisma.user.update({ where: { id: ctx.userId }, data: { isActive: false } });
-    await expect(strategy.validate({ sub: ctx.userId })).rejects.toBeInstanceOf(UnauthorizedException);
+    await expect(strategy.validate({ sub: ctx.userId, sid: session.id })).rejects.toBeInstanceOf(UnauthorizedException);
+    await expect(strategy.validate({ sub: ctx.userId })).rejects.toBeInstanceOf(UnauthorizedException); // без сессии
     await expect(strategy.validate({ sub: randomUUID() })).rejects.toBeInstanceOf(UnauthorizedException);
   });
 

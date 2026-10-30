@@ -1,4 +1,4 @@
-import { Controller, Post, Body, Get, UseGuards, Request, Res } from '@nestjs/common';
+import { Controller, Post, Body, Get, Delete, Param, UseGuards, Request, Res } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { Response } from 'express';
 import { AuthService } from './auth.service';
@@ -20,8 +20,8 @@ export class AuthController {
   constructor(private auth: AuthService) {}
 
   @Post('login')
-  async login(@Body() dto: LoginDto, @Res({ passthrough: true }) res: Response) {
-    const result = await this.auth.login(dto);
+  async login(@Body() dto: LoginDto, @Request() req: any, @Res({ passthrough: true }) res: Response) {
+    const result = await this.auth.login(dto, { ip: req.ip, userAgent: req.headers?.['user-agent'] });
     res.cookie(COOKIE, result.refreshToken, COOKIE_OPTS);
     const { refreshToken: _, ...safe } = result;
     return safe;
@@ -49,5 +49,29 @@ export class AuthController {
   @ApiBearerAuth()
   me(@Request() req) {
     return this.auth.me(req.user.sub);
+  }
+
+  /** Мои действующие сессии (устройства); текущая помечена. */
+  @Get('sessions')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  sessions(@Request() req) {
+    return this.auth.sessions(req.user.sub, req.user.sid);
+  }
+
+  /** Завершить одну свою сессию. */
+  @Delete('sessions/:id')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  revokeSession(@Request() req, @Param('id') id: string) {
+    return this.auth.revokeSession(req.user.sub, id);
+  }
+
+  /** Выйти на всех остальных устройствах. */
+  @Post('sessions/revoke-others')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  revokeOthers(@Request() req) {
+    return this.auth.revokeOtherSessions(req.user.sub, req.user.sid);
   }
 }

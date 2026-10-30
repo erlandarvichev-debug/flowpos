@@ -77,6 +77,7 @@ model User {
   organization  Organization       @relation(fields: [tenantId, organizationId], references: [tenantId, id])
   memberships   OrgMembership[]
   refreshTokens RefreshToken[]
+  sessions      AuthSession[]
   userRoles     UserRole[]
   auditLogs     AuditLog[]
   employee      Employee?
@@ -85,17 +86,41 @@ model User {
   @@map("users")
 }
 
+/// FP-008: серверная сессия входа. Access-токен несёт sid и действует, только пока сессия не отозвана и не истекла.
+model AuthSession {
+  id            String    @id @default(uuid())
+  tenantId      String    @map("tenant_id")
+  userId        String    @map("user_id")
+  authMethod    String    @default("password") @map("auth_method") // password | oidc
+  createdAt     DateTime  @default(now()) @map("created_at")
+  lastUsedAt    DateTime  @default(now()) @map("last_used_at")
+  expiresAt     DateTime  @map("expires_at")
+  revokedAt     DateTime? @map("revoked_at")
+  revokedReason String?   @map("revoked_reason")
+  ip            String?
+  userAgent     String?   @map("user_agent")
+
+  user          User           @relation(fields: [tenantId, userId], references: [tenantId, id], onDelete: Cascade)
+  refreshTokens RefreshToken[]
+
+  @@index([userId, revokedAt])
+  @@map("auth_sessions")
+}
+
 model RefreshToken {
   id        String   @id @default(uuid())
   userId    String   @map("user_id")
-  token     String   @unique
+  token     String   @unique // sha256 токена (FP-008); сам токен — только у клиента в httpOnly cookie
+  sessionId String?  @map("session_id")
   expiresAt DateTime @map("expires_at")
   revokedAt DateTime? @map("revoked_at")
   createdAt DateTime @default(now()) @map("created_at")
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user    User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  session AuthSession? @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+  @@index([sessionId])
   @@map("refresh_tokens")
 }
 

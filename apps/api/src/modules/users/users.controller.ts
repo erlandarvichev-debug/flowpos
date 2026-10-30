@@ -31,6 +31,11 @@ export class UsersController {
     return this.users.update(s, id, body);
   }
 
+  @Post(':id/revoke-sessions')
+  revokeSessions(@CurrentScope() s: Scope, @Param('id') id: string) {
+    return this.users.revokeSessions(s, id);
+  }
+
   @Delete(':id')
   deactivate(@CurrentScope() s: Scope, @Param('id') id: string) {
     return this.users.deactivate(s, id);

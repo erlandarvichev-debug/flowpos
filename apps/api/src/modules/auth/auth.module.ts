@@ -11,7 +11,7 @@ import { JwtStrategy } from './jwt.strategy';
     JwtModule.registerAsync({
       useFactory: () => ({
         secret: process.env.JWT_SECRET || 'flowpos-secret',
-        signOptions: { expiresIn: process.env.JWT_EXPIRES_IN || '7d' },
+        signOptions: { expiresIn: process.env.JWT_EXPIRES_IN || '15m' }, // короткий: доступ держится на сессии (FP-008)
       }),
     }),
   ],

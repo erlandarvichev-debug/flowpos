@@ -164,7 +164,9 @@ describe('FP-007 приёмка через HTTP: два клиента × две
   });
 
   it('токен с подменённым клиентом/организацией не расширяет доступ; отключённый пользователь — 401', async () => {
-    const forged = app.get(JwtService).sign({ sub: B2.userId, email: B2.email, tenantId: DEFAULT_TENANT, organizationId: A1.orgId, roles: ['admin'] });
+    const jwt = app.get(JwtService);
+    const { sid } = jwt.decode(B2.token) as any;
+    const forged = jwt.sign({ sub: B2.userId, sid, email: B2.email, tenantId: DEFAULT_TENANT, organizationId: A1.orgId, roles: ['admin'] });
     const asForged = { ...B2, token: forged };
     const users = await http(asForged, 'GET', '/users');
     expect(ids(users.body)).toEqual([B2.userId]);
