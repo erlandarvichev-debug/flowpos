@@ -85,6 +85,7 @@ model User {
   memberships   OrgMembership[]
   refreshTokens RefreshToken[]
   sessions      AuthSession[]
+  identities    UserIdentity[]
   userRoles     UserRole[]
   auditLogs     AuditLog[]
   employee      Employee?
@@ -113,6 +114,40 @@ model AuthSession {
 
   @@index([userId, revokedAt])
   @@map("auth_sessions")
+}
+
+/// FP-008: внешняя учётная запись (OIDC), привязанная к пользователю. Связь — только по (issuer, subject):
+/// email у провайдера не доказывает владение учётной записью FlowPOS.
+model UserIdentity {
+  id          String    @id @default(uuid())
+  tenantId    String    @map("tenant_id")
+  userId      String    @map("user_id")
+  issuer      String
+  subject     String
+  email       String?
+  createdAt   DateTime  @default(now()) @map("created_at")
+  lastLoginAt DateTime? @map("last_login_at")
+
+  user User @relation(fields: [tenantId, userId], references: [tenantId, id], onDelete: Cascade)
+
+  @@unique([issuer, subject])
+  @@index([userId])
+  @@map("user_identities")
+}
+
+/// FP-008: одноразовое состояние входа через OIDC (state, nonce, PKCE verifier) — на сервере, живёт 10 минут.
+model OidcState {
+  state        String    @id
+  nonce        String
+  codeVerifier String    @map("code_verifier")
+  purpose      String // login | link
+  userId       String?   @map("user_id") // для привязки — кто привязывает
+  createdAt    DateTime  @default(now()) @map("created_at")
+  expiresAt    DateTime  @map("expires_at")
+  usedAt       DateTime? @map("used_at")
+
+  @@index([expiresAt])
+  @@map("oidc_states")
 }
 
 model RefreshToken {

@@ -35,9 +35,10 @@ export interface Res {
   cookie: (name: string) => string | undefined;
 }
 
-export async function call(h: HttpApp, method: string, path: string, opts: { token?: string; body?: unknown; headers?: Record<string, string>; cookie?: string } = {}): Promise<Res> {
+export async function call(h: HttpApp, method: string, path: string, opts: { token?: string; body?: unknown; headers?: Record<string, string>; cookie?: string; redirect?: RequestRedirect } = {}): Promise<Res & { location?: string }> {
   const res = await fetch(`${h.base}/api/v1${path}`, {
     method,
+    redirect: opts.redirect ?? 'follow',
     headers: {
       'content-type': 'application/json',
       ...(opts.token ? { authorization: `Bearer ${opts.token}` } : {}),
@@ -51,7 +52,7 @@ export async function call(h: HttpApp, method: string, path: string, opts: { tok
   try { body = JSON.parse(text); } catch { /* не JSON */ }
   const setCookies = res.headers.getSetCookie?.() ?? [];
   return {
-    status: res.status, body, text,
+    status: res.status, body, text, location: res.headers.get('location') ?? undefined,
     cookie: (name) => setCookies.map((c) => c.split(';')[0]).find((c) => c.startsWith(`${name}=`))?.slice(name.length + 1),
   };
 }

@@ -31,7 +31,7 @@ Platform | P0 | Backend | M | DONE_LOCAL — см. `FP-007-TENANT-IDENTITY.md` (
 Зависимости: FP-001. Приёмка: Два клиента и две организации не видят/не связывают чужие объекты.
 
 ## FP-008 · OIDC sessions RBAC grants и MFA
-Platform | P0 | Security/Backend | L | PLANNED
+Platform | P0 | Security/Backend | L | DONE_LOCAL — см. `FP-008-SESSIONS-RBAC-MFA.md` (backend; экраны MFA/OIDC в вебе — нет; не выкладывалось)
 Зависимости: FP-007. Приёмка: Revoke и expiry работают; org scope из session; field-level payroll permissions.
 
 ## FP-009 · Postgres unit of work outbox и RLS

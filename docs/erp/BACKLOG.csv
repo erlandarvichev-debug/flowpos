@@ -6,7 +6,7 @@ FP-004,POS,P1,Frontend/Backend,L,"FP-001,FP-002",PLANNED,Canonical BackofficePro
 FP-005,POS,P0,Backend,M,"FP-007,FP-008,FP-009,FP-004",PLANNED,Серверный inbox POS и stable operation identity,UNIQUE tenant+org+operation; миграция устройства сохраняет sale; ACK после commit
 FP-006,POS,P0,QA/Pilot owner,L,"FP-003,FP-005",PLANNED,Пилотная смена и сверка оборудования,Продажа/возврат/смешанная оплата/печать/обрыв; ноль необъяснённых расхождений
 FP-007,Platform,P0,Backend,M,FP-001,DONE_LOCAL,Tenant и organization composite identity,Два клиента и две организации не видят/не связывают чужие объекты
-FP-008,Platform,P0,Security/Backend,L,FP-007,PLANNED,OIDC sessions RBAC grants и MFA,Revoke и expiry работают; org scope из session; field-level payroll permissions
+FP-008,Platform,P0,Security/Backend,L,FP-007,DONE_LOCAL,OIDC sessions RBAC grants и MFA,Revoke и expiry работают; org scope из session; field-level payroll permissions
 FP-009,Platform,P0,Backend/DBA,L,FP-007,PLANNED,Postgres unit of work outbox и RLS,Runtime role без BYPASSRLS; rollback; composite FK; outbox после commit
 FP-010,ESF,P0,Backend/Frontend,M,FP-001,DONE_LOCAL,Локальный синтетический ESF срез,Durable inbound/outbound/status/errors/dedup; UNKNOWN не resend; UI и signing boundary; тесты
 FP-011,ESF,P0,Integration lead,M,FP-001,PLANNED,Получить актуальный SDK WSDL XSD и доступ,Bytes checksum version; test/prod service endpoints; onboarding auth TTL limits enums документированы

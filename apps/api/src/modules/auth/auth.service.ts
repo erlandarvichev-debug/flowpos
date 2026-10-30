@@ -73,7 +73,8 @@ export class AuthService {
     return this.openSession(payload.sub, 'password', client, new Date());
   }
 
-  private async openSession(userId: string, authMethod: string, client: ClientInfo, mfaAt: Date | null) {
+  /** Открыть сессию проверенному пользователю (после пароля, кода MFA или входа через провайдера). */
+  async openSession(userId: string, authMethod: string, client: ClientInfo, mfaAt: Date | null) {
     const user = await this.prisma.user.findUniqueOrThrow({
       where: { id: userId },
       include: {

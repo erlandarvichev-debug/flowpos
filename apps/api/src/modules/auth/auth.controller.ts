@@ -1,8 +1,9 @@
-import { Controller, Post, Body, Get, Delete, Param, UseGuards, Request, Res } from '@nestjs/common';
+import { Controller, Post, Body, Get, Delete, Param, Query, UseGuards, Request, Res } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { Response } from 'express';
 import { AuthService } from './auth.service';
 import { MfaService } from './mfa.service';
+import { OidcService, oidcConfig } from './oidc.service';
 import { LoginDto } from './dto/login.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 
@@ -18,7 +19,7 @@ const COOKIE_OPTS = {
 @ApiTags('auth')
 @Controller('auth')
 export class AuthController {
-  constructor(private auth: AuthService, private mfa: MfaService) {}
+  constructor(private auth: AuthService, private mfa: MfaService, private oidc: OidcService) {}
 
   @Post('login')
   async login(@Body() dto: LoginDto, @Request() req: any, @Res({ passthrough: true }) res: Response) {
@@ -36,6 +37,59 @@ export class AuthController {
     res.cookie(COOKIE, result.refreshToken, COOKIE_OPTS);
     const { refreshToken: _, ...safe } = result;
     return safe;
+  }
+
+  // ── Вход через внешнего провайдера (OIDC) ──
+
+  /** Включён ли вход через провайдера (для кнопки на экране входа). */
+  @Get('oidc/config')
+  oidcEnabled() {
+    return { enabled: !!oidcConfig() };
+  }
+
+  /** Начать вход: переход на страницу провайдера. */
+  @Get('oidc/login')
+  async oidcLogin(@Res() res: Response) {
+    res.redirect(302, await this.oidc.start('login'));
+  }
+
+  /** Привязать учётную запись провайдера к себе (нужен вход в FlowPOS): адрес, на который перейти. */
+  @Post('oidc/link')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  async oidcLink(@Request() req) {
+    return { url: await this.oidc.start('link', req.user.sub) };
+  }
+
+  @Get('oidc/identities')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  oidcIdentities(@Request() req) {
+    return this.oidc.identities(req.user.sub);
+  }
+
+  @Delete('oidc/identities/:id')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  oidcUnlink(@Request() req, @Param('id') id: string) {
+    return this.oidc.unlink(req.user.sub, id);
+  }
+
+  /**
+   * Возврат от провайдера. Вход: refresh-токен — в httpOnly cookie, браузер уходит в веб-приложение, которое
+   * получает access-токен обычным /auth/refresh (токены в адресной строке не передаются). Ошибка — код в адресе.
+   */
+  @Get('oidc/callback')
+  async oidcCallback(@Query('code') code: string, @Query('state') state: string, @Request() req: any, @Res() res: Response) {
+    const web = (process.env.OIDC_WEB_REDIRECT || `${process.env.CORS_ORIGIN || 'http://localhost:5173'}/login`).replace(/\/+$/, '');
+    try {
+      const r = await this.oidc.callback(code, state, { ip: req.ip, userAgent: req.headers?.['user-agent'] });
+      if (r.purpose === 'login') res.cookie(COOKIE, (r as any).refreshToken, COOKIE_OPTS);
+      res.redirect(302, `${web}?oidc=${r.purpose === 'login' ? 'ok' : 'linked'}`);
+    } catch (e: any) {
+      const codeName = e?.response?.code ?? 'OIDC_FAILED';
+      res.redirect(302, `${web}?oidc_error=${encodeURIComponent(codeName)}`);
+    }
   }
 
   /** Подключение MFA, шаг 1: секрет и ссылка otpauth:// для приложения-аутентификатора. */
