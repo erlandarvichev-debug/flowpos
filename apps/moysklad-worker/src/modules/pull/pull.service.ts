@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
-import { PrismaService } from '../../prisma.service';
+import { PrismaService, runAsSystem, runAsTenant } from '../../prisma.service';
 import { MoyskladHttpClient, MsProduct, MsCounterparty, MsStore, MsProductFolder, MsUom } from '@flowpos/moysklad-client';
 
 /** Клиент и организация подключения: всё, что пришло из этого аккаунта МойСклад, пишется только сюда (FP-007). */
@@ -19,29 +19,29 @@ export class MsPullService {
   /** Товары, контрагенты, склады — каждые 5 минут */
   @Cron('*/5 * * * *')
   async pullOperational() {
-    const connections = await this.prisma.moyskladConnection.findMany({ where: { isActive: true }, include: { organization: { select: { tenantId: true } } } });
+    const connections = await runAsSystem(() => this.prisma.moyskladConnection.findMany({ where: { isActive: true }, include: { organization: { select: { tenantId: true } } } }));
     for (const conn of connections) {
       const client = new MoyskladHttpClient({ token: conn.tokenEnc });
       const sc = scopeOf(conn);
-      await Promise.all([
+      await runAsTenant(sc.tenantId, () => Promise.all([
         this.pullProducts(client, sc, conn.id, conn.accountId),
         this.pullCounterparties(client, sc, conn.id, conn.accountId),
         this.pullStores(client, sc, conn.id, conn.accountId),
-      ]);
+      ]));
     }
   }
 
   /** Справочники — каждые 30 минут */
   @Cron('*/30 * * * *')
   async pullSlow() {
-    const connections = await this.prisma.moyskladConnection.findMany({ where: { isActive: true }, include: { organization: { select: { tenantId: true } } } });
+    const connections = await runAsSystem(() => this.prisma.moyskladConnection.findMany({ where: { isActive: true }, include: { organization: { select: { tenantId: true } } } }));
     for (const conn of connections) {
       const client = new MoyskladHttpClient({ token: conn.tokenEnc });
       const sc = scopeOf(conn);
-      await Promise.all([
+      await runAsTenant(sc.tenantId, () => Promise.all([
         this.pullProductFolders(client, sc, conn.id, conn.accountId),
         this.pullUoms(client, sc, conn.id, conn.accountId),
-      ]);
+      ]));
     }
   }
 

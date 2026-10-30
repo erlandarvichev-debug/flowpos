@@ -4,6 +4,7 @@ import { Response } from 'express';
 import { AuthService } from './auth.service';
 import { MfaService } from './mfa.service';
 import { OidcService, oidcConfig } from './oidc.service';
+import { runAsSystem } from '../../common/db-context';
 import { LoginDto } from './dto/login.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 
@@ -23,7 +24,8 @@ export class AuthController {
 
   @Post('login')
   async login(@Body() dto: LoginDto, @Request() req: any, @Res({ passthrough: true }) res: Response) {
-    const result = await this.auth.login(dto, { ip: req.ip, userAgent: req.headers?.['user-agent'] });
+    // До входа клиент неизвестен: поиск пользователя и открытие сессии — в системном режиме БД (FP-009).
+    const result = await runAsSystem(() => this.auth.login(dto, { ip: req.ip, userAgent: req.headers?.['user-agent'] }));
     if (result.mfaRequired) return result; // второй шаг — POST /auth/mfa/login
     res.cookie(COOKIE, result.refreshToken, COOKIE_OPTS);
     const { refreshToken: _, ...safe } = result;
@@ -33,7 +35,7 @@ export class AuthController {
   /** Второй шаг входа при включённой MFA: токен-вызов из /auth/login + код из приложения или код восстановления. */
   @Post('mfa/login')
   async mfaLogin(@Body() b: { mfaToken: string; code: string }, @Request() req: any, @Res({ passthrough: true }) res: Response) {
-    const result = await this.auth.completeMfaLogin(b?.mfaToken, b?.code, { ip: req.ip, userAgent: req.headers?.['user-agent'] });
+    const result = await runAsSystem(() => this.auth.completeMfaLogin(b?.mfaToken, b?.code, { ip: req.ip, userAgent: req.headers?.['user-agent'] }));
     res.cookie(COOKIE, result.refreshToken, COOKIE_OPTS);
     const { refreshToken: _, ...safe } = result;
     return safe;
@@ -50,7 +52,7 @@ export class AuthController {
   /** Начать вход: переход на страницу провайдера. */
   @Get('oidc/login')
   async oidcLogin(@Res() res: Response) {
-    res.redirect(302, await this.oidc.start('login'));
+    res.redirect(302, await runAsSystem(() => this.oidc.start('login')));
   }
 
   /** Привязать учётную запись провайдера к себе (нужен вход в FlowPOS): адрес, на который перейти. */
@@ -58,7 +60,7 @@ export class AuthController {
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   async oidcLink(@Request() req) {
-    return { url: await this.oidc.start('link', req.user.sub) };
+    return { url: await runAsSystem(() => this.oidc.start('link', req.user.sub)) };
   }
 
   @Get('oidc/identities')
@@ -83,7 +85,7 @@ export class AuthController {
   async oidcCallback(@Query('code') code: string, @Query('state') state: string, @Request() req: any, @Res() res: Response) {
     const web = (process.env.OIDC_WEB_REDIRECT || `${process.env.CORS_ORIGIN || 'http://localhost:5173'}/login`).replace(/\/+$/, '');
     try {
-      const r = await this.oidc.callback(code, state, { ip: req.ip, userAgent: req.headers?.['user-agent'] });
+      const r = await runAsSystem(() => this.oidc.callback(code, state, { ip: req.ip, userAgent: req.headers?.['user-agent'] }));
       if (r.purpose === 'login') res.cookie(COOKIE, (r as any).refreshToken, COOKIE_OPTS);
       res.redirect(302, `${web}?oidc=${r.purpose === 'login' ? 'ok' : 'linked'}`);
     } catch (e: any) {
@@ -134,7 +136,7 @@ export class AuthController {
   async refresh(@Request() req: any, @Res({ passthrough: true }) res: Response) {
     const token = req.cookies?.[COOKIE];
     if (!token) return res.status(401).json({ message: 'No refresh token' });
-    const result = await this.auth.refresh(token);
+    const result = await runAsSystem(() => this.auth.refresh(token));
     res.cookie(COOKIE, result.refreshToken, COOKIE_OPTS);
     return { accessToken: result.accessToken };
   }
@@ -142,7 +144,7 @@ export class AuthController {
   @Post('logout')
   async logout(@Request() req: any, @Res({ passthrough: true }) res: Response) {
     const token = req.cookies?.[COOKIE];
-    if (token) await this.auth.logout(token);
+    if (token) await runAsSystem(() => this.auth.logout(token));
     res.clearCookie(COOKIE, { path: '/api/v1/auth' });
     return { ok: true };
   }

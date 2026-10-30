@@ -75,6 +75,7 @@ export class SalesService {
       });
 
       await this.outbox.enqueueInTx(tx, {
+        tenantId: s.tenantId,
         idempotencyKey: `sales-order-${created.id}`,
         entity: 'document',
         localId: created.id,
@@ -143,6 +144,7 @@ export class SalesService {
       }
 
       await this.outbox.enqueueInTx(tx, {
+        tenantId: s.tenantId,
         idempotencyKey: `shipment-${created.id}`,
         entity: 'document',
         localId: created.id,

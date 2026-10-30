@@ -35,7 +35,7 @@ Platform | P0 | Security/Backend | L | DONE_LOCAL — см. `FP-008-SESSIONS-RBA
 Зависимости: FP-007. Приёмка: Revoke и expiry работают; org scope из session; field-level payroll permissions.
 
 ## FP-009 · Postgres unit of work outbox и RLS
-Platform | P0 | Backend/DBA | L | PLANNED
+Platform | P0 | Backend/DBA | L | DONE_LOCAL — см. `FP-009-RLS-UNIT-OF-WORK.md` (не выкладывалось)
 Зависимости: FP-007. Приёмка: Runtime role без BYPASSRLS; rollback; composite FK; outbox после commit.
 
 ## FP-010 · Локальный синтетический ESF срез

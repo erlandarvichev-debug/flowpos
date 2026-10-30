@@ -9,6 +9,7 @@ import { PeriodsService, OverrideRequest } from '../periods/periods.service';
 import { CostService } from '../inventory/cost.service';
 import { DEFAULT_ACCOUNTS, AccountsMap } from './accounts';
 import { NO_ACCOUNTING, TRADE_RULE_VERSION, TRADE_SOURCE, TradeDoc, buildTradeEntry, isSupported } from './trade-rules';
+import { runAsSystem, runAsTenant } from '../../../common/db-context';
 
 type Tx = Prisma.TransactionClient;
 
@@ -171,22 +172,23 @@ export class AutopilotService implements OnModuleInit, OnModuleDestroy {
     if (this.running) return;
     this.running = true;
     try {
-      const cursor = await this.prisma.accAutopilotCursor.findUnique({ where: { id: 'trade-documents' } });
+      // Курсор и перечень документов — системно (по всем клиентам); отражение документа — от имени его клиента (FP-009).
+      const cursor = await runAsSystem(() => this.prisma.accAutopilotCursor.findUnique({ where: { id: 'trade-documents' } }));
       const since = cursor?.updatedAt ?? new Date(0);
-      const docs = await this.prisma.document.findMany({
+      const docs = await runAsSystem(() => this.prisma.document.findMany({
         where: { updatedAt: { gte: since } },
         orderBy: [{ updatedAt: 'asc' }, { id: 'asc' }],
         take: batch,
-        select: { id: true, updatedAt: true },
-      });
+        select: { id: true, updatedAt: true, tenantId: true },
+      }));
       for (const d of docs) {
         if (cursor && d.updatedAt.getTime() === since.getTime() && cursor.lastId && d.id <= cursor.lastId) continue;
-        await this.process(d.id);
-        await this.prisma.accAutopilotCursor.upsert({
+        await runAsTenant(d.tenantId, () => this.process(d.id));
+        await runAsSystem(() => this.prisma.accAutopilotCursor.upsert({
           where: { id: 'trade-documents' },
           create: { id: 'trade-documents', updatedAt: d.updatedAt, lastId: d.id },
           update: { updatedAt: d.updatedAt, lastId: d.id },
-        });
+        }));
       }
       return docs.length;
     } finally {

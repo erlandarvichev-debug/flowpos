@@ -11,6 +11,7 @@ import { EsfSoapClient, EsfSoapError, Fetcher } from './esf-soap.client';
 import { EsfSerializationError, serializeInvoice } from './invoice-serializer';
 import { EsfSigningError, checkSigner, inspectCertificate, issueSigningRequest, signingEvidence, signingSecret, verifyRawSignature, verifySigningRequest } from './esf-signing';
 import { ESF_UNITS } from './units.data';
+import { runAsSystem, runAsTenant } from '../../../common/db-context';
 
 type Tx = Prisma.TransactionClient;
 export type EsfAction = 'REVOKE' | 'DECLINE' | 'APPROVE' | 'CONFIRM_REVOKE';
@@ -738,26 +739,34 @@ export class EsfService implements OnModuleInit, OnModuleDestroy {
     if (this.running) return;
     this.running = true;
     try {
-      const orgs = await this.prisma.esfSettings.findMany();
-      const tenantOf = new Map((await this.prisma.organization.findMany({ where: { id: { in: orgs.map((s) => s.organizationId) } }, select: { id: true, tenantId: true } })).map((o) => [o.id, o.tenantId]));
+      // Перечень организаций — системно (по всем клиентам), работа по каждой — от имени её клиента (FP-009, RLS).
+      const { orgs, tenantOf } = await runAsSystem(async () => {
+        const list = await this.prisma.esfSettings.findMany();
+        const owners = await this.prisma.organization.findMany({ where: { id: { in: list.map((s) => s.organizationId) } }, select: { id: true, tenantId: true } });
+        return { orgs: list, tenantOf: new Map(owners.map((o) => [o.id, o.tenantId])) };
+      });
       for (const s of orgs) {
         const tenantId = tenantOf.get(s.organizationId);
         if (!tenantId) continue;
-        const ctx: OrgContext = { tenantId, organizationId: s.organizationId, userId: 'system:esf', role: 'system', can: () => true };
-        if (s.autoPrepare) {
-          for (const d of await this.pendingDocs(this.prisma, s.organizationId, s.environment, 50)) {
-            try { await this.prepare(ctx, d.id); } catch (e: any) { /* нехватка данных видна в списке «ожидают ЭСФ» */ }
-          }
-        }
-        await this.markOutdated(s.organizationId, s.environment);
-        await this.recoverStaleSending(s.organizationId);
-        const session = await this.activeSession(this.prisma, s.organizationId, s.environment);
-        if (session) {
-          try { await this.refreshWith(s.organizationId, s.environment, session); } catch (e: any) { this.log.warn(`${s.organizationId}: ${e.message}`); }
-        }
+        await runAsTenant(tenantId, () => this.tickOrganization(s, tenantId));
       }
     } finally {
       this.running = false;
+    }
+  }
+
+  private async tickOrganization(s: { organizationId: string; environment: string; autoPrepare: boolean }, tenantId: string) {
+    const ctx: OrgContext = { tenantId, organizationId: s.organizationId, userId: 'system:esf', role: 'system', can: () => true };
+    if (s.autoPrepare) {
+      for (const d of await this.pendingDocs(this.prisma, s.organizationId, s.environment, 50)) {
+        try { await this.prepare(ctx, d.id); } catch (e: any) { /* нехватка данных видна в списке «ожидают ЭСФ» */ }
+      }
+    }
+    await this.markOutdated(s.organizationId, s.environment);
+    await this.recoverStaleSending(s.organizationId);
+    const session = await this.activeSession(this.prisma, s.organizationId, s.environment);
+    if (session) {
+      try { await this.refreshWith(s.organizationId, s.environment, session); } catch (e: any) { this.log.warn(`${s.organizationId}: ${e.message}`); }
     }
   }
 

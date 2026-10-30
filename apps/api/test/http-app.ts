@@ -13,18 +13,40 @@ export const uid = () => randomUUID().slice(0, 8);
 
 export interface HttpApp {
   app: INestApplication;
+  /** Клиент владельца БД (BYPASSRLS) — для подготовки и проверки данных тестом, не для приложения. */
   prisma: PrismaService;
   base: string;
 }
 
+/**
+ * Рабочая роль (FP-009): приложение в тесте ходит в БД как flowpos_app — NOBYPASSRLS, политики RLS действуют.
+ * TEST_RUNTIME_DATABASE_URL переопределяет адрес; по умолчанию — та же тестовая БД под flowpos_app.
+ */
+export function runtimeDatabaseUrl() {
+  if (process.env.TEST_RUNTIME_DATABASE_URL) return process.env.TEST_RUNTIME_DATABASE_URL;
+  const u = new URL(process.env.DATABASE_URL!);
+  u.username = 'flowpos_app';
+  u.password = 'flowpos_app_dev';
+  return u.toString();
+}
+
 export async function startApp(): Promise<HttpApp> {
+  // Клиент приложения (создаёт Nest) — с адресом рабочей роли; адрес передаётся явно, не через DATABASE_URL.
+  PrismaService.nextUrl = runtimeDatabaseUrl();
   // TEST_HTTP_LOG=1 — журнал Nest (ошибки 500 с причиной) при разборе падений.
   const app = await NestFactory.create(AppModule, { logger: process.env.TEST_HTTP_LOG === '1' ? ['error', 'warn'] : false });
   app.use(cookieParser());
   app.setGlobalPrefix('api/v1');
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: false }));
   await app.listen(0, '127.0.0.1');
-  return { app, prisma: app.get(PrismaService), base: await app.getUrl() };
+  const owner = new PrismaService();
+  await owner.$connect();
+  const close = app.close.bind(app);
+  app.close = async () => {
+    await owner.$disconnect();
+    await close();
+  };
+  return { app, prisma: owner, base: await app.getUrl() };
 }
 
 export interface Res {

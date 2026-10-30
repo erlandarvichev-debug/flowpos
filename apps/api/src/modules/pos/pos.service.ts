@@ -94,9 +94,12 @@ export class PosService {
     const shift = await this.shift(s, shiftId);
     if (shift.status === 'CLOSED') throw new BadRequestException('Смена закрыта');
 
-    await this.prisma.pOSShift.update({ where: { id: shiftId }, data: { cashIn: { increment: amount } } });
-    return this.prisma.pOSCashOp.create({
-      data: { shiftId, type: 'IN', amount, comment },
+    // Сумма смены и сама операция — одной транзакцией (FP-009): без одной из них касса не сходится.
+    return this.prisma.$transaction(async (tx) => {
+      await tx.pOSShift.update({ where: { id: shiftId }, data: { cashIn: { increment: amount } } });
+      return tx.pOSCashOp.create({
+        data: { shiftId, type: 'IN', amount, comment },
+      });
     });
   }
 
@@ -104,9 +107,12 @@ export class PosService {
     const shift = await this.shift(s, shiftId);
     if (shift.status === 'CLOSED') throw new BadRequestException('Смена закрыта');
 
-    await this.prisma.pOSShift.update({ where: { id: shiftId }, data: { cashOut: { increment: amount } } });
-    return this.prisma.pOSCashOp.create({
-      data: { shiftId, type: 'OUT', amount, comment },
+    // Сумма смены и сама операция — одной транзакцией (FP-009): без одной из них касса не сходится.
+    return this.prisma.$transaction(async (tx) => {
+      await tx.pOSShift.update({ where: { id: shiftId }, data: { cashOut: { increment: amount } } });
+      return tx.pOSCashOp.create({
+        data: { shiftId, type: 'OUT', amount, comment },
+      });
     });
   }
 

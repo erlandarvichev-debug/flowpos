@@ -33,7 +33,8 @@ echo "== Бэкап БД перед изменением схемы"
 sudo -u flowpos /usr/local/bin/flowpos-backup pre-deploy
 
 echo "== Схема БД: подготовка данных (sql/pre), prisma db push без --accept-data-loss (опасные изменения остановят выкладку), SQL-инварианты"
-as_app "cd packages/db && node scripts/apply-sql.js --pre && npx prisma db push --skip-generate && node scripts/apply-sql.js"
+# Миграции — под владельцем (MIGRATION_DATABASE_URL); приложение работает под рабочей ролью (FP-009).
+as_app "cd packages/db && export DATABASE_URL=\"\${MIGRATION_DATABASE_URL:?нет MIGRATION_DATABASE_URL в api.env — см. deploy/README.md}\" && node scripts/apply-sql.js --pre && npx prisma db push --skip-generate && node scripts/apply-sql.js"
 
 echo "== Переключение"
 ln -sfn "$REL" $ROOT/current

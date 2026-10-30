@@ -75,6 +75,7 @@ export class PurchasesService {
       });
 
       await this.outbox.enqueueInTx(tx, {
+        tenantId: s.tenantId,
         idempotencyKey: `purchase-order-${created.id}`,
         entity: 'document',
         localId: created.id,
@@ -94,6 +95,7 @@ export class PurchasesService {
       const updated = await tx.document.update({ where: { id }, data: rest });
 
       await this.outbox.enqueueInTx(tx, {
+        tenantId: s.tenantId,
         idempotencyKey: `purchase-order-update-${id}-${Date.now()}`,
         entity: 'document',
         localId: id,
@@ -162,6 +164,7 @@ export class PurchasesService {
       }
 
       await this.outbox.enqueueInTx(tx, {
+        tenantId: s.tenantId,
         idempotencyKey: `receipt-${receipt.id}`,
         entity: 'document',
         localId: receipt.id,

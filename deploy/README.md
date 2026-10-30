@@ -70,14 +70,16 @@ ssh root@SERVER 'bash /root/flowpos-deploy/scripts/deploy.sh /tmp/flowpos-releas
 
 ## Бэкап и восстановление
 - Ежедневно в 03:30: `pg_dump -Fc` + состояние MCP, хранятся 14 дней. Перед каждой выкладкой делается отдельный бэкап, он хранится 30 дней. Каждый дамп сразу проверяется `pg_restore --list`.
-- Восстановление: `systemctl stop flowpos-api flowpos-mcp && pg_restore --clean --if-exists --no-owner -d flowpos <файл.dump> && systemctl start flowpos-api flowpos-mcp`.
+- Восстановление — от владельца (роль миграций): `systemctl stop flowpos-api flowpos-mcp && pg_restore --clean --if-exists --no-owner -d "$MIGRATION_DATABASE_URL" <файл.dump> && (cd /opt/flowpos/current/packages/db && DATABASE_URL="$MIGRATION_DATABASE_URL" node scripts/apply-sql.js) && systemctl start flowpos-api flowpos-mcp` (последний шаг заново включает RLS и права рабочей роли).
+- Бэкап и восстановление делаются под владельцем: под рабочей ролью `pg_dump` отказывается выгружать таблицы с RLS.
 - Проверено 23.10.2026 на тестовой базе: дамп восстанавливается в пустую БД, число проводок, ЭСФ и организаций совпадает, триггеры неизменяемости на месте.
 - **Рекомендация:** копировать `shared/backups` на второй сервер или в облако, иначе при потере диска пропадут и бэкапы.
 
 ## Безопасность (что сделано)
 - API в боевом режиме **не запускается** без `JWT_SECRET`, `ESF_SIGNING_SECRET` и `MFA_SECRET_KEY` (все ≥ 32 символов), `DATABASE_URL` и `CORS_ORIGIN`. На уже установленном сервере `ESF_SIGNING_SECRET` и `MFA_SECRET_KEY` нужно **дописать вручную** в `/opt/flowpos/shared/api.env` до обновления (`openssl rand -hex 32` для каждого). `MFA_SECRET_KEY` после того, как пользователи подключили второй фактор, не менять.
 - Привилегированные операции (пользователи и роли, подключения 1С, учётная политика, закрытие/переоткрытие периода) в боевом режиме требуют сессию, подтверждённую вторым фактором (FP-008). Отключить на время — `MFA_ENFORCE=0` в `api.env`.
-- После обновления с FP-008 все пользователи входят заново (сессии на сервере, access-токен — 15 минут). Раньше был запасной общеизвестный ключ `flowpos-secret`, и токены можно было подделать.
+- После обновления с FP-008 все пользователи входят заново (сессии на сервере, access-токен — 15 минут).
+- **FP-009 — две роли БД.** API и воркеры работают под `flowpos_app` (без `BYPASSRLS`: изоляция клиентов в самой БД — RLS), миграции и бэкапы — под владельцем `flowpos` (`BYPASSRLS`). Новый сервер `install.sh` настраивает сам. **На уже установленном сервере до выкладки** (от `postgres`): `alter role flowpos bypassrls; create role flowpos_app login password '<пароль>' nosuperuser nobypassrls nocreatedb nocreaterole;`, затем в `api.env`: `MIGRATION_DATABASE_URL` — прежний адрес с `flowpos`, `DATABASE_URL` — тот же адрес с `flowpos_app`. Без этого выкладка остановится (`MIGRATION_DATABASE_URL` не задан или у роли миграций нет `BYPASSRLS`). Раньше был запасной общеизвестный ключ `flowpos-secret`, и токены можно было подделать.
 - Swagger в бою выключен (`SWAGGER_ENABLED=1` — включить временно).
 - API и MCP слушают только 127.0.0.1, снаружи доступ только через nginx с TLS.
 - nginx ограничивает частоту входа (10/мин с IP) и запросов к API, ставит HSTS и запрет встраивания в чужие сайты.

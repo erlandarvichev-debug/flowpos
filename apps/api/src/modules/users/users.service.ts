@@ -101,23 +101,28 @@ export class UsersService {
     }
     const updateData: any = pick(body);
     if (body?.password) updateData.passwordHash = await bcrypt.hash(body.password, 10);
-    const updated = await this.prisma.user.update({
-      where: { id },
-      data: updateData,
-      include: { userRoles: { include: { role: true } } },
+    // Новый пароль или отключение и завершение всех входов — одной транзакцией (FP-008/FP-009):
+    // сбой между ними не должен оставить старые сессии с новым паролем.
+    return this.prisma.$transaction(async (tx) => {
+      const updated = await tx.user.update({
+        where: { id },
+        data: updateData,
+        include: { userRoles: { include: { role: true } } },
+      });
+      if (body?.password) await revokeUserSessions(tx, id, 'PASSWORD_CHANGED');
+      else if (updateData.isActive === false) await revokeUserSessions(tx, id, 'USER_DEACTIVATED');
+      return updated;
     }).catch(scopeError);
-    // Новый пароль или отключение — все входы пользователя завершаются (FP-008).
-    if (body?.password) await revokeUserSessions(this.prisma, id, 'PASSWORD_CHANGED');
-    else if (updateData.isActive === false) await revokeUserSessions(this.prisma, id, 'USER_DEACTIVATED');
-    return updated;
   }
 
   async deactivate(s: Scope, id: string) {
     await this.findOne(s, id);
     await this.assertCanManage(s, id);
-    const user = await this.prisma.user.update({ where: { id }, data: { isActive: false } });
-    await revokeUserSessions(this.prisma, id, 'USER_DEACTIVATED');
-    return user;
+    return this.prisma.$transaction(async (tx) => {
+      const user = await tx.user.update({ where: { id }, data: { isActive: false } });
+      await revokeUserSessions(tx, id, 'USER_DEACTIVATED');
+      return user;
+    });
   }
 
   /** Завершить все входы пользователя своей организации (потерян телефон, увольнение). */

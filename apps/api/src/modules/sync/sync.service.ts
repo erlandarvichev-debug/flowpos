@@ -49,6 +49,7 @@ export class SyncService {
     const idempotencyKey = `${operation}:${entity}:${entityId}:${uuidv4()}`;
     const record = await this.prisma.outbox.create({
       data: {
+        tenantId: s.tenantId,
         connectionId,
         operation,
         entity,
@@ -150,6 +151,7 @@ export class SyncService {
 
     if (resolution === 'keep_local') {
       await this.outbox.enqueueInTx(this.prisma as any, {
+        tenantId: s.tenantId,
         idempotencyKey: `conflict-resolve-local-${id}-${Date.now()}`,
         entity: 'document',
         localId: id,

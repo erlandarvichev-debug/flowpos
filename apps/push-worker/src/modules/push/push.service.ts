@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
-import { PrismaService } from '../../prisma.service';
+import { PrismaService, runAsSystem, runAsTenant } from '../../prisma.service';
 import { OnecHttpClient } from '@flowpos/onec-client';
 
 /** Задержки повторных попыток (мс): 1m, 5m, 15m, 1h, 4h, 12h */
@@ -35,30 +35,35 @@ export class PushService {
   }
 
   private async processBatch() {
-    // FOR UPDATE SKIP LOCKED — безопасно при нескольких воркерах
-    const entries: any[] = await this.prisma.$queryRaw`
+    // FOR UPDATE SKIP LOCKED — безопасно при нескольких воркерах.
+    // Очередь — системно (по всем клиентам), но запись уходит только в подключение организации того же клиента,
+    // что и запись outbox (FP-009): данные клиента A не отправляются в 1С клиента B.
+    const entries: any[] = await runAsSystem(() => this.prisma.$queryRaw`
       SELECT o.*, c."base_url" as "connBaseUrl", c."base_code" as "connBaseCode",
              c."username" as "connUsername", c."password_enc" as "connPassword",
              c."instance_type" as "connInstanceType"
       FROM outbox o
       JOIN onec_connections c ON c.id = o."connection_id"
+      JOIN organizations org ON org.id = c.organization_id AND org.tenant_id = o.tenant_id
       WHERE o.status IN ('PENDING', 'SENDING')
         AND o."next_attempt_at" <= NOW()
         AND o.attempts < ${MAX_ATTEMPTS}
       LIMIT ${BATCH_SIZE}
       FOR UPDATE OF o SKIP LOCKED
-    `;
+    `);
 
     if (!entries.length) return;
 
     // Помечаем как SENDING
     const ids = entries.map((e: any) => e.id);
-    await this.prisma.$executeRaw`
-      UPDATE outbox SET status = 'SENDING' WHERE id = ANY(${ids}::uuid[])
-    `;
+    // id — текст (uuid строкой): сравнение с uuid[] в PostgreSQL не определено.
+    await runAsSystem(() => this.prisma.$executeRaw`
+      UPDATE outbox SET status = 'SENDING' WHERE id = ANY(${ids}::text[])
+    `);
 
     for (const entry of entries) {
-      await this.processEntry(entry);
+      // Отправка и запись результата (GUID в документ/справочник) — от имени клиента записи.
+      await runAsTenant(entry.tenant_id, () => this.processEntry(entry));
     }
   }
 

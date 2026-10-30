@@ -3,7 +3,7 @@
 // Клиент T1 (по умолчанию): организации A1, A2. Клиент T2: организации B1, B2. Второй клиент удаляется в afterAll.
 import { randomUUID } from 'crypto';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
-import { NestFactory } from '@nestjs/core';
+import { startApp } from './http-app';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
 import { AppModule } from '../src/app.module';
@@ -55,13 +55,11 @@ async function orgWithOwner(tenantId: string, name: string): Promise<Who> {
 const ids = (list: any[]) => list.map((x) => x.id);
 
 beforeAll(async () => {
-  // Как main.ts: NestFactory из @nestjs/core приложения (в корне монорепы лежит другая мажорная версия Nest).
-  app = await NestFactory.create(AppModule, { logger: false });
-  app.setGlobalPrefix('api/v1');
-  app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: false }));
-  await app.listen(0, '127.0.0.1');
-  base = await app.getUrl();
-  prisma = app.get(PrismaService);
+  // Приложение — под рабочей ролью (RLS), данные теста — клиентом владельца (см. http-app.ts).
+  const h = await startApp();
+  app = h.app;
+  base = h.base;
+  prisma = h.prisma;
   await defaultTenant(prisma);
   t2 = (await prisma.tenant.create({ data: { name: `Клиент 2 ${uid()}` } })).id;
   A1 = await orgWithOwner(DEFAULT_TENANT, 'A1');

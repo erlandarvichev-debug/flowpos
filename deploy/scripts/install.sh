@@ -41,15 +41,24 @@ install -d -m 755 /var/www/certbot
 echo "== База данных"
 if [ ! -f $SHARED/api.env ]; then
   DB_PASS="$(openssl rand -hex 24)"
+  APP_DB_PASS="$(openssl rand -hex 24)"
+  # FP-009: flowpos — владелец таблиц и роль миграций (BYPASSRLS: FORCE RLS действует и на владельца);
+  # flowpos_app — рабочая роль API и воркеров: без SUPERUSER и BYPASSRLS, только DML (права выдаёт sql/040).
   if sudo -u postgres psql -tAc "select 1 from pg_roles where rolname='flowpos'" | grep -q 1; then
-    sudo -u postgres psql -c "alter role flowpos with password '$DB_PASS'"
+    sudo -u postgres psql -c "alter role flowpos with password '$DB_PASS' bypassrls"
   else
-    sudo -u postgres psql -c "create role flowpos login password '$DB_PASS'"
+    sudo -u postgres psql -c "create role flowpos login password '$DB_PASS' bypassrls"
+  fi
+  if sudo -u postgres psql -tAc "select 1 from pg_roles where rolname='flowpos_app'" | grep -q 1; then
+    sudo -u postgres psql -c "alter role flowpos_app with login password '$APP_DB_PASS' nosuperuser nobypassrls nocreatedb nocreaterole"
+  else
+    sudo -u postgres psql -c "create role flowpos_app login password '$APP_DB_PASS' nosuperuser nobypassrls nocreatedb nocreaterole"
   fi
   sudo -u postgres psql -tAc "select 1 from pg_database where datname='flowpos'" | grep -q 1 || sudo -u postgres createdb -O flowpos flowpos
 
   echo "== Настройки API (секреты сгенерированы)"
   sed -e "s#postgresql://flowpos:<пароль-БД>@#postgresql://flowpos:${DB_PASS}@#" \
+      -e "s#postgresql://flowpos_app:<пароль-рабочей-роли>@#postgresql://flowpos_app:${APP_DB_PASS}@#" \
       -e "s#JWT_SECRET=<сгенерировать>#JWT_SECRET=$(openssl rand -hex 32)#" \
       -e "s#ESF_SIGNING_SECRET=<сгенерировать>#ESF_SIGNING_SECRET=$(openssl rand -hex 32)#" \
       -e "s#MFA_SECRET_KEY=<сгенерировать>#MFA_SECRET_KEY=$(openssl rand -hex 32)#" \

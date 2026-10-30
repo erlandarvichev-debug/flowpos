@@ -63,6 +63,7 @@ BEGIN
     ['stock',               'tenant_id',       'store_id',          'stores',               'tenant_id'],
     ['contracts',           'tenant_id',       'counterparty_id',   'counterparties',       'tenant_id'],
     ['document_lines',      'tenant_id',       'document_id',       'documents',            'tenant_id'],
+    ['outbox',              'tenant_id',       '',                  '',                     ''],
     ['grade_rate_values',   'organization_id', 'grade_id',          'salary_grades',        'organization_id'],
     ['employment_history',  'organization_id', 'contract_id',       'employment_contracts', 'organization_id'],
     ['payroll_results',     'organization_id', 'payroll_period_id', 'payroll_periods',      'organization_id']

@@ -1,4 +1,5 @@
-import { Module } from '@nestjs/common';
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
+import { DbContextMiddleware } from './common/db-context.middleware';
 import { ConfigModule } from '@nestjs/config';
 import { BullModule } from '@nestjs/bull';
 import { ThrottlerModule } from '@nestjs/throttler';
@@ -36,4 +37,8 @@ import { AccountingModule } from './modules/accounting/accounting.module';
     AccountingModule,
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer.apply(DbContextMiddleware).forRoutes('*');
+  }
+}

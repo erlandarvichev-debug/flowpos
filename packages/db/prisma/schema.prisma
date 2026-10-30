@@ -346,6 +346,8 @@ model Outbox {
   idempotencyKey  String      @unique @map("idempotency_key")
   entity          String
   localId         String      @map("local_id")
+  // FP-009: клиент записи — из контекста транзакции (SET LOCAL flowpos.tenant_id), в которой записан агрегат.
+  tenantId        String      @default(dbgenerated("NULLIF(current_setting('flowpos.tenant_id', true), '')")) @map("tenant_id")
   connectionId    String?     @map("connection_id")
   operation       String
   payload         Json
@@ -361,6 +363,7 @@ model Outbox {
 
   @@index([status, nextAttemptAt])
   @@index([entity, localId])
+  @@index([tenantId, status])
   @@map("outbox")
 }
 

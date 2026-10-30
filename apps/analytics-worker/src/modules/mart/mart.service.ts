@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
-import { PrismaService } from '../../prisma.service';
+import { PrismaService, runAsSystem } from '../../prisma.service';
 
 @Injectable()
 export class MartService {
@@ -11,20 +11,21 @@ export class MartService {
   /** Оперативные марты — каждые 5 минут: продажи сегодня, остатки */
   @Cron('*/5 * * * *')
   async refreshOperational() {
-    await Promise.all([
+    // Витрины служебные (по всем клиентам, RLS — только системный режим), поэтому пересчёт — системно (FP-009).
+    await runAsSystem(() => Promise.all([
       this.refreshSalesToday(),
       this.refreshStockSnapshot(),
-    ]);
+    ]));
   }
 
   /** Тяжёлые марты — раз в ночь в 03:00 */
   @Cron('0 3 * * *')
   async refreshNightly() {
-    await Promise.all([
+    await runAsSystem(() => Promise.all([
       this.refreshSalesDaily(),
       this.refreshPayroll(),
       this.refreshShiftCoverage(),
-    ]);
+    ]));
   }
 
   /** MartSalesDaily — свёртка по дням за последние 90 дней */

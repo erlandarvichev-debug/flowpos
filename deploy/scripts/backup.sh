@@ -8,7 +8,9 @@ DIR=$SHARED/backups
 TAG="${1:-daily}"
 TS=$(date +%Y%m%d-%H%M%S)
 set -a; . $SHARED/api.env; set +a
-DB_URL="${DATABASE_URL%%\?*}"
+# Под рабочей ролью (RLS) pg_dump не выгружает данные — бэкап делает владелец (FP-009).
+DB_URL="${MIGRATION_DATABASE_URL:-$DATABASE_URL}"
+DB_URL="${DB_URL%%\?*}"
 
 mkdir -p "$DIR"
 pg_dump -Fc --no-owner -d "$DB_URL" -f "$DIR/flowpos-$TAG-$TS.dump"

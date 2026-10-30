@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { PrismaService } from '../../prisma.service';
+import { PrismaService, runAsSystem, runAsTenant } from '../../prisma.service';
 import { OnecHttpClient } from '@flowpos/onec-client';
 import type { OnecEntity, DeltaItem } from '@flowpos/onec-client';
 
@@ -33,7 +33,8 @@ export class PullService {
 
   async pullEntities(entities: OnecEntity[]) {
     // Область записи — организация подключения и её клиент (FP-007): данные одной базы 1С не попадают к другому клиенту.
-    const connections = await this.prisma.onecConnection.findMany({ where: { isActive: true }, include: { organization: { select: { tenantId: true } } } });
+    // Перечень подключений — системно (по всем клиентам); синхронизация каждого — от имени его клиента (FP-009, RLS).
+    const connections = await runAsSystem(() => this.prisma.onecConnection.findMany({ where: { isActive: true }, include: { organization: { select: { tenantId: true } } } }));
 
     for (const conn of connections) {
       const sc: SyncScope = { tenantId: conn.organization.tenantId, organizationId: conn.organizationId };
@@ -46,7 +47,7 @@ export class PullService {
       });
 
       for (const entity of entities) {
-        await this.pullEntity(client, sc, conn.id, conn.baseCode, entity);
+        await runAsTenant(sc.tenantId, () => this.pullEntity(client, sc, conn.id, conn.baseCode, entity));
       }
     }
   }

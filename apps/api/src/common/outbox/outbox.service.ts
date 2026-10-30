@@ -5,6 +5,8 @@ export interface OutboxEntry {
   idempotencyKey: string;
   entity: string;
   localId: string;
+  /** Клиент записи (FP-009). Не задан — из контекста транзакции (SET LOCAL flowpos.tenant_id). */
+  tenantId?: string;
   connectionId?: string;
   operation: 'CREATE' | 'UPDATE' | 'DELETE' | 'POST' | 'UNPOST';
   payload: object;
@@ -21,6 +23,7 @@ export class OutboxService {
         idempotencyKey: entry.idempotencyKey,
         entity: entry.entity,
         localId: entry.localId,
+        ...(entry.tenantId ? { tenantId: entry.tenantId } : {}),
         connectionId: entry.connectionId ?? null,
         operation: entry.operation,
         payload: entry.payload,

@@ -4,6 +4,7 @@ import { AccError } from '../common/acc-error';
 import { OrgContext } from '../access/org-context';
 import { KZ_CHART, KZ_CHART_CODE, KZ_CHART_VERSION, DIM_COLUMNS, Dim } from './kz-chart.data';
 import { PostingService } from '../core/posting.service';
+import { runAsSystem } from '../../../common/db-context';
 
 const CURRENCIES = [
   { code: 'KZT', numericCode: '398', name: 'Казахстанский тенге', nameKk: 'Қазақстан теңгесі' },
@@ -21,7 +22,8 @@ export class ChartService implements OnModuleInit {
   /** Идемпотентная загрузка типового плана счетов, валют, ставок НДС и политик по умолчанию. */
   async onModuleInit() {
     try {
-      await this.bootstrap();
+      // Общий план счетов и справочники — для всех клиентов: разворачиваются в системном режиме БД (FP-009).
+      await runAsSystem(() => this.bootstrap());
     } catch (e: any) {
       this.log.error(`Bootstrap бухгалтерии не выполнен: ${e.message}`);
     }
