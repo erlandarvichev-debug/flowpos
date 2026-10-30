@@ -7,6 +7,8 @@
 -- Аргументы триггера: столбец, ссылка, таблица родителя, столбец родителя.
 -- Ссылка '' — родителя нет. Для tenant_id последний шаг — единственный клиент в БД; клиентов
 -- несколько — значение обязано прийти от кода или из SET LOCAL flowpos.tenant_id, иначе NOT NULL.
+-- Пятый аргумент 'fallback' для organization_id — так же единственная организация в БД (старые кадровые
+-- таблицы, где родителя может не быть); иначе значение обязано прийти от кода.
 CREATE OR REPLACE FUNCTION fp_fill_scope() RETURNS trigger AS $$
 DECLARE
   col  text := TG_ARGV[0];
@@ -28,6 +30,9 @@ BEGIN
   END IF;
   IF val IS NULL AND col = 'tenant_id' THEN
     SELECT CASE WHEN count(*) = 1 THEN min(id) END INTO val FROM tenants;
+  END IF;
+  IF val IS NULL AND col = 'organization_id' AND TG_NARGS > 4 AND TG_ARGV[4] = 'fallback' THEN
+    SELECT CASE WHEN count(*) = 1 THEN min(id) END INTO val FROM organizations;
   END IF;
   IF val IS NOT NULL THEN
     NEW := jsonb_populate_record(NEW, jsonb_build_object(col, val));

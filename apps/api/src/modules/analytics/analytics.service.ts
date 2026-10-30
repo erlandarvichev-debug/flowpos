@@ -31,7 +31,7 @@ export class AnalyticsService {
       }),
       this.prisma.pOSShift.count({ where: { status: 'OPEN', terminal: { organizationId: s.organizationId } } }),
       this.prisma.stock.count({ where: { qty: { lt: 5, gt: 0 }, store: { organizationId: s.organizationId } } }),
-      this.prisma.employee.count({ where: { isActive: true } }),
+      this.prisma.employee.count({ where: { isActive: true, organizationId: s.organizationId } }),
       this.getSalesByDay(s, from, to),
       this.getTopItems(s, from, to),
     ]);
@@ -115,9 +115,9 @@ export class AnalyticsService {
     const to = new Date(period.to);
 
     const [totalEmployees, avgHours] = await Promise.all([
-      this.prisma.employee.count({ where: { isActive: true } }),
+      this.prisma.employee.count({ where: { isActive: true, organizationId: s.organizationId } }),
       this.prisma.timeSheetRow.aggregate({
-        where: { timeSheet: { year: from.getFullYear(), month: from.getMonth() + 1 } },
+        where: { organizationId: s.organizationId, timeSheet: { year: from.getFullYear(), month: from.getMonth() + 1 } },
         _avg: { hoursWorked: true },
       }),
     ]);

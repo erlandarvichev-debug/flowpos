@@ -527,6 +527,8 @@ model Store {
   posTerminals POSTerminal[]
   documents    Document[]   @relation("DocumentStore")
   docTransfers Document[]   @relation("DocumentStoreTo")
+  shiftPlans   ShiftPlan[]
+  openShifts   OpenShift[]
 
   @@unique([onecBase, onecGuid])
   @@unique([msAccountId, msId])
@@ -857,9 +859,11 @@ model Department {
 model Position {
   id   String @id @default(uuid())
   name String
+  organizationId String   @default(dbgenerated("NULLIF(current_setting('flowpos.organization_id', true), '')")) @map("organization_id")
 
   employees Employee[]
 
+  @@unique([organizationId, id])
   @@map("positions")
 }
 
@@ -871,17 +875,20 @@ model WorkSchedule {
   duration  Float
   breakTime Float  @default(0) @map("break_time")
   isActive  Boolean @default(true) @map("is_active")
+  organizationId String   @default(dbgenerated("NULLIF(current_setting('flowpos.organization_id', true), '')")) @map("organization_id")
 
   employees     Employee[]
   shiftPlans    ShiftPlan[]
   openShifts    OpenShift[]
 
+  @@unique([organizationId, id])
   @@map("work_schedules")
 }
 
 model Employee {
   id             String         @id @default(uuid())
   userId         String?        @unique @map("user_id")
+  organizationId String   @default(dbgenerated("NULLIF(current_setting('flowpos.organization_id', true), '')")) @map("organization_id")
   firstName      String         @map("first_name")
   lastName       String         @map("last_name")
   middleName     String?        @map("middle_name")
@@ -906,9 +913,9 @@ model Employee {
   updatedAt      DateTime       @updatedAt @map("updated_at")
 
   user          User?          @relation(fields: [userId], references: [id])
-  department    Department?    @relation(fields: [departmentId], references: [id])
-  position      Position?      @relation(fields: [positionId], references: [id])
-  workSchedule  WorkSchedule?  @relation(fields: [workScheduleId], references: [id])
+  department    Department?    @relation(fields: [organizationId, departmentId], references: [organizationId, id])
+  position      Position?      @relation(fields: [organizationId, positionId], references: [organizationId, id])
+  workSchedule  WorkSchedule?  @relation(fields: [organizationId, workScheduleId], references: [organizationId, id])
   timeEvents    TimeEvent[]
   timeSheetRows TimeSheetRow[]
   shiftResponses ShiftResponse[]
@@ -917,6 +924,8 @@ model Employee {
 
   @@unique([onecBase, onecGuid])
   @@index([lastName, firstName])
+  @@unique([organizationId, id])
+  @@index([organizationId])
   @@map("employees")
 }
 
@@ -969,6 +978,7 @@ model DemandForecast {
 model ShiftPlan {
   id              String   @id @default(uuid())
   storeId         String   @map("store_id")
+  organizationId  String   @default(dbgenerated("NULLIF(current_setting('flowpos.organization_id', true), '')")) @map("organization_id")
   date            DateTime
   shift           String
   positionId      String?  @map("position_id")
@@ -977,7 +987,8 @@ model ShiftPlan {
   actualCount     Int?     @map("actual_count")
   createdAt       DateTime @default(now()) @map("created_at")
 
-  workSchedule WorkSchedule? @relation(fields: [workScheduleId], references: [id])
+  store        Store         @relation(fields: [organizationId, storeId], references: [organizationId, id])
+  workSchedule WorkSchedule? @relation(fields: [organizationId, workScheduleId], references: [organizationId, id])
 
   @@index([storeId, date])
   @@map("shift_plans")
@@ -987,6 +998,7 @@ model ShiftPlan {
 model OpenShift {
   id             String          @id @default(uuid())
   storeId        String          @map("store_id")
+  organizationId String   @default(dbgenerated("NULLIF(current_setting('flowpos.organization_id', true), '')")) @map("organization_id")
   date           DateTime
   shift          String
   positionId     String?         @map("position_id")
@@ -997,9 +1009,11 @@ model OpenShift {
   createdAt      DateTime        @default(now()) @map("created_at")
   updatedAt      DateTime        @updatedAt @map("updated_at")
 
-  workSchedule WorkSchedule? @relation(fields: [workScheduleId], references: [id])
+  store        Store           @relation(fields: [organizationId, storeId], references: [organizationId, id])
+  workSchedule WorkSchedule? @relation(fields: [organizationId, workScheduleId], references: [organizationId, id])
   responses    ShiftResponse[]
 
+  @@unique([organizationId, id])
   @@index([storeId, date])
   @@map("open_shifts")
 }
@@ -1019,12 +1033,13 @@ model ShiftResponse {
   id          String               @id @default(uuid())
   openShiftId String               @map("open_shift_id")
   employeeId  String               @map("employee_id")
+  organizationId String   @default(dbgenerated("NULLIF(current_setting('flowpos.organization_id', true), '')")) @map("organization_id")
   status      ShiftResponseStatus  @default(OFFERED)
   respondedAt DateTime?            @map("responded_at")
   createdAt   DateTime             @default(now()) @map("created_at")
 
-  openShift OpenShift @relation(fields: [openShiftId], references: [id])
-  employee  Employee  @relation(fields: [employeeId], references: [id])
+  openShift OpenShift @relation(fields: [organizationId, openShiftId], references: [organizationId, id])
+  employee  Employee  @relation(fields: [organizationId, employeeId], references: [organizationId, id])
 
   @@unique([openShiftId, employeeId])
   @@map("shift_responses")
@@ -1132,13 +1147,15 @@ model TimeSheet {
   id     String          @id @default(uuid())
   month  Int
   year   Int
+  organizationId String   @default(dbgenerated("NULLIF(current_setting('flowpos.organization_id', true), '')")) @map("organization_id")
   status TimeSheetStatus @default(DRAFT)
   createdAt DateTime     @default(now()) @map("created_at")
   updatedAt DateTime     @updatedAt @map("updated_at")
 
   rows TimeSheetRow[]
 
-  @@unique([month, year])
+  @@unique([organizationId, month, year])
+  @@unique([organizationId, id])
   @@map("time_sheets")
 }
 
@@ -1152,14 +1169,15 @@ model TimeSheetRow {
   id           String    @id @default(uuid())
   timeSheetId  String    @map("time_sheet_id")
   employeeId   String    @map("employee_id")
+  organizationId String   @default(dbgenerated("NULLIF(current_setting('flowpos.organization_id', true), '')")) @map("organization_id")
   daysWorked   Float     @default(0) @map("days_worked")
   hoursWorked  Float     @default(0) @map("hours_worked")
   hoursNight   Float     @default(0) @map("hours_night")
   hoursHoliday Float     @default(0) @map("hours_holiday")
   absenceType  String?   @map("absence_type")
 
-  timeSheet TimeSheet @relation(fields: [timeSheetId], references: [id], onDelete: Cascade)
-  employee  Employee  @relation(fields: [employeeId], references: [id])
+  timeSheet TimeSheet @relation(fields: [organizationId, timeSheetId], references: [organizationId, id], onDelete: Cascade)
+  employee  Employee  @relation(fields: [organizationId, employeeId], references: [organizationId, id])
 
   @@unique([timeSheetId, employeeId])
   @@map("time_sheet_rows")
@@ -1422,7 +1440,7 @@ model HrContract {
   updatedAt             DateTime  @updatedAt @map("updated_at")
 
   individual   Individual          @relation(fields: [organizationId, individualId], references: [organizationId, id], onDelete: Restrict)
-  employee     Employee?           @relation(fields: [employeeId], references: [id])
+  employee     Employee?           @relation(fields: [organizationId, employeeId], references: [organizationId, id])
   history      EmploymentHistory[]
   bankDetails  EmployeeBankDetail[]
   accruals     OneTimeAccrual[]

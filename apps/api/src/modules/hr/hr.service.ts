@@ -1,15 +1,20 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { Scope, scopeError, writable } from '../../common/scope';
 
+const own = (s: Scope) => ({ organizationId: s.organizationId });
+
+/** Кадры старого модуля: сотрудники, отметки, графики, табель, начисления — только своей организации (FP-007). */
 @Injectable()
 export class HrService {
   constructor(private prisma: PrismaService) {}
 
-  async findEmployees(query: { search?: string; isActive?: boolean; page?: number; limit?: number }) {
+  async findEmployees(s: Scope, query: { search?: string; isActive?: boolean; page?: number; limit?: number }) {
     const page = Number(query.page) || 1;
     const limit = Number(query.limit) || 50;
     const skip = (page - 1) * limit;
-    const where: any = {};
+    const where: Prisma.EmployeeWhereInput = { ...own(s) };
     if (query.isActive !== undefined) where.isActive = query.isActive;
     if (query.search) {
       where.OR = [
@@ -28,37 +33,51 @@ export class HrService {
     return { employees, total, page, limit };
   }
 
-  async findEmployee(id: string) {
-    const emp = await this.prisma.employee.findUnique({
-      where: { id },
+  async findEmployee(s: Scope, id: string) {
+    const emp = await this.prisma.employee.findFirst({
+      where: { id, ...own(s) },
       include: { timeEvents: { orderBy: { ts: 'desc' }, take: 30 } },
     });
     if (!emp) throw new NotFoundException('Сотрудник не найден');
     return emp;
   }
 
-  async createEmployee(data: any) {
-    return this.prisma.employee.create({ data });
+  /** Пользователь, привязанный к сотруднику, — только своей организации. */
+  private async assertUser(s: Scope, userId?: string | null) {
+    if (userId && !(await this.prisma.user.findFirst({ where: { id: userId, ...own(s) }, select: { id: true } }))) {
+      throw new BadRequestException({ code: 'REF_FOREIGN', message: 'Указан пользователь, которого нет в этой организации' });
+    }
   }
 
-  async updateEmployee(id: string, data: any) {
-    await this.findEmployee(id);
-    return this.prisma.employee.update({ where: { id }, data });
+  async createEmployee(s: Scope, body: any) {
+    const { data } = writable(body, s);
+    await this.assertUser(s, (data as any).userId);
+    return this.prisma.employee.create({ data: { ...(data as any), ...own(s) } }).catch(scopeError);
   }
 
-  async checkIn(employeeId: string) {
+  async updateEmployee(s: Scope, id: string, body: any) {
+    await this.findEmployee(s, id);
+    const { data } = writable(body, s);
+    await this.assertUser(s, (data as any).userId);
+    return this.prisma.employee.update({ where: { id }, data: data as any }).catch(scopeError);
+  }
+
+  async checkIn(s: Scope, employeeId: string) {
+    await this.findEmployee(s, employeeId);
     return this.prisma.timeEvent.create({
       data: { employeeId, type: 'IN', ts: new Date() },
     });
   }
 
-  async checkOut(employeeId: string) {
+  async checkOut(s: Scope, employeeId: string) {
+    await this.findEmployee(s, employeeId);
     return this.prisma.timeEvent.create({
       data: { employeeId, type: 'OUT', ts: new Date() },
     });
   }
 
-  async getTimeRecords(employeeId: string, from?: string, to?: string) {
+  async getTimeRecords(s: Scope, employeeId: string, from?: string, to?: string) {
+    await this.findEmployee(s, employeeId);
     const where: any = { employeeId };
     if (from || to) {
       where.ts = {};
@@ -71,16 +90,18 @@ export class HrService {
     });
   }
 
-  async findShiftTemplates() {
-    return this.prisma.workSchedule.findMany({ where: { isActive: true }, orderBy: { name: 'asc' } });
+  async findShiftTemplates(s: Scope) {
+    return this.prisma.workSchedule.findMany({ where: { ...own(s), isActive: true }, orderBy: { name: 'asc' } });
   }
 
-  async createShiftTemplate(data: any) {
-    return this.prisma.workSchedule.create({ data });
+  async createShiftTemplate(s: Scope, body: any) {
+    const { data } = writable(body, s);
+    return this.prisma.workSchedule.create({ data: { ...(data as any), ...own(s) } }).catch(scopeError);
   }
 
-  async getSchedule(from: string, to: string, storeId?: string) {
-    const where: any = {
+  async getSchedule(s: Scope, from: string, to: string, storeId?: string) {
+    const where: Prisma.ShiftPlanWhereInput = {
+      ...own(s),
       date: { gte: new Date(from), lte: new Date(to) },
     };
     if (storeId) where.storeId = storeId;
@@ -91,23 +112,27 @@ export class HrService {
     });
   }
 
-  async assignShift(data: any) {
-    return this.prisma.shiftPlan.create({ data });
+  async assignShift(s: Scope, body: any) {
+    const { data } = writable(body, s);
+    return this.prisma.shiftPlan.create({ data: { ...(data as any), ...own(s) } }).catch(scopeError);
   }
 
-  async updateShiftAssignment(id: string, data: any) {
-    return this.prisma.shiftPlan.update({ where: { id }, data });
+  async updateShiftAssignment(s: Scope, id: string, body: any) {
+    if (!(await this.prisma.shiftPlan.findFirst({ where: { id, ...own(s) }, select: { id: true } }))) throw new NotFoundException('Смена не найдена');
+    const { data } = writable(body, s);
+    return this.prisma.shiftPlan.update({ where: { id }, data: data as any }).catch(scopeError);
   }
 
-  async getTimesheet(month: number, year: number) {
+  async getTimesheet(s: Scope, month: number, year: number) {
+    const key = { organizationId_month_year: { organizationId: s.organizationId, month, year } };
     let timesheet = await this.prisma.timeSheet.findUnique({
-      where: { month_year: { month, year } },
+      where: key,
       include: { rows: true },
     });
 
     if (!timesheet) {
       timesheet = await this.prisma.timeSheet.create({
-        data: { month, year },
+        data: { ...own(s), month, year },
         include: { rows: true },
       });
     }
@@ -115,12 +140,12 @@ export class HrService {
     return timesheet;
   }
 
-  async calculateTimesheet(month: number, year: number) {
+  async calculateTimesheet(s: Scope, month: number, year: number) {
     const start = new Date(year, month - 1, 1);
     const end = new Date(year, month, 0, 23, 59, 59);
 
-    const employees = await this.prisma.employee.findMany({ where: { isActive: true } });
-    const timesheet = await this.getTimesheet(month, year);
+    const employees = await this.prisma.employee.findMany({ where: { ...own(s), isActive: true } });
+    const timesheet = await this.getTimesheet(s, month, year);
 
     for (const employee of employees) {
       const events = await this.prisma.timeEvent.findMany({
@@ -132,18 +157,18 @@ export class HrService {
 
       await this.prisma.timeSheetRow.upsert({
         where: { timeSheetId_employeeId: { timeSheetId: timesheet.id, employeeId: employee.id } },
-        create: { timeSheetId: timesheet.id, employeeId: employee.id, daysWorked, hoursWorked },
+        create: { timeSheetId: timesheet.id, employeeId: employee.id, ...own(s), daysWorked, hoursWorked },
         update: { daysWorked, hoursWorked },
       });
     }
 
-    return this.getTimesheet(month, year);
+    return this.getTimesheet(s, month, year);
   }
 
-  async getPayrolls(query: { month?: number; year?: number; employeeId?: string }) {
-    const where: any = {};
-    if (query.month) where.month = query.month;
-    if (query.year) where.year = query.year;
+  async getPayrolls(s: Scope, query: { month?: number; year?: number; employeeId?: string }) {
+    const where: Prisma.PayrollWhereInput = { employee: own(s) };
+    if (query.month) where.month = Number(query.month);
+    if (query.year) where.year = Number(query.year);
     if (query.employeeId) where.employeeId = query.employeeId;
     return this.prisma.payroll.findMany({
       where,
@@ -152,10 +177,12 @@ export class HrService {
     });
   }
 
-  async createPayroll(data: any) {
+  async createPayroll(s: Scope, body: any) {
+    const { data } = writable(body, s);
+    await this.findEmployee(s, (data as any).employeeId);
     return this.prisma.payroll.create({
-      data,
+      data: data as any,
       include: { employee: true },
-    });
+    }).catch(scopeError);
   }
 }

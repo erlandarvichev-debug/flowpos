@@ -1,6 +1,7 @@
 import { Controller, Get, Post, Put, Param, Body, Query, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { CurrentScope, Scope } from '../../common/scope';
 import { HrService } from './hr.service';
 
 @ApiTags('hr')
@@ -11,82 +12,82 @@ export class HrController {
   constructor(private hr: HrService) {}
 
   @Get('employees')
-  findEmployees(@Query() query: any) {
-    return this.hr.findEmployees(query);
+  findEmployees(@CurrentScope() s: Scope, @Query() query: any) {
+    return this.hr.findEmployees(s, query);
   }
 
   @Get('employees/:id')
-  findEmployee(@Param('id') id: string) {
-    return this.hr.findEmployee(id);
+  findEmployee(@CurrentScope() s: Scope, @Param('id') id: string) {
+    return this.hr.findEmployee(s, id);
   }
 
   @Post('employees')
-  createEmployee(@Body() body: any) {
-    return this.hr.createEmployee(body);
+  createEmployee(@CurrentScope() s: Scope, @Body() body: any) {
+    return this.hr.createEmployee(s, body);
   }
 
   @Put('employees/:id')
-  updateEmployee(@Param('id') id: string, @Body() body: any) {
-    return this.hr.updateEmployee(id, body);
+  updateEmployee(@CurrentScope() s: Scope, @Param('id') id: string, @Body() body: any) {
+    return this.hr.updateEmployee(s, id, body);
   }
 
   @Post('employees/:id/check-in')
-  checkIn(@Param('id') id: string) {
-    return this.hr.checkIn(id);
+  checkIn(@CurrentScope() s: Scope, @Param('id') id: string) {
+    return this.hr.checkIn(s, id);
   }
 
   @Post('employees/:id/check-out')
-  checkOut(@Param('id') id: string) {
-    return this.hr.checkOut(id);
+  checkOut(@CurrentScope() s: Scope, @Param('id') id: string) {
+    return this.hr.checkOut(s, id);
   }
 
   @Get('employees/:id/time-records')
-  getTimeRecords(@Param('id') id: string, @Query('from') from?: string, @Query('to') to?: string) {
-    return this.hr.getTimeRecords(id, from, to);
+  getTimeRecords(@CurrentScope() s: Scope, @Param('id') id: string, @Query('from') from?: string, @Query('to') to?: string) {
+    return this.hr.getTimeRecords(s, id, from, to);
   }
 
   @Get('shift-templates')
-  findShiftTemplates() {
-    return this.hr.findShiftTemplates();
+  findShiftTemplates(@CurrentScope() s: Scope) {
+    return this.hr.findShiftTemplates(s);
   }
 
   @Post('shift-templates')
-  createShiftTemplate(@Body() body: any) {
-    return this.hr.createShiftTemplate(body);
+  createShiftTemplate(@CurrentScope() s: Scope, @Body() body: any) {
+    return this.hr.createShiftTemplate(s, body);
   }
 
   @Get('schedule')
-  getSchedule(@Query('from') from: string, @Query('to') to: string, @Query('employeeId') employeeId?: string) {
-    return this.hr.getSchedule(from, to, employeeId);
+  getSchedule(@CurrentScope() s: Scope, @Query('from') from: string, @Query('to') to: string, @Query('employeeId') employeeId?: string) {
+    return this.hr.getSchedule(s, from, to, employeeId);
   }
 
   @Post('schedule')
-  assignShift(@Body() body: any) {
-    return this.hr.assignShift(body);
+  assignShift(@CurrentScope() s: Scope, @Body() body: any) {
+    return this.hr.assignShift(s, body);
   }
 
   @Put('schedule/:id')
-  updateShift(@Param('id') id: string, @Body() body: any) {
-    return this.hr.updateShiftAssignment(id, body);
+  updateShift(@CurrentScope() s: Scope, @Param('id') id: string, @Body() body: any) {
+    return this.hr.updateShiftAssignment(s, id, body);
   }
 
   @Get('timesheet')
-  getTimesheet(@Query('month') month: string, @Query('year') year: string) {
-    return this.hr.getTimesheet(parseInt(month), parseInt(year));
+  getTimesheet(@CurrentScope() s: Scope, @Query('month') month: string, @Query('year') year: string) {
+    return this.hr.getTimesheet(s, parseInt(month), parseInt(year));
   }
 
   @Post('timesheet/calculate')
-  calculateTimesheet(@Body() body: { month: number; year: number }) {
-    return this.hr.calculateTimesheet(body.month, body.year);
+  calculateTimesheet(@CurrentScope() s: Scope, @Body() body: { month: number; year: number }) {
+    return this.hr.calculateTimesheet(s, body.month, body.year);
   }
 
   @Get('payrolls')
-  getPayrolls(@Query() query: any) {
-    return this.hr.getPayrolls(query);
+  getPayrolls(@CurrentScope() s: Scope, @Query() query: any) {
+    return this.hr.getPayrolls(s, query);
   }
 
   @Post('payrolls')
-  createPayroll(@Body() body: any) {
-    return this.hr.createPayroll(body);
+  createPayroll(@CurrentScope() s: Scope, @Body() body: any) {
+    return this.hr.createPayroll(s, body);
   }
 }

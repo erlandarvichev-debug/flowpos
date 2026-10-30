@@ -229,7 +229,7 @@ describe('Касса и валюта', () => {
     const t = await makeTrade(prisma, ctx, { vatPayer: false });
     const usd = await prisma.orgBankAccount.create({ data: { organizationId: ctx.organizationId, name: 'USD', iban: 'KZ12345USD0000000001', bic: 'HSBKKZKX', bankName: 'Банк', currency: 'USD' } });
     await prisma.currencyRate.upsert({ where: { currencyCode_date: { currencyCode: 'USD', date: new Date('2026-10-01') } }, create: { currencyCode: 'USD', date: new Date('2026-10-01'), rate: '512.34' }, update: { rate: '512.34' } });
-    const emp = await prisma.employee.create({ data: { firstName: 'Тест', lastName: 'Подотчётный' } });
+    const emp = await prisma.employee.create({ data: { organizationId: ctx.organizationId, firstName: 'Тест', lastName: 'Подотчётный' } });
     const post = async (docType: string, date: string, body: any) => s.docs.post(ctx, (await s.docs.create(ctx, { docType, date, body })).id);
 
     await post('BANK_IN', '2026-10-01', { bankAccountId: t.bank.id, operation: 'OTHER', corrAccount: '5030', amount: '100000.00' });

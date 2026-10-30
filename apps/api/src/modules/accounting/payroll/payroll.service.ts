@@ -84,11 +84,12 @@ export class PayrollService {
       });
       const busy = await tx.hrContract.findFirst({ where: { organizationId: ctx.organizationId, individualId: ind.id, status: 'ACTIVE', isMainJob: true } });
       if (busy && b.isMainJob !== false) throw new AccError('ALREADY_EMPLOYED', `${ind.lastName} ${ind.firstName} уже работает по основному договору № ${busy.contractNumber}`);
+      // Должности — свои у каждой организации (FP-007): чужую по id не взять, одноимённая у другой организации — не наша.
       const position = b.positionId
-        ? await tx.position.findUnique({ where: { id: b.positionId } })
-        : (await tx.position.findFirst({ where: { name: b.positionName ?? 'Сотрудник' } })) ?? (await tx.position.create({ data: { name: b.positionName ?? 'Сотрудник' } }));
+        ? await tx.position.findFirst({ where: { id: b.positionId, organizationId: ctx.organizationId } })
+        : (await tx.position.findFirst({ where: { organizationId: ctx.organizationId, name: b.positionName ?? 'Сотрудник' } })) ?? (await tx.position.create({ data: { organizationId: ctx.organizationId, name: b.positionName ?? 'Сотрудник' } }));
       if (!position) throw new AccError('REF_NOT_FOUND', 'Должность не найдена');
-      const employee = await tx.employee.create({ data: { firstName: b.firstName, lastName: b.lastName, middleName: b.middleName, inn: b.iin, departmentId: dept.id, positionId: position.id, hireDate: day(b.hireDate), salary } });
+      const employee = await tx.employee.create({ data: { organizationId: ctx.organizationId, firstName: b.firstName, lastName: b.lastName, middleName: b.middleName, inn: b.iin, departmentId: dept.id, positionId: position.id, hireDate: day(b.hireDate), salary } });
       const count = await tx.hrContract.count({ where: { organizationId: ctx.organizationId } });
       const contract = await tx.hrContract.create({
         data: {

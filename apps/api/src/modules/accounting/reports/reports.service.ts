@@ -283,12 +283,12 @@ export class ReportsService {
     const list = (k: string) => [...(ids[k] ?? [])];
     const org = ctx.organizationId;
     const [cps, contracts, products, stores, emps, depts, banks, boxes, projects, items, docs] = await Promise.all([
-      list('COUNTERPARTY').length ? this.prisma.counterparty.findMany({ where: { id: { in: list('COUNTERPARTY') }, OR: [{ organizationId: null }, { organizationId: org }] }, select: { id: true, name: true } }) : [],
-      list('CONTRACT').length ? this.prisma.contract.findMany({ where: { id: { in: list('CONTRACT') } }, select: { id: true, number: true } }) : [],
-      list('PRODUCT').length ? this.prisma.product.findMany({ where: { id: { in: list('PRODUCT') }, OR: [{ organizationId: null }, { organizationId: org }] }, select: { id: true, name: true } }) : [],
+      list('COUNTERPARTY').length ? this.prisma.counterparty.findMany({ where: { id: { in: list('COUNTERPARTY') }, tenantId: ctx.tenantId, OR: [{ organizationId: null }, { organizationId: org }] }, select: { id: true, name: true } }) : [],
+      list('CONTRACT').length ? this.prisma.contract.findMany({ where: { id: { in: list('CONTRACT') }, tenantId: ctx.tenantId, counterparty: { OR: [{ organizationId: null }, { organizationId: org }] } }, select: { id: true, number: true } }) : [],
+      list('PRODUCT').length ? this.prisma.product.findMany({ where: { id: { in: list('PRODUCT') }, tenantId: ctx.tenantId, OR: [{ organizationId: null }, { organizationId: org }] }, select: { id: true, name: true } }) : [],
       list('STORE').length ? this.prisma.store.findMany({ where: { id: { in: list('STORE') }, organizationId: org }, select: { id: true, name: true } }) : [],
-      list('EMPLOYEE').length ? this.prisma.employee.findMany({ where: { id: { in: list('EMPLOYEE') } }, select: { id: true, lastName: true, firstName: true } }) : [],
-      list('DEPARTMENT').length ? this.prisma.department.findMany({ where: { id: { in: list('DEPARTMENT') } }, select: { id: true, name: true } }) : [],
+      list('EMPLOYEE').length ? this.prisma.employee.findMany({ where: { id: { in: list('EMPLOYEE') }, organizationId: org }, select: { id: true, lastName: true, firstName: true } }) : [],
+      list('DEPARTMENT').length ? this.prisma.department.findMany({ where: { id: { in: list('DEPARTMENT') }, organizationId: org }, select: { id: true, name: true } }) : [],
       list('BANK_ACCOUNT').length ? this.prisma.orgBankAccount.findMany({ where: { id: { in: list('BANK_ACCOUNT') }, organizationId: org }, select: { id: true, name: true, iban: true } }) : [],
       list('CASHBOX').length ? this.prisma.cashbox.findMany({ where: { id: { in: list('CASHBOX') }, organizationId: org }, select: { id: true, name: true } }) : [],
       list('PROJECT').length ? this.prisma.project.findMany({ where: { id: { in: list('PROJECT') }, organizationId: org }, select: { id: true, name: true } }) : [],

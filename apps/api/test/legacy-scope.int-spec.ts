@@ -15,6 +15,9 @@ import { SalesService } from '../src/modules/trade/sales.service';
 import { PurchasesService } from '../src/modules/trade/purchases.service';
 import { StockOpsService } from '../src/modules/trade/stock-ops.service';
 import { PosService } from '../src/modules/pos/pos.service';
+import { HrService } from '../src/modules/hr/hr.service';
+import { PostingService } from '../src/modules/accounting/core/posting.service';
+import { ctxFor } from './accounting-helpers';
 import { DEFAULT_TENANT, defaultTenant } from './accounting-helpers';
 
 const prisma = new PrismaService();
@@ -28,6 +31,8 @@ const sales = new SalesService(prisma, outbox);
 const purchases = new PurchasesService(prisma, outbox);
 const stockOps = new StockOpsService(prisma);
 const pos = new PosService(prisma);
+const hr = new HrService(prisma);
+const posting = new PostingService(prisma);
 const uid = () => randomUUID().slice(0, 8);
 
 let t2: string;
@@ -69,6 +74,14 @@ afterAll(async () => {
   await prisma.product.deleteMany({ where: { tenantId: t2 } });
   await prisma.counterparty.deleteMany({ where: { tenantId: t2 } });
   await prisma.uom.deleteMany({ where: { tenantId: t2 } });
+  await prisma.timeSheetRow.deleteMany({ where: { organizationId: { in: orgs } } });
+  await prisma.timeSheet.deleteMany({ where: { organizationId: { in: orgs } } });
+  await prisma.timeEvent.deleteMany({ where: { employee: { organizationId: { in: orgs } } } });
+  await prisma.payroll.deleteMany({ where: { employee: { organizationId: { in: orgs } } } });
+  await prisma.shiftPlan.deleteMany({ where: { organizationId: { in: orgs } } });
+  await prisma.employee.deleteMany({ where: { organizationId: { in: orgs } } });
+  await prisma.position.deleteMany({ where: { organizationId: { in: orgs } } });
+  await prisma.workSchedule.deleteMany({ where: { organizationId: { in: orgs } } });
   await prisma.store.deleteMany({ where: { tenantId: t2 } });
   await prisma.user.deleteMany({ where: { tenantId: t2 } });
   await prisma.organization.deleteMany({ where: { id: { in: orgs } } });
@@ -224,6 +237,68 @@ describe('FP-007: торговля и касса', () => {
     expect(await code(pos.cashIn(A2, shift.id, 10))).toBe(404);
     const closed = await pos.closeShift(A, shift.id);
     expect(Number(closed.totalSales)).toBe(100);
+  });
+});
+
+describe('FP-007: кадры старого модуля', () => {
+  it('сотрудники, отметки и начисления — только своей организации', async () => {
+    const eA = await hr.createEmployee(A, { firstName: 'Айгерим', lastName: `A-${uid()}`, organizationId: undefined, tenantId: t2 });
+    const eB = await hr.createEmployee(B, { firstName: 'Бауыржан', lastName: `B-${uid()}` });
+    expect([eA.organizationId, eB.organizationId]).toEqual([A.organizationId, B.organizationId]);
+    expect(await code(hr.createEmployee(A, { firstName: 'х', lastName: 'х', organizationId: B.organizationId }))).toBe(403);
+
+    expect((await hr.findEmployees(A, { limit: 500 })).employees.map((e) => e.id)).not.toContain(eB.id);
+    expect((await hr.findEmployees(A2, { limit: 500 })).employees.map((e) => e.id)).not.toContain(eA.id);
+    expect(await code(hr.findEmployee(B, eA.id))).toBe(404);
+    expect(await code(hr.updateEmployee(B, eA.id, { lastName: 'захват' }))).toBe(404);
+    expect(await code(hr.checkIn(B, eA.id))).toBe(404);
+    expect(await code(hr.getTimeRecords(A2, eA.id))).toBe(404);
+    expect(await code(hr.createPayroll(B, { employeeId: eA.id, month: 10, year: 2026, baseSalary: 1, netAmount: 1 }))).toBe(404);
+    // Привязать сотрудника к пользователю другой организации нельзя
+    expect(await code(hr.updateEmployee(A, eA.id, { userId: B.userId }))).toBe('REF_FOREIGN');
+  });
+
+  it('табель — свой у каждой организации за тот же месяц; расчёт берёт только своих сотрудников', async () => {
+    const eA = await hr.createEmployee(A, { firstName: 'Т', lastName: `A-${uid()}` });
+    const eB = await hr.createEmployee(B, { firstName: 'Т', lastName: `B-${uid()}` });
+    await hr.checkIn(A, eA.id);
+    await hr.checkIn(B, eB.id);
+    const now = new Date();
+    const tsA = await hr.calculateTimesheet(A, now.getMonth() + 1, now.getFullYear());
+    const tsB = await hr.calculateTimesheet(B, now.getMonth() + 1, now.getFullYear());
+    expect(tsA.id).not.toBe(tsB.id);
+    expect(tsA.rows.map((r) => r.employeeId)).toContain(eA.id);
+    expect(tsA.rows.map((r) => r.employeeId)).not.toContain(eB.id);
+    expect(tsB.rows.map((r) => r.employeeId)).toContain(eB.id);
+    expect(tsB.rows.map((r) => r.employeeId)).not.toContain(eA.id);
+    const orgsOfB = await prisma.employee.findMany({ where: { id: { in: tsB.rows.map((r) => r.employeeId) } }, select: { organizationId: true } });
+    expect([...new Set(orgsOfB.map((e) => e.organizationId))]).toEqual([B.organizationId]);
+  });
+
+  it('графики работы и смены — своей организации; склад другой организации в смене — 400', async () => {
+    const wsA = await hr.createShiftTemplate(A, { name: `График ${uid()}`, startTime: '09:00', endTime: '18:00', duration: 8 });
+    expect((await hr.findShiftTemplates(A2)).map((w) => w.id)).not.toContain(wsA.id);
+    const storeA = await stores.create(A, { name: `Склад ${uid()}` });
+    const storeA2 = await stores.create(A2, { name: `Склад ${uid()}` });
+    await hr.assignShift(A, { storeId: storeA.id, date: new Date(), shift: 'день', workScheduleId: wsA.id });
+    expect(await code(hr.assignShift(A, { storeId: storeA2.id, date: new Date(), shift: 'день' }))).toBe(400);
+    expect(await code(hr.assignShift(A2, { storeId: storeA2.id, date: new Date(), shift: 'день', workScheduleId: wsA.id }))).toBe(400);
+  });
+
+  it('аналитика «сотрудник» в проводке — только своей организации', async () => {
+    const eA = await hr.createEmployee(A, { firstName: 'П', lastName: `A-${uid()}` });
+    const eA2 = await hr.createEmployee(A2, { firstName: 'П', lastName: `A2-${uid()}` });
+    const chart = await prisma.accChart.findFirstOrThrow({ where: { code: 'KZ-TYPICAL' } });
+    const acc = await prisma.accAccount.findFirstOrThrow({ where: { organizationId: null, isGroup: false, dims: { has: 'EMPLOYEE' }, requiredDims: { isEmpty: true } } });
+    const write = (employeeId: string) => prisma.$transaction(async (tx) => {
+      await tx.accPolicy.upsert({ where: { id: `p-${A.organizationId}` }, create: { id: `p-${A.organizationId}`, organizationId: A.organizationId, validFrom: new Date('2020-01-01'), chartId: chart.id }, update: {} });
+      return posting.writeEntry(tx, ctxFor(A.organizationId, A.userId, 'chief_accountant'), {
+        sourceType: 'TEST', sourceId: uid(), sourceVersion: 1, ruleCode: 'T', ruleVersion: '1', date: new Date('2026-10-15'),
+        postings: [{ account: acc.code, side: 'D', amount: '10', dims: { EMPLOYEE: employeeId } }, { account: '5030', side: 'C', amount: '10' }],
+      });
+    });
+    expect(await code(write(eA2.id))).toBe('REF_FOREIGN');
+    expect(await code(write(eA.id))).toBe('OK');
   });
 });
 

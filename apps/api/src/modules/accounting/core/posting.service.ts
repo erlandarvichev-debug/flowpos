@@ -108,7 +108,7 @@ export class PostingService {
   /**
    * Аналитики проводок принадлежат клиенту и организации записи (FP-007). Справочник клиента без организации
    * (товар, контрагент) — общий для его организаций; объекты организации (склад, счёт, касса, проект, статья,
-   * подразделение) — только свои. Сотрудник и документ расчётов пока не привязаны к организации — FP-007 фаза 3.
+   * подразделение, сотрудник) — только свои. Документ расчётов (SETTLEMENT_DOC) не проверяется: ссылается на документы разных видов.
    */
   private async checkDimOwnership(tx: Prisma.TransactionClient, ctx: OrgContext, rows: Record<string, any>[]) {
     const ids = (col: string) => [...new Set(rows.map((r) => r[col]).filter(Boolean) as string[])];
@@ -120,6 +120,7 @@ export class PostingService {
       ['CONTRACT', ids('contractId'), (x) => tx.contract.count({ where: { id: { in: x }, tenantId: ctx.tenantId, counterparty: { OR: [{ organizationId: null }, { organizationId: org }] } } })],
       ['STORE', ids('storeId'), (x) => tx.store.count({ where: { id: { in: x }, organizationId: org } })],
       ['DEPARTMENT', ids('departmentId'), (x) => tx.department.count({ where: { id: { in: x }, organizationId: org } })],
+      ['EMPLOYEE', ids('employeeId'), (x) => tx.employee.count({ where: { id: { in: x }, organizationId: org } })],
       ['BANK_ACCOUNT', ids('bankAccountId'), (x) => tx.orgBankAccount.count({ where: { id: { in: x }, organizationId: org } })],
       ['CASHBOX', ids('cashboxId'), (x) => tx.cashbox.count({ where: { id: { in: x }, organizationId: org } })],
       ['PROJECT', ids('projectId'), (x) => tx.project.count({ where: { id: { in: x }, organizationId: org } })],
