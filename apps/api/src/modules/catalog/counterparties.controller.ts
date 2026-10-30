@@ -1,6 +1,7 @@
 import { Controller, Get, Post, Put, Delete, Param, Body, Query, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { CurrentScope, Scope } from '../../common/scope';
 import { CounterpartiesService } from './counterparties.service';
 
 @ApiTags('catalog/counterparties')
@@ -11,32 +12,32 @@ export class CounterpartiesController {
   constructor(private cp: CounterpartiesService) {}
 
   @Get()
-  findAll(@Query() query: any) {
-    return this.cp.findAll(query);
+  findAll(@CurrentScope() s: Scope, @Query() query: any) {
+    return this.cp.findAll(s, query);
   }
 
   @Get('groups')
-  findGroups() {
-    return this.cp.findGroups();
+  findGroups(@CurrentScope() s: Scope) {
+    return this.cp.findGroups(s);
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.cp.findOne(id);
+  findOne(@CurrentScope() s: Scope, @Param('id') id: string) {
+    return this.cp.findOne(s, id);
   }
 
   @Post()
-  create(@Body() body: any) {
-    return this.cp.create(body);
+  create(@CurrentScope() s: Scope, @Body() body: any) {
+    return this.cp.create(s, body);
   }
 
   @Put(':id')
-  update(@Param('id') id: string, @Body() body: any) {
-    return this.cp.update(id, body);
+  update(@CurrentScope() s: Scope, @Param('id') id: string, @Body() body: any) {
+    return this.cp.update(s, id, body);
   }
 
   @Delete(':id')
-  archive(@Param('id') id: string) {
-    return this.cp.archive(id);
+  archive(@CurrentScope() s: Scope, @Param('id') id: string) {
+    return this.cp.archive(s, id);
   }
 }

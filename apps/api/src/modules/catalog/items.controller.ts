@@ -1,6 +1,7 @@
 import { Controller, Get, Post, Put, Delete, Param, Body, Query, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { CurrentScope, Scope } from '../../common/scope';
 import { ItemsService } from './items.service';
 
 @ApiTags('catalog/items')
@@ -11,42 +12,42 @@ export class ItemsController {
   constructor(private items: ItemsService) {}
 
   @Get()
-  findAll(@Query() query: any) {
-    return this.items.findAll(query);
+  findAll(@CurrentScope() s: Scope, @Query() query: any) {
+    return this.items.findAll(s, query);
   }
 
   @Get('groups')
-  findGroups() {
-    return this.items.findGroups();
+  findGroups(@CurrentScope() s: Scope) {
+    return this.items.findGroups(s);
   }
 
   @Get('units')
-  findUnits() {
-    return this.items.findUnits();
+  findUnits(@CurrentScope() s: Scope) {
+    return this.items.findUnits(s);
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.items.findOne(id);
+  findOne(@CurrentScope() s: Scope, @Param('id') id: string) {
+    return this.items.findOne(s, id);
   }
 
   @Get(':id/stock')
-  getStock(@Param('id') id: string) {
-    return this.items.getStock(id);
+  getStock(@CurrentScope() s: Scope, @Param('id') id: string) {
+    return this.items.getStock(s, id);
   }
 
   @Post()
-  create(@Body() body: any) {
-    return this.items.create(body);
+  create(@CurrentScope() s: Scope, @Body() body: any) {
+    return this.items.create(s, body);
   }
 
   @Put(':id')
-  update(@Param('id') id: string, @Body() body: any) {
-    return this.items.update(id, body);
+  update(@CurrentScope() s: Scope, @Param('id') id: string, @Body() body: any) {
+    return this.items.update(s, id, body);
   }
 
   @Delete(':id')
-  archive(@Param('id') id: string) {
-    return this.items.archive(id);
+  archive(@CurrentScope() s: Scope, @Param('id') id: string) {
+    return this.items.archive(s, id);
   }
 }

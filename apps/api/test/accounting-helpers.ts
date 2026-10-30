@@ -79,7 +79,7 @@ export async function makeTrade(prisma: PrismaService, ctx: OrgContext, opts: { 
     where: { organizationId: ctx.organizationId },
     data: { vatPayer: opts.vatPayer ?? true, inventoryMethod: opts.method ?? 'FIFO', allowNegativeStock: !!opts.allowNegative },
   });
-  const uom = await prisma.uom.create({ data: { name: 'штука', shortName: 'шт' } });
+  const uom = await prisma.uom.create({ data: { tenantId: ctx.tenantId, name: 'штука', shortName: 'шт' } });
   const s1 = await prisma.store.create({ data: { name: 'Склад 1', organizationId: ctx.organizationId } });
   const s2 = await prisma.store.create({ data: { name: 'Магазин 2', organizationId: ctx.organizationId, isRetail: true } });
   const goods = await prisma.product.create({ data: { name: `Товар ${randomUUID().slice(0, 6)}`, uomId: uom.id, organizationId: ctx.organizationId } });

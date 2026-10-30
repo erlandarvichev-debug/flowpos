@@ -1,28 +1,31 @@
-import { Test, TestingModule } from '@nestjs/testing';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { ItemsService } from './items.service';
 import { PrismaService } from '../../prisma/prisma.service';
-import { NotFoundException } from '@nestjs/common';
+import { Scope } from '../../common/scope';
 
+// Модели Prisma: product / productGroup / uom / stock. Область (клиент + организация) — FP-007;
+// проверка на настоящей БД — test/legacy-scope.int-spec.ts.
 const mockPrisma = {
-  item: {
+  product: {
     findMany: jest.fn(),
     count: jest.fn(),
-    findUnique: jest.fn(),
+    findFirst: jest.fn(),
     create: jest.fn(),
     update: jest.fn(),
   },
   stock: { findMany: jest.fn() },
-  itemGroup: { findMany: jest.fn() },
-  unit: { findMany: jest.fn() },
+  productGroup: { findMany: jest.fn() },
+  uom: { findMany: jest.fn() },
 };
+
+const s: Scope = { tenantId: 't1', organizationId: 'org1', userId: 'u1' };
+const inScope = { tenantId: 't1', OR: [{ organizationId: null }, { organizationId: 'org1' }] };
 
 const mockItem = {
   id: 'item1',
   name: 'Ноутбук Dell',
   code: 'NB-001',
-  article: 'DELL-001',
-  isArchived: false,
-  unit: { id: 'uom1', name: 'шт' },
+  uom: { id: 'uom1', name: 'шт' },
   group: { id: 'g1', name: 'Электроника' },
   barcodes: [{ barcode: '4600000000001' }],
 };
@@ -30,158 +33,119 @@ const mockItem = {
 describe('ItemsService', () => {
   let service: ItemsService;
 
-  beforeEach(async () => {
+  beforeEach(() => {
     jest.clearAllMocks();
-
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        ItemsService,
-        { provide: PrismaService, useValue: mockPrisma },
-      ],
-    }).compile();
-
-    service = module.get<ItemsService>(ItemsService);
+    mockPrisma.product.create.mockReturnValue(Promise.resolve(mockItem));
+    mockPrisma.product.update.mockReturnValue(Promise.resolve(mockItem));
+    service = new ItemsService(mockPrisma as unknown as PrismaService);
   });
 
   describe('findAll', () => {
-    it('возвращает список товаров с пагинацией', async () => {
-      mockPrisma.item.findMany.mockResolvedValue([mockItem]);
-      mockPrisma.item.count.mockResolvedValue(1);
+    it('возвращает список товаров клиента с пагинацией', async () => {
+      mockPrisma.product.findMany.mockResolvedValue([mockItem]);
+      mockPrisma.product.count.mockResolvedValue(1);
 
-      const result = await service.findAll({});
+      const result = await service.findAll(s, {});
 
+      expect(result).toMatchObject({ total: 1, page: 1, pages: 1 });
       expect(result.items).toHaveLength(1);
-      expect(result.total).toBe(1);
-      expect(result.page).toBe(1);
-      expect(result.pages).toBe(1);
+      expect(mockPrisma.product.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { ...inScope, deleted: false } }));
     });
 
-    it('фильтрует по поиску', async () => {
-      mockPrisma.item.findMany.mockResolvedValue([]);
-      mockPrisma.item.count.mockResolvedValue(0);
+    it('поиск не отменяет область клиента', async () => {
+      mockPrisma.product.findMany.mockResolvedValue([]);
+      mockPrisma.product.count.mockResolvedValue(0);
 
-      await service.findAll({ search: 'Dell' });
+      await service.findAll(s, { search: 'dell' });
 
-      expect(mockPrisma.item.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({ OR: expect.any(Array) }),
-        }),
-      );
+      const where = mockPrisma.product.findMany.mock.calls[0][0].where;
+      expect(where).toMatchObject(inScope);
+      expect(where.AND[0].OR).toEqual([
+        { name: { contains: 'dell', mode: 'insensitive' } },
+        { code: { contains: 'dell', mode: 'insensitive' } },
+      ]);
     });
 
-    it('фильтрует по группе', async () => {
-      mockPrisma.item.findMany.mockResolvedValue([]);
-      mockPrisma.item.count.mockResolvedValue(0);
+    it('фильтрует по группе и учитывает page/limit', async () => {
+      mockPrisma.product.findMany.mockResolvedValue([]);
+      mockPrisma.product.count.mockResolvedValue(100);
 
-      await service.findAll({ groupId: 'g1' });
+      const result = await service.findAll(s, { groupId: 'g1', page: 3, limit: 10 });
 
-      expect(mockPrisma.item.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: expect.objectContaining({ groupId: 'g1' }),
-        }),
-      );
-    });
-
-    it('использует page и limit из запроса', async () => {
-      mockPrisma.item.findMany.mockResolvedValue([]);
-      mockPrisma.item.count.mockResolvedValue(100);
-
-      const result = await service.findAll({ page: 2, limit: 10 });
-
-      expect(result.page).toBe(2);
-      expect(result.limit).toBe(10);
+      expect(mockPrisma.product.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ groupId: 'g1' }), skip: 20, take: 10 }));
       expect(result.pages).toBe(10);
-      expect(mockPrisma.item.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({ skip: 10, take: 10 }),
-      );
     });
   });
 
   describe('findOne', () => {
-    it('возвращает товар по id', async () => {
-      mockPrisma.item.findUnique.mockResolvedValue(mockItem);
-      const result = await service.findOne('item1');
-      expect(result.name).toBe('Ноутбук Dell');
+    it('ищет товар только в области клиента', async () => {
+      mockPrisma.product.findFirst.mockResolvedValue(mockItem);
+      expect(await service.findOne(s, 'item1')).toEqual(mockItem);
+      expect(mockPrisma.product.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'item1', ...inScope } }));
     });
 
-    it('выбрасывает NotFoundException если товар не найден', async () => {
-      mockPrisma.item.findUnique.mockResolvedValue(null);
-      await expect(service.findOne('nonexistent')).rejects.toThrow(NotFoundException);
+    it('товар вне области — NotFoundException', async () => {
+      mockPrisma.product.findFirst.mockResolvedValue(null);
+      await expect(service.findOne(s, 'чужой')).rejects.toThrow(NotFoundException);
     });
   });
 
   describe('create', () => {
-    it('создаёт товар без штрихкодов', async () => {
-      mockPrisma.item.create.mockResolvedValue(mockItem);
-      const result = await service.create({ name: 'Ноутбук Dell', unitId: 'uom1' });
-      expect(mockPrisma.item.create).toHaveBeenCalled();
-      expect(result.name).toBe('Ноутбук Dell');
+    it('клиент — из области, общий справочник; id/клиент из тела игнорируются', async () => {
+      await service.create(s, { id: 'x', tenantId: 'чужой', name: 'Товар', uomId: 'uom1' });
+      const data = mockPrisma.product.create.mock.calls[0][0].data;
+      expect(data).toMatchObject({ name: 'Товар', uomId: 'uom1', tenantId: 't1', organizationId: null });
+      expect(data.id).toBeUndefined();
     });
 
-    it('создаёт товар со штрихкодами', async () => {
-      mockPrisma.item.create.mockResolvedValue(mockItem);
-      await service.create({ name: 'Товар', unitId: 'uom1', barcodes: [{ barcode: '123' }] });
+    it('личный товар — только своей организации; чужая — ForbiddenException', async () => {
+      await service.create(s, { name: 'Свой', uomId: 'uom1', organizationId: 'org1' });
+      expect(mockPrisma.product.create.mock.calls[0][0].data.organizationId).toBe('org1');
+      await expect(service.create(s, { name: 'Чужой', uomId: 'uom1', organizationId: 'org2' })).rejects.toThrow(ForbiddenException);
+    });
 
-      expect(mockPrisma.item.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({
-            barcodes: { create: [{ barcode: '123' }] },
-          }),
-        }),
-      );
+    it('создаёт штрихкоды без чужих полей', async () => {
+      await service.create(s, { name: 'Товар', uomId: 'uom1', barcodes: [{ barcode: '123', tenantId: 'чужой', productId: 'p' }] });
+      expect(mockPrisma.product.create.mock.calls[0][0].data.barcodes).toEqual({ create: [{ barcode: '123' }] });
     });
   });
 
-  describe('update', () => {
-    it('обновляет товар', async () => {
-      mockPrisma.item.findUnique.mockResolvedValue(mockItem);
-      mockPrisma.item.update.mockResolvedValue({ ...mockItem, name: 'Dell XPS' });
-
-      const result = await service.update('item1', { name: 'Dell XPS' });
-      expect(result.name).toBe('Dell XPS');
+  describe('update / archive', () => {
+    it('обновляет товар своей области без полей области', async () => {
+      mockPrisma.product.findFirst.mockResolvedValue(mockItem);
+      await service.update(s, 'item1', { name: 'Новое имя', tenantId: 'чужой' });
+      expect(mockPrisma.product.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'item1' }, data: { name: 'Новое имя' } }));
     });
 
-    it('выбрасывает NotFoundException при обновлении несуществующего', async () => {
-      mockPrisma.item.findUnique.mockResolvedValue(null);
-      await expect(service.update('bad-id', { name: 'X' })).rejects.toThrow(NotFoundException);
+    it('товар вне области не обновляется и не архивируется', async () => {
+      mockPrisma.product.findFirst.mockResolvedValue(null);
+      await expect(service.update(s, 'чужой', { name: 'x' })).rejects.toThrow(NotFoundException);
+      await expect(service.archive(s, 'чужой')).rejects.toThrow(NotFoundException);
+      expect(mockPrisma.product.update).not.toHaveBeenCalled();
     });
-  });
 
-  describe('archive', () => {
     it('архивирует товар', async () => {
-      mockPrisma.item.findUnique.mockResolvedValue(mockItem);
-      mockPrisma.item.update.mockResolvedValue({ ...mockItem, isArchived: true });
-
-      await service.archive('item1');
-
-      expect(mockPrisma.item.update).toHaveBeenCalledWith(
-        expect.objectContaining({ data: { isArchived: true } }),
-      );
+      mockPrisma.product.findFirst.mockResolvedValue(mockItem);
+      await service.archive(s, 'item1');
+      expect(mockPrisma.product.update).toHaveBeenCalledWith({ where: { id: 'item1' }, data: { deleted: true } });
     });
   });
 
-  describe('getStock', () => {
-    it('возвращает остатки по товару', async () => {
-      mockPrisma.stock.findMany.mockResolvedValue([{ qty: 10, warehouse: { name: 'Основной склад' } }]);
-      const result = await service.getStock('item1');
-      expect(result).toHaveLength(1);
-      expect(result[0].qty).toBe(10);
+  describe('справочники', () => {
+    it('остатки — по складам своей организации', async () => {
+      mockPrisma.product.findFirst.mockResolvedValue(mockItem);
+      mockPrisma.stock.findMany.mockResolvedValue([]);
+      await service.getStock(s, 'item1');
+      expect(mockPrisma.stock.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { productId: 'item1', store: { organizationId: 'org1' } } }));
     });
-  });
 
-  describe('findGroups', () => {
-    it('возвращает группы товаров', async () => {
-      mockPrisma.itemGroup.findMany.mockResolvedValue([{ id: 'g1', name: 'Электроника' }]);
-      const result = await service.findGroups();
-      expect(result).toHaveLength(1);
-    });
-  });
-
-  describe('findUnits', () => {
-    it('возвращает единицы измерения', async () => {
-      mockPrisma.unit.findMany.mockResolvedValue([{ id: 'u1', name: 'шт' }]);
-      const result = await service.findUnits();
-      expect(result).toHaveLength(1);
+    it('группы и единицы — своего клиента', async () => {
+      mockPrisma.productGroup.findMany.mockResolvedValue([]);
+      mockPrisma.uom.findMany.mockResolvedValue([]);
+      await service.findGroups(s);
+      await service.findUnits(s);
+      expect(mockPrisma.productGroup.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { tenantId: 't1' } }));
+      expect(mockPrisma.uom.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { tenantId: 't1' } }));
     });
   });
 });

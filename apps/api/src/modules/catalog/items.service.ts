@@ -1,21 +1,23 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { Scope, scopeError, tenantCatalog, writable } from '../../common/scope';
 
+/** Номенклатура: справочник клиента — общий для его организаций или личный для одной (FP-007). */
 @Injectable()
 export class ItemsService {
   constructor(private prisma: PrismaService) {}
 
-  async findAll(query: { search?: string; groupId?: string; page?: number; limit?: number }) {
+  async findAll(s: Scope, query: { search?: string; groupId?: string; page?: number; limit?: number }) {
     const page = Number(query.page) || 1;
     const limit = Number(query.limit) || 50;
     const skip = (page - 1) * limit;
 
-    const where: any = { deleted: false };
+    const where: any = { ...tenantCatalog(s), deleted: false };
     if (query.search) {
-      where.OR = [
+      where.AND = [{ OR: [
         { name: { contains: query.search, mode: 'insensitive' } },
         { code: { contains: query.search, mode: 'insensitive' } },
-      ];
+      ] }];
     }
     if (query.groupId) where.groupId = query.groupId;
 
@@ -33,9 +35,9 @@ export class ItemsService {
     return { items, total, page, limit, pages: Math.ceil(total / limit) };
   }
 
-  async findOne(id: string) {
-    const item = await this.prisma.product.findUnique({
-      where: { id },
+  async findOne(s: Scope, id: string) {
+    const item = await this.prisma.product.findFirst({
+      where: { id, ...tenantCatalog(s) },
       include: {
         uom: true,
         group: true,
@@ -47,44 +49,50 @@ export class ItemsService {
     return item;
   }
 
-  async create(data: any) {
-    const { barcodes, ...rest } = data;
+  async create(s: Scope, body: any) {
+    const { data, private: own } = writable(body, s, { privateAllowed: true });
+    const { barcodes, ...rest } = data as any;
     return this.prisma.product.create({
       data: {
         ...rest,
-        barcodes: barcodes ? { create: barcodes } : undefined,
+        tenantId: s.tenantId,
+        organizationId: own ? s.organizationId : null,
+        barcodes: barcodes ? { create: barcodes.map(({ id, tenantId, productId, ...b }: any) => b) } : undefined,
       },
       include: { uom: true, group: true, barcodes: true },
-    });
+    }).catch(scopeError);
   }
 
-  async update(id: string, data: any) {
-    await this.findOne(id);
-    const { barcodes, ...rest } = data;
+  async update(s: Scope, id: string, body: any) {
+    await this.findOne(s, id);
+    const { data } = writable(body, s);
+    const { barcodes, ...rest } = data as any;
     return this.prisma.product.update({
       where: { id },
       data: rest,
       include: { uom: true, group: true, barcodes: true },
-    });
+    }).catch(scopeError);
   }
 
-  async archive(id: string) {
-    await this.findOne(id);
+  async archive(s: Scope, id: string) {
+    await this.findOne(s, id);
     return this.prisma.product.update({ where: { id }, data: { deleted: true } });
   }
 
-  async getStock(id: string) {
+  /** Остатки товара — только по складам своей организации. */
+  async getStock(s: Scope, id: string) {
+    await this.findOne(s, id);
     return this.prisma.stock.findMany({
-      where: { productId: id },
+      where: { productId: id, store: { organizationId: s.organizationId } },
       include: { store: true },
     });
   }
 
-  async findGroups() {
-    return this.prisma.productGroup.findMany({ orderBy: { name: 'asc' } });
+  async findGroups(s: Scope) {
+    return this.prisma.productGroup.findMany({ where: { tenantId: s.tenantId }, orderBy: { name: 'asc' } });
   }
 
-  async findUnits() {
-    return this.prisma.uom.findMany({ orderBy: { name: 'asc' } });
+  async findUnits(s: Scope) {
+    return this.prisma.uom.findMany({ where: { tenantId: s.tenantId }, orderBy: { name: 'asc' } });
   }
 }
