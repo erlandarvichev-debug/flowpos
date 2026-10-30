@@ -163,12 +163,27 @@ export class AccountingController {
   @Post('esf/upload') @RequirePermission('acc.esf.send')
   esfUpload(@Org() ctx: OrgContext, @Body() b: any) { return this.esf.upload(ctx, b); }
 
-  /** Отзыв (исходящие), подтверждение/отклонение исправленных и дополнительных, подтверждение отзыва (входящие). */
-  @Post('esf/actions/data') @RequirePermission('acc.esf.send')
-  esfActionData(@Org() ctx: OrgContext, @Body() b: any) { return this.esf.actionData(ctx, b); }
+  /**
+   * FP-018: отзыв (исходящие), подтверждение/отклонение исправленных и дополнительных, подтверждение отзыва (входящие),
+   * привязка основания — только решением: предложить (с основанием) → утвердить (acc.esf.approve, MFA) → подписать → исполнить.
+   */
+  @Get('esf/decisions') @RequirePermission('acc.esf.read')
+  esfDecisions(@Org() ctx: OrgContext, @Query() q: any) { return this.esf.decisions(ctx, q); }
 
-  @Post('esf/actions') @RequirePermission('acc.esf.send')
-  esfAction(@Org() ctx: OrgContext, @Body() b: any) { return this.esf.action(ctx, b); }
+  @Post('esf/decisions') @RequirePermission('acc.esf.send')
+  esfPropose(@Org() ctx: OrgContext, @Body() b: any) { return this.esf.proposeDecision(ctx, b); }
+
+  @Post('esf/decisions/:id/approve') @RequirePermission('acc.esf.approve') @RequireMfa()
+  esfApprove(@Org() ctx: OrgContext, @Param('id') id: string, @Body() b: any) { return this.esf.approveDecision(ctx, id, b?.note); }
+
+  @Post('esf/decisions/:id/reject') @RequirePermission('acc.esf.read')
+  esfReject(@Org() ctx: OrgContext, @Param('id') id: string, @Body() b: any) { return this.esf.rejectDecision(ctx, id, b?.note); }
+
+  @Post('esf/decisions/:id/sign-data') @RequirePermission('acc.esf.send')
+  esfDecisionData(@Org() ctx: OrgContext, @Param('id') id: string) { return this.esf.decisionSigningData(ctx, id); }
+
+  @Post('esf/decisions/:id/execute') @RequirePermission('acc.esf.send')
+  esfExecute(@Org() ctx: OrgContext, @Param('id') id: string, @Body() b: any) { return this.esf.executeDecision(ctx, id, b); }
 
   @Post('esf/invoices/:id/release-unknown') @RequirePermission('acc.esf.send')
   esfReleaseUnknown(@Org() ctx: OrgContext, @Param('id') id: string, @Body() b: any) { return this.esf.releaseUnknown(ctx, id, b?.reason); }

@@ -15,6 +15,7 @@ import { runAsSystem, runAsTenant } from '../../../common/db-context';
 
 type Tx = Prisma.TransactionClient;
 export type EsfAction = 'REVOKE' | 'DECLINE' | 'APPROVE' | 'CONFIRM_REVOKE';
+export type EsfDecisionKind = EsfAction | 'LINK_BASIS';
 
 /** Документы бухгалтерии для ЭСФ: реализация → основной ЭСФ, возврат покупателя → дополнительный ЭСФ к ЭСФ реализации. */
 export const ESF_SOURCE_TYPES = ['DEMAND', 'SALES_RETURN'];
@@ -98,6 +99,21 @@ export class EsfService implements OnModuleInit, OnModuleDestroy {
       data.defaultGoodsOrigin = b.defaultGoodsOrigin || null;
     }
     if (b.autoPrepare !== undefined) data.autoPrepare = !!b.autoPrepare;
+    if (b.decisionRules !== undefined) {
+      // FP-018: срок и «четыре глаза» по видам решений задаёт методолог; юридические сроки в коде не зашиты.
+      const rules: Record<string, { deadlineDays?: number; fourEyes?: boolean }> = {};
+      for (const [kind, r] of Object.entries((b.decisionRules ?? {}) as Record<string, any>)) {
+        if (!EsfService.DECISION_KINDS.includes(kind as EsfDecisionKind)) throw new AccError('ESF_RULE', `Неизвестный вид решения: ${kind}`);
+        const rule: { deadlineDays?: number; fourEyes?: boolean } = {};
+        if (r?.deadlineDays != null) {
+          if (!Number.isInteger(r.deadlineDays) || r.deadlineDays < 1 || r.deadlineDays > 365) throw new AccError('ESF_RULE', `Срок для ${kind} — целое число дней от 1 до 365`);
+          rule.deadlineDays = r.deadlineDays;
+        }
+        if (r?.fourEyes != null) rule.fourEyes = !!r.fourEyes;
+        rules[kind] = rule;
+      }
+      data.decisionRules = rules;
+    }
     const before = await this.prisma.esfSettings.findUnique({ where: { organizationId: ctx.organizationId } });
     const after = await this.prisma.esfSettings.upsert({ where: { organizationId: ctx.organizationId }, create: { organizationId: ctx.organizationId, ...data }, update: data });
     await this.prisma.auditLog.create({ data: { userId: ctx.userId?.startsWith('system') ? null : ctx.userId, organizationId: ctx.organizationId, action: 'ESF_SETTINGS', entity: 'esf_settings', entityId: ctx.organizationId, before: before ? (JSON.parse(JSON.stringify(before, (_k, v) => (typeof v === 'bigint' ? v.toString() : v))) as any) : undefined, after: JSON.parse(JSON.stringify(after, (_k, v) => (typeof v === 'bigint' ? v.toString() : v))) as any } });
@@ -567,31 +583,174 @@ export class EsfService implements OnModuleInit, OnModuleDestroy {
     return action === 'REVOKE' || action === 'DECLINE' ? signableIdWithReasonList(ids.map((id) => ({ id, reason: String(reason).trim() }))) : signableIdList(ids);
   }
 
-  /** Строка для подписи «сырой» подписью ключом подписи (как generateSignature/signIdList в SDK). */
-  async actionData(ctx: OrgContext, b: { action: EsfAction; ids: string[]; reason?: string }) {
-    const { rows } = await this.actionRows(ctx, b.action, b.ids, b.reason);
-    const data = this.signable(b.action, rows, b.reason);
+  // ── Решения (FP-018): предложено → утверждено → исполнено ──
+  //
+  // Отзыв, отклонение, подтверждение исправленного/дополнительного ЭСФ, подтверждение отзыва и привязка
+  // основания — только решением человека: с основанием, ролью, сроком (если его задал методолог) и явным
+  // утверждением. Утверждение привязано к snapshot состояния ЭСФ; изменилось состояние — решение устарело.
+  // Техническое подтверждение получения (confirmInvoiceById) решением не является.
+
+  static readonly DECISION_KINDS: EsfDecisionKind[] = ['APPROVE', 'DECLINE', 'CONFIRM_REVOKE', 'REVOKE', 'LINK_BASIS'];
+  /** По умолчанию отзыв и отклонение утверждает другой человек (четыре глаза); правило организации может изменить. */
+  static readonly DEFAULT_FOUR_EYES: Record<EsfDecisionKind, boolean> = { REVOKE: true, DECLINE: true, APPROVE: false, CONFIRM_REVOKE: false, LINK_BASIS: false };
+  static readonly APPROVAL_TTL_MS = 24 * 60 * 60_000;
+  private static readonly OPEN = ['PROPOSED', 'APPROVED', 'EXECUTING'];
+
+  private snapshot(kind: string, rows: any[], reason: string | null, basis: string, basisDocId: string | null) {
+    const state = [...rows].sort((a, b) => a.id.localeCompare(b.id)).map((r) => ({ id: r.id, status: r.status, esfStatus: r.esfStatus, bodyHash: r.bodyHash, registrationNumber: r.registrationNumber, sourceDocId: r.sourceDocId }));
+    return sha256(JSON.stringify({ kind, reason, basis, basisDocId, state }));
+  }
+
+  private async decisionRows(ctx: OrgContext, kind: EsfDecisionKind, ids: string[], reason: string | null, basisDocId: string | null) {
+    if (kind !== 'LINK_BASIS') return (await this.actionRows(ctx, kind, ids, reason ?? undefined)).rows;
+    if (ids?.length !== 1) throw new AccError('ESF_EMPTY', 'Основание привязывается к одному входящему ЭСФ');
+    const row = await this.prisma.esfInvoice.findFirst({ where: { id: ids[0], organizationId: ctx.organizationId, direction: 'INBOUND' } });
+    if (!row) throw new AccError('NOT_FOUND', 'ЭСФ не найден', { status: 404 });
+    const doc = basisDocId ? await this.prisma.document.findFirst({ where: { id: basisDocId, tenantId: ctx.tenantId, OR: [{ organizationId: ctx.organizationId }, { organizationId: null, store: { organizationId: ctx.organizationId } }] } }) : null;
+    if (!doc) throw new AccError('REF_FOREIGN', 'Документ-основание не найден в этой организации');
+    return [row];
+  }
+
+  async proposeDecision(ctx: OrgContext, b: { kind: EsfDecisionKind; ids: string[]; reason?: string; basis: string; basisDocId?: string }) {
+    if (!EsfService.DECISION_KINDS.includes(b?.kind)) throw new AccError('ESF_ACTION', 'Неизвестное решение по ЭСФ');
+    const basis = String(b.basis ?? '').trim();
+    if (basis.length < 5) throw new AccError('ESF_BASIS', 'Укажите основание решения: что проверено (документ, переписка, сверка)');
+    const reason = String(b.reason ?? '').trim() || null;
+    const basisDocId = b.kind === 'LINK_BASIS' ? b.basisDocId ?? null : null;
+    const rows = await this.decisionRows(ctx, b.kind, b.ids, reason, basisDocId);
+    const open = await this.prisma.esfDecision.findFirst({ where: { organizationId: ctx.organizationId, status: { in: EsfService.OPEN }, invoiceIds: { hasSome: rows.map((r) => r.id) } } });
+    if (open) throw new AccError('ESF_DECISION_PENDING', 'По этому ЭСФ уже есть решение в работе', { fix: 'Утвердите или отклоните его, прежде чем предлагать новое.', details: { decisionId: open.id } });
+    const settings = await this.prisma.esfSettings.findUnique({ where: { organizationId: ctx.organizationId } });
+    const rule = ((settings?.decisionRules as any) ?? {})[b.kind] ?? {};
+    const days = Number(rule.deadlineDays);
+    const from = rows.reduce((min, r) => Math.min(min, (r.lastUpdateAt ?? r.createdAt).getTime()), Infinity);
+    const dueAt = Number.isFinite(days) && days > 0 ? new Date(from + days * 86_400_000) : null;
+    const d = await this.prisma.esfDecision.create({
+      data: {
+        organizationId: ctx.organizationId, kind: b.kind, invoiceIds: rows.map((r) => r.id), reason, basis, basisDocId,
+        snapshotHash: this.snapshot(b.kind, rows, reason, basis, basisDocId), requiredPermission: 'acc.esf.approve',
+        fourEyes: typeof rule.fourEyes === 'boolean' ? rule.fourEyes : EsfService.DEFAULT_FOUR_EYES[b.kind],
+        dueAt, dueSource: dueAt ? 'RULE' : 'NOT_CONFIGURED', proposedBy: ctx.userId,
+      },
+    });
+    await this.decisionAudit(ctx, 'ESF_DECISION_PROPOSED', d, { basis, reason });
+    return d;
+  }
+
+  async decisions(ctx: OrgContext, q: { status?: string } = {}) {
+    const rows = await this.prisma.esfDecision.findMany({ where: { organizationId: ctx.organizationId, ...(q.status ? { status: q.status } : {}) }, orderBy: { proposedAt: 'desc' }, take: 200 });
+    const now = Date.now();
+    return rows.map((d) => ({ ...d, overdue: !!d.dueAt && d.dueAt.getTime() < now && EsfService.OPEN.includes(d.status) }));
+  }
+
+  private async decisionFor(ctx: OrgContext, id: string) {
+    const d = await this.prisma.esfDecision.findFirst({ where: { id, organizationId: ctx.organizationId } });
+    if (!d) throw new AccError('NOT_FOUND', 'Решение не найдено', { status: 404 });
+    return d;
+  }
+
+  /** Состояние ЭСФ изменилось после предложения/утверждения — решение устарело и не исполняется. */
+  private async assertCurrent(ctx: OrgContext, d: { id: string; kind: string; invoiceIds: string[]; reason: string | null; basis: string; basisDocId: string | null; snapshotHash: string }) {
+    const rows = await this.prisma.esfInvoice.findMany({ where: { id: { in: d.invoiceIds }, organizationId: ctx.organizationId } });
+    if (rows.length !== d.invoiceIds.length || this.snapshot(d.kind, rows, d.reason, d.basis, d.basisDocId) !== d.snapshotHash) {
+      await this.prisma.esfDecision.updateMany({ where: { id: d.id, status: { in: ['PROPOSED', 'APPROVED'] } }, data: { status: 'STALE', decisionNote: 'Состояние ЭСФ изменилось после предложения' } });
+      throw new AccError('ESF_DECISION_STALE', 'ЭСФ изменился после того, как решение предложили — предложите решение заново', { status: 409 });
+    }
+    return rows;
+  }
+
+  async approveDecision(ctx: OrgContext, id: string, note?: string) {
+    const d = await this.decisionFor(ctx, id);
+    if (!ctx.can(d.requiredPermission as any)) throw new AccError('FORBIDDEN', 'Нет права утверждать решения по ЭСФ', { status: 403 });
+    if (d.status !== 'PROPOSED') throw new AccError('ESF_DECISION_STATUS', `Решение в статусе ${d.status} — утвердить нельзя`, { status: 409 });
+    if (d.fourEyes && d.proposedBy === ctx.userId) throw new AccError('ESF_FOUR_EYES', 'Это решение утверждает другой сотрудник (не тот, кто предложил)', { status: 403 });
+    await this.assertCurrent(ctx, d);
+    const now = new Date();
+    const { count } = await this.prisma.esfDecision.updateMany({
+      where: { id, status: 'PROPOSED' },
+      data: { status: 'APPROVED', decidedBy: ctx.userId, decidedAt: now, decisionNote: note?.trim() || null, approvalExpiresAt: new Date(now.getTime() + EsfService.APPROVAL_TTL_MS) },
+    });
+    if (count !== 1) throw new AccError('ESF_DECISION_STATUS', 'Решение уже изменилось', { status: 409 });
+    const out = await this.decisionFor(ctx, id);
+    await this.decisionAudit(ctx, 'ESF_DECISION_APPROVED', out, { note: note ?? null });
+    return out;
+  }
+
+  async rejectDecision(ctx: OrgContext, id: string, note: string) {
+    if (String(note ?? '').trim().length < 5) throw new AccError('ESF_REASON', 'Укажите, почему решение отклонено');
+    const d = await this.decisionFor(ctx, id);
+    if (!ctx.can(d.requiredPermission as any) && d.proposedBy !== ctx.userId) throw new AccError('FORBIDDEN', 'Отклонить решение может утверждающий или автор', { status: 403 });
+    const { count } = await this.prisma.esfDecision.updateMany({ where: { id, status: { in: ['PROPOSED', 'APPROVED'] } }, data: { status: 'REJECTED', decidedBy: ctx.userId, decidedAt: new Date(), decisionNote: note.trim() } });
+    if (count !== 1) throw new AccError('ESF_DECISION_STATUS', `Решение в статусе ${d.status} — отклонить нельзя`, { status: 409 });
+    const out = await this.decisionFor(ctx, id);
+    await this.decisionAudit(ctx, 'ESF_DECISION_REJECTED', out, { note });
+    return out;
+  }
+
+  private async approved(ctx: OrgContext, id: string) {
+    const d = await this.decisionFor(ctx, id);
+    if (d.status !== 'APPROVED') throw new AccError('ESF_DECISION_NOT_APPROVED', d.status === 'PROPOSED' ? 'Решение ещё не утверждено' : `Решение в статусе ${d.status}`, { status: 409 });
+    if (!d.approvalExpiresAt || d.approvalExpiresAt.getTime() <= Date.now()) throw new AccError('ESF_DECISION_EXPIRED', 'Утверждение устарело (24 часа) — предложите решение заново', { status: 409 });
+    const rows = await this.assertCurrent(ctx, d);
+    return { d, rows };
+  }
+
+  /** Байты для подписи утверждённого решения (NCALayer). Привязка основания подписи не требует. */
+  async decisionSigningData(ctx: OrgContext, id: string) {
+    const { d, rows } = await this.approved(ctx, id);
+    if (d.kind === 'LINK_BASIS') throw new AccError('ESF_NO_SIGNATURE', 'Привязка основания исполняется без подписи');
+    const data = this.signable(d.kind as EsfAction, rows, d.reason ?? undefined);
     const secret = (() => { try { return signingSecret(); } catch (e) { return signingError(e); } })();
-    const req = issueSigningRequest(secret, { organizationId: ctx.organizationId, userId: String(ctx.userId), kind: 'ACTION', subjectId: this.actionSubject(b.action, rows) }, data);
-    return { action: b.action, data, bytesSha256: req.bytesSha256, signingToken: req.token, expiresAt: req.expiresAt };
+    const req = issueSigningRequest(secret, { organizationId: ctx.organizationId, userId: String(ctx.userId), kind: 'ACTION', subjectId: `decision:${d.id}` }, data);
+    return { decisionId: d.id, kind: d.kind, data, bytesSha256: req.bytesSha256, signingToken: req.token, expiresAt: req.expiresAt };
   }
 
-  private actionSubject(action: EsfAction, rows: { id: string }[]) {
-    return `${action}:${rows.map((r) => r.id).sort().join(',')}`;
+  /** Исполнить утверждённое решение. Захват APPROVED → EXECUTING: одно решение исполняется один раз. */
+  async executeDecision(ctx: OrgContext, id: string, b: { signature?: string; certificate?: string; signingToken?: string } = {}) {
+    const { d, rows } = await this.approved(ctx, id);
+    if (d.kind !== 'LINK_BASIS' && (!b.signature || !b.certificate)) throw new AccError('ESF_SIGNATURE', 'Нет подписи или сертификата');
+    const claimed = await this.prisma.esfDecision.updateMany({ where: { id, status: 'APPROVED' }, data: { status: 'EXECUTING' } });
+    if (claimed.count !== 1) throw new AccError('ESF_DECISION_STATUS', 'Решение уже исполняется или исполнено', { status: 409 });
+    try {
+      let result: any;
+      if (d.kind === 'LINK_BASIS') {
+        await this.prisma.esfInvoice.update({ where: { id: rows[0].id }, data: { sourceDocId: d.basisDocId, businessDecision: 'BASIS_LINKED' } });
+        result = { linked: d.basisDocId };
+      } else {
+        result = await this.executeEsfAction(ctx, d.kind as EsfAction, rows, d.reason ?? '', { signature: b.signature!, certificate: b.certificate!, signingToken: b.signingToken }, `decision:${d.id}`);
+        const decided: Record<string, string> = { APPROVE: 'APPROVED', DECLINE: 'DECLINED', REVOKE: 'REVOKE_REQUESTED', CONFIRM_REVOKE: 'REVOKE_CONFIRMED' };
+        const changed = result.items.filter((i: any) => i.changed).map((i: any) => i.id);
+        if (changed.length) await this.prisma.esfInvoice.updateMany({ where: { id: { in: changed } }, data: { businessDecision: decided[d.kind] } });
+      }
+      const ok = d.kind === 'LINK_BASIS' || result.changed === rows.length;
+      await this.prisma.esfDecision.update({ where: { id }, data: { status: ok ? 'EXECUTED' : 'FAILED', executedAt: new Date(), result: JSON.parse(JSON.stringify(result, (_k, v) => (typeof v === 'bigint' ? v.toString() : v))) } });
+      await this.decisionAudit(ctx, ok ? 'ESF_DECISION_EXECUTED' : 'ESF_DECISION_FAILED', d, { result });
+      return { decisionId: id, status: ok ? 'EXECUTED' : 'FAILED', ...result };
+    } catch (e: any) {
+      // Ответ ИС ЭСФ не получен или подпись не прошла — решение не исполнено; фактический статус покажет обновление.
+      await this.prisma.esfDecision.update({ where: { id }, data: { status: 'FAILED', executedAt: new Date(), result: { error: e?.response?.code ?? e?.code ?? 'ERROR', message: String(e?.message ?? e).slice(0, 500) } } });
+      await this.decisionAudit(ctx, 'ESF_DECISION_FAILED', d, { error: String(e?.message ?? e).slice(0, 500) });
+      throw e;
+    }
   }
 
-  async action(ctx: OrgContext, b: { action: EsfAction; ids: string[]; reason?: string; signature: string; certificate: string; signingToken?: string }) {
-    const { def, rows } = await this.actionRows(ctx, b.action, b.ids, b.reason);
-    if (!b.signature || !b.certificate) throw new AccError('ESF_SIGNATURE', 'Нет подписи или сертификата');
+  private decisionAudit(ctx: OrgContext, action: string, d: { id: string; kind: string; invoiceIds: string[] }, extra: Record<string, unknown>) {
+    return this.prisma.auditLog.create({
+      data: { userId: ctx.userId?.startsWith('system') ? null : ctx.userId, organizationId: ctx.organizationId, action, entity: 'esf_decision', entityId: d.id, after: { kind: d.kind, invoiceIds: d.invoiceIds, ...extra } as any },
+    });
+  }
+
+  /** Отправить операцию в ИС ЭСФ (вызывается только из executeDecision). */
+  private async executeEsfAction(ctx: OrgContext, action: EsfAction, rows: any[], reason: string, b: { signature: string; certificate: string; signingToken?: string }, subjectId: string) {
+    const def = EsfService.ACTIONS[action];
     const { env, session } = await this.requireSession(ctx.organizationId);
     const settings = await this.prisma.esfSettings.findUnique({ where: { organizationId: ctx.organizationId } });
-    const evidence = await this.checkSignatures(ctx, settings, b.certificate, [{ kind: 'ACTION', subjectId: this.actionSubject(b.action, rows), label: `Операция «${def.label}»`, bytes: this.signable(b.action, rows, b.reason), signature: b.signature, token: b.signingToken }]);
+    const evidence = await this.checkSignatures(ctx, settings, b.certificate, [{ kind: 'ACTION', subjectId, label: `Операция «${def.label}»`, bytes: this.signable(action, rows, reason), signature: b.signature, token: b.signingToken }]);
     const client = this.client(env);
     const cert = stripPem(b.certificate);
-    const reason = String(b.reason ?? '').trim();
     const ids = rows.map((r) => r.esfId!.toString());
     const res = await this.wrap(() => {
-      switch (b.action) {
+      switch (action) {
         case 'REVOKE': return client.changeWithReason('revokeInvoiceById', session.sessionId, b.signature, cert, ids.map((id) => ({ id, reason })));
         case 'DECLINE': return client.changeWithReason('declineInvoiceById', session.sessionId, b.signature, cert, ids.map((id) => ({ id, reason })));
         case 'APPROVE': return client.changeByIds('approveInvoiceById', session.sessionId, b.signature, cert, ids);
@@ -607,7 +766,7 @@ export class EsfService implements OnModuleInit, OnModuleDestroy {
         data.esfStatus = st;
         // окончательные статусы — в локальный статус; промежуточные (ждёт подтверждения) — продолжаем опрос
         data.status = FINAL_ESF.includes(st) ? st : r.direction === 'OUTBOUND' ? 'SENT' : st;
-        if (b.action === 'REVOKE' || b.action === 'DECLINE') data.cancelReason = reason;
+        if (action === 'REVOKE' || action === 'DECLINE') data.cancelReason = reason;
         data.errors = Prisma.DbNull;
       } else if (c) {
         data.errors = [{ errorCode: c.errorCode, text: c.errorText ?? 'ИС ЭСФ не изменила статус' }];
@@ -615,9 +774,10 @@ export class EsfService implements OnModuleInit, OnModuleDestroy {
       const u = await this.prisma.esfInvoice.update({ where: { id: r.id }, data });
       out.push({ id: u.id, num: u.num, changed: !!c?.isChanged, status: u.status, esfStatus: u.esfStatus, error: c?.isChanged ? null : c?.errorText ?? c?.errorCode ?? 'нет ответа по ЭСФ' });
     }
-    await this.prisma.auditLog.create({ data: { userId: ctx.userId, organizationId: ctx.organizationId, action: `ESF_${b.action}`, entity: 'esf_invoice', entityId: rows.map((r) => r.id).join(','), reason: reason || null, after: { environment: env, results: out, signing: evidence } as any } });
-    return { action: b.action, label: def.label, changed: out.filter((o) => o.changed).length, items: out };
+    await this.prisma.auditLog.create({ data: { userId: ctx.userId, organizationId: ctx.organizationId, action: `ESF_${action}`, entity: 'esf_invoice', entityId: rows.map((r) => r.id).join(','), reason: reason || null, after: { environment: env, results: out, signing: evidence } as any } });
+    return { action, label: def.label, changed: out.filter((o) => o.changed).length, items: out };
   }
+
 
   // ── Статусы и входящие ──
 
@@ -691,10 +851,20 @@ export class EsfService implements OnModuleInit, OnModuleDestroy {
           status: info.invoiceStatus ?? 'CREATED', esfStatus: info.invoiceStatus ?? null, esfId: BigInt(info.invoiceId), registrationNumber: info.registrationNumber ?? null,
           body: info.invoiceBody, bodyHash: sha256(info.invoiceBody), cancelReason: info.cancelReason ?? null, lastUpdateAt: info.lastUpdateDate ? new Date(info.lastUpdateDate) : new Date(),
         };
-        const saved = await this.prisma.esfInvoice.upsert({ where: { organizationId_environment_direction_esfId: { organizationId, environment: env, direction: 'INBOUND', esfId: data.esfId } }, create: data, update: { status: data.status, esfStatus: data.esfStatus, registrationNumber: data.registrationNumber, cancelReason: data.cancelReason, lastUpdateAt: data.lastUpdateAt, counterpartyId: data.counterpartyId } });
-        if (!saved.sourceDocId && saved.counterpartyId) {
+        // Цепочка: исправленный/дополнительный ЭСФ — к исходному входящему того же продавца (FP-018).
+        const rel = p.relatedInvoice;
+        const related = rel && p.invoiceType !== 'ORDINARY_INVOICE'
+          ? await this.prisma.esfInvoice.findFirst({
+              where: { organizationId, environment: env, direction: 'INBOUND', sellerTin: p.seller.tin ?? undefined,
+                OR: [...(rel.registrationNumber ? [{ registrationNumber: rel.registrationNumber }] : []), ...(rel.num && rel.date ? [{ num: rel.num, date: parseEsfDate(rel.date) }] : [])] },
+            })
+          : null;
+        const saved = await this.prisma.esfInvoice.upsert({ where: { organizationId_environment_direction_esfId: { organizationId, environment: env, direction: 'INBOUND', esfId: data.esfId } }, create: { ...data, relatedInvoiceId: related?.id ?? null }, update: { status: data.status, esfStatus: data.esfStatus, registrationNumber: data.registrationNumber, cancelReason: data.cancelReason, lastUpdateAt: data.lastUpdateAt, counterpartyId: data.counterpartyId, ...(related ? { relatedInvoiceId: related.id } : {}) } });
+        // Автоматика только предлагает поступление-основание (тот же поставщик, та же сумма); основанием его
+        // делает решение человека LINK_BASIS (FP-018).
+        if (!saved.sourceDocId && !saved.suggestedSourceDocId && saved.counterpartyId) {
           const supply = await this.matchSupply(organizationId, saved.counterpartyId, saved.totalWithTax, saved.turnoverDate);
-          if (supply) await this.prisma.esfInvoice.update({ where: { id: saved.id }, data: { sourceDocId: supply } });
+          if (supply) await this.prisma.esfInvoice.update({ where: { id: saved.id }, data: { suggestedSourceDocId: supply } });
         }
         if (saved.esfStatus === 'CREATED') toConfirm.push(String(info.invoiceId));
         imported++;
@@ -703,12 +873,14 @@ export class EsfService implements OnModuleInit, OnModuleDestroy {
       lastId = r.lastInvoiceId ?? lastId;
       if (r.lastBlock || !r.items.length) break;
     }
-    // Отметка «получено получателем» (DELIVERED) по новым входящим — без подписи, операция confirmInvoiceById
+    // Техническое подтверждение получения (confirmInvoiceById, без подписи) — DELIVERED в ИС ЭСФ. Это НЕ согласие
+    // с документом: юридическое решение (подтвердить/отклонить исправленный или дополнительный ЭСФ, отзыв) — только
+    // решением человека (FP-018); businessDecision здесь не меняется.
     for (let i = 0; i < toConfirm.length; i += 100) {
       const part = toConfirm.slice(i, i + 100);
       const res = await this.wrap(() => client.confirmInvoiceById(session.sessionId, part), session.id);
       for (const sm of res as any[]) {
-        if (sm?.invoiceId && sm?.invoiceStatus) await this.prisma.esfInvoice.updateMany({ where: { organizationId, environment: env, direction: 'INBOUND', esfId: BigInt(sm.invoiceId) }, data: { status: sm.invoiceStatus, esfStatus: sm.invoiceStatus } });
+        if (sm?.invoiceId && sm?.invoiceStatus) await this.prisma.esfInvoice.updateMany({ where: { organizationId, environment: env, direction: 'INBOUND', esfId: BigInt(sm.invoiceId) }, data: { status: sm.invoiceStatus, esfStatus: sm.invoiceStatus, deliveryConfirmedAt: new Date() } });
       }
     }
     await this.prisma.esfSettings.upsert({ where: { organizationId }, create: { organizationId, inboundLastEventAt: lastEvent, inboundLastId: lastId ? BigInt(lastId) : null }, update: { inboundLastEventAt: lastEvent, inboundLastId: lastId ? BigInt(lastId) : null } });

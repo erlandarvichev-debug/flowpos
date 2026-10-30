@@ -2124,6 +2124,9 @@ model EsfSettings {
   transportTypeCode   String?   @map("transport_type_code")  // E 29 «Способ отправления» (классификатор КТС № 378, прил. 3)
   defaultGoodsOrigin  String?   @map("default_goods_origin") // G 2 для товаров без своего признака (1–5); услуги всегда «6»
   autoPrepare         Boolean   @default(true) @map("auto_prepare") // готовить ЭСФ по проведённым реализациям
+  /// FP-018: правила решений по видам {APPROVE|DECLINE|CONFIRM_REVOKE|REVOKE|LINK_BASIS: {deadlineDays?, fourEyes?}}.
+  /// Сроки задаёт методолог: юридические сроки в коде не зашиты; не задано — «срок не задан», без автоматики.
+  decisionRules       Json?     @map("decision_rules")
   inboundLastEventAt  DateTime? @map("inbound_last_event_at")
   inboundLastId       BigInt?   @map("inbound_last_id")
   updatedAt           DateTime  @updatedAt @map("updated_at")
@@ -2179,6 +2182,12 @@ model EsfInvoice {
   certificate        String?
   errors             Json?
   cancelReason       String?   @map("cancel_reason")
+  // FP-018: техническое подтверждение (мы получили документ / он доставлен) — НЕ юридическое согласие.
+  deliveryConfirmedAt DateTime? @map("delivery_confirmed_at")
+  // Последнее исполненное решение человека (APPROVED | DECLINED | REVOKED | REVOKE_CONFIRMED | BASIS_LINKED); null — решения нет.
+  businessDecision   String?   @map("business_decision")
+  // Предложение автоматики (поступление того же поставщика на ту же сумму) — основанием становится только решением.
+  suggestedSourceDocId String? @map("suggested_source_doc_id")
   outdated           Boolean   @default(false)              // документ-основание изменён/отменён после формирования
   sentBy             String?   @map("sent_by")
   sentAt             DateTime? @map("sent_at")
@@ -2191,6 +2200,35 @@ model EsfInvoice {
   @@index([organizationId, direction, status])
   @@index([sourceDocId])
   @@map("esf_invoices")
+}
+
+/// FP-018: решение по ЭСФ — предложено → утверждено → исполнено (или отклонено/устарело/ошибка).
+/// Утверждение привязано к snapshot_hash состояния ЭСФ: изменилось состояние — решение не исполняется.
+model EsfDecision {
+  id                String    @id @default(uuid())
+  organizationId    String    @map("organization_id")
+  kind              String    // APPROVE | DECLINE | CONFIRM_REVOKE | REVOKE | LINK_BASIS
+  invoiceIds        String[]  @map("invoice_ids")
+  reason            String?
+  basis             String    // основание: что проверено, на каком документе/переписке
+  basisDocId        String?   @map("basis_doc_id") // для LINK_BASIS — документ-основание
+  status            String    @default("PROPOSED") // PROPOSED | APPROVED | REJECTED | STALE | EXECUTED | FAILED
+  snapshotHash      String    @map("snapshot_hash")
+  requiredPermission String   @map("required_permission")
+  fourEyes          Boolean   @map("four_eyes")
+  dueAt             DateTime? @map("due_at")
+  dueSource         String    @map("due_source") // RULE | NOT_CONFIGURED
+  proposedBy        String    @map("proposed_by")
+  proposedAt        DateTime  @default(now()) @map("proposed_at")
+  decidedBy         String?   @map("decided_by")
+  decidedAt         DateTime? @map("decided_at")
+  decisionNote      String?   @map("decision_note")
+  approvalExpiresAt DateTime? @map("approval_expires_at")
+  executedAt        DateTime? @map("executed_at")
+  result            Json?
+
+  @@index([organizationId, status])
+  @@map("esf_decisions")
 }
 
 /// Закрытие месяца мастером: итоговые показатели на момент закрытия (для сверки воспроизводимости).

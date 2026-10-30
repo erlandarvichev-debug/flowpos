@@ -113,6 +113,32 @@
         </el-card>
       </el-tab-pane>
 
+      <el-tab-pane label="Решения" name="DECISIONS">
+        <el-card>
+          <el-alert type="info" :closable="false" show-icon style="margin-bottom: 12px;"
+            title="Отзыв, отклонение, подтверждение и привязка основания исполняются только утверждённым решением. Получение документа (техническое подтверждение) согласием не является." />
+          <el-table :data="decisions" size="small" empty-text="Решений нет">
+            <el-table-column label="Решение" width="170"><template #default="{ row }">{{ KIND_TEXT[row.kind] ?? row.kind }}</template></el-table-column>
+            <el-table-column prop="basis" label="Основание" min-width="200" />
+            <el-table-column prop="reason" label="Причина" min-width="140" />
+            <el-table-column label="Статус" width="130"><template #default="{ row }">{{ STATUS_TEXT[row.status] ?? row.status }}</template></el-table-column>
+            <el-table-column label="Срок" width="150">
+              <template #default="{ row }">
+                <span v-if="row.dueAt" :style="{ color: row.overdue ? 'var(--el-color-danger)' : undefined }">{{ fmtDate(row.dueAt) }}{{ row.overdue ? ' — просрочено' : '' }}</span>
+                <span v-else style="color: var(--el-text-color-secondary)">не задан</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="" width="260">
+              <template #default="{ row }">
+                <el-button v-if="row.status === 'PROPOSED' && org.can('acc.esf.approve')" size="small" link type="success" @click="approveDecision(row)">Утвердить</el-button>
+                <el-button v-if="['PROPOSED', 'APPROVED'].includes(row.status)" size="small" link type="danger" @click="rejectDecision(row)">Отклонить</el-button>
+                <el-button v-if="row.status === 'APPROVED' && canSend" size="small" link type="primary" :loading="row._busy" @click="executeDecision(row)">Исполнить</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </el-card>
+      </el-tab-pane>
+
       <el-tab-pane label="Настройки" name="SETTINGS">
         <el-card v-if="form">
           <el-form label-width="290px" style="max-width: 820px;" :disabled="!org.can('acc.policy.manage')">
@@ -185,6 +211,7 @@ const summary = ref<any>(null)
 const items = ref<any[]>([])
 const pending = ref<any[]>([])
 const selected = ref<any[]>([])
+const decisions = ref<any[]>([])
 const form = ref<any>(null)
 const xml = reactive({ open: false, body: '' })
 
@@ -236,6 +263,8 @@ async function load() {
     if (tab.value === 'SETTINGS') {
       const s = settings.value
       form.value = { environment: s.environment, signerIin: s.signerIin ?? '', operatorFullname: s.operatorFullname ?? '', signatureType: s.signatureType, vatRegistrationDate: s.vatRegistrationDate ? String(s.vatRegistrationDate).slice(0, 10) : null, transportTypeCode: s.transportTypeCode ?? '', defaultGoodsOrigin: s.defaultGoodsOrigin ?? '', autoPrepare: s.autoPrepare }
+    } else if (tab.value === 'DECISIONS') {
+      decisions.value = (await api.get('/accounting/esf/decisions')) as any
     } else {
       const r = (await api.get('/accounting/esf/invoices', { params: { direction: tab.value, limit: 200 } })) as any
       items.value = r.items
@@ -312,22 +341,70 @@ const ACT_TEXT: Record<string, { title: string; ask?: string; ok: string }> = {
   CONFIRM_REVOKE: { title: 'Подтверждение отзыва', ok: 'Отзыв подтверждён' },
 }
 
-/** Отзыв/отклонение/подтверждение: подпись списка id (и причины) ключом подписи в NCALayer. */
+const KIND_TEXT: Record<string, string> = { REVOKE: 'Отзыв', DECLINE: 'Отклонение', APPROVE: 'Подтверждение', CONFIRM_REVOKE: 'Подтверждение отзыва', LINK_BASIS: 'Привязка основания' }
+const STATUS_TEXT: Record<string, string> = { PROPOSED: 'Ждёт утверждения', APPROVED: 'Утверждено', EXECUTING: 'Исполняется', EXECUTED: 'Исполнено', REJECTED: 'Отклонено', STALE: 'Устарело', FAILED: 'Ошибка' }
+
+/**
+ * FP-018: отзыв/отклонение/подтверждение — решением: причина и основание → предложить → утвердить
+ * (если можно самому; иначе ждёт другого утверждающего) → подпись в NCALayer → исполнение.
+ */
 async function act(action: string, row: any) {
   if (!settings.value?.session) return showError({ message: 'Нет входа в ИС ЭСФ', fix: 'Нажмите «Войти в ИС ЭСФ» и подпишите вход ключом ЭЦП.' })
   const txt = ACT_TEXT[action]
   let reason: string | undefined
+  let basis = ''
   try {
-    if (txt.ask) reason = ((await ElMessageBox.prompt(`ЭСФ № ${row.num}. ${txt.ask}:`, txt.title, { confirmButtonText: 'Подписать и отправить', cancelButtonText: 'Отмена', inputValidator: (v: string) => !!v?.trim() || 'Укажите причину' })) as any).value
-    else await ElMessageBox.confirm(`ЭСФ № ${row.num} от ${row.sellerName || row.customerName}. Подписать ЭЦП?`, txt.title, { confirmButtonText: 'Подписать', cancelButtonText: 'Отмена' })
+    if (txt.ask) reason = ((await ElMessageBox.prompt(`ЭСФ № ${row.num}. ${txt.ask}:`, txt.title, { confirmButtonText: 'Далее', cancelButtonText: 'Отмена', inputValidator: (v: string) => !!v?.trim() || 'Укажите причину' })) as any).value
+    basis = ((await ElMessageBox.prompt(`ЭСФ № ${row.num}. Основание решения — что проверено (документ, переписка, сверка):`, txt.title, { confirmButtonText: 'Предложить решение', cancelButtonText: 'Отмена', inputValidator: (v: string) => (v?.trim().length ?? 0) >= 5 || 'Не короче 5 символов' })) as any).value
   } catch { return }
   row._busy = true
   try {
-    const d = (await api.post('/accounting/esf/actions/data', { action, ids: [row.id], reason })) as any
-    const { certificate, signatures } = await signRaw([d.data])
-    const r = (await api.post('/accounting/esf/actions', { action, ids: [row.id], reason, signature: signatures[0], certificate, signingToken: d.signingToken })) as any
-    if (r.changed) ElMessage.success(txt.ok)
-    else showError({ message: `ИС ЭСФ не выполнила операцию: ${r.items?.[0]?.error ?? ''}` })
+    const d = (await api.post('/accounting/esf/decisions', { kind: action, ids: [row.id], reason, basis })) as any
+    if (!org.can('acc.esf.approve')) {
+      ElMessage.info('Решение предложено — его утвердит главный бухгалтер или руководитель (вкладка «Решения»)')
+    } else {
+      try {
+        await api.post(`/accounting/esf/decisions/${d.id}/approve`, {})
+      } catch (e: any) {
+        if (e?.response?.data?.code === 'ESF_FOUR_EYES') {
+          ElMessage.info('Решение предложено — его утвердит другой сотрудник (вкладка «Решения»)')
+          await load()
+          row._busy = false
+          return
+        }
+        throw e
+      }
+      await signAndExecute(d.id, txt.ok)
+    }
+    await load()
+  } catch (e) { ncaError(e) }
+  row._busy = false
+}
+
+async function signAndExecute(id: string, ok = 'Решение исполнено') {
+  const data = (await api.post(`/accounting/esf/decisions/${id}/sign-data`)) as any
+  const { certificate, signatures } = await signRaw([data.data])
+  const r = (await api.post(`/accounting/esf/decisions/${id}/execute`, { signature: signatures[0], certificate, signingToken: data.signingToken })) as any
+  if (r.status === 'EXECUTED') ElMessage.success(ok)
+  else showError({ message: `ИС ЭСФ не выполнила операцию: ${r.items?.[0]?.error ?? ''}` })
+}
+
+async function approveDecision(row: any) {
+  try { await api.post(`/accounting/esf/decisions/${row.id}/approve`, {}); await load() } catch (e) { showError(e) }
+}
+
+async function rejectDecision(row: any) {
+  let note = ''
+  try { note = ((await ElMessageBox.prompt('Почему решение отклонено?', 'Отклонить решение', { confirmButtonText: 'Отклонить', cancelButtonText: 'Отмена', inputValidator: (v: string) => (v?.trim().length ?? 0) >= 5 || 'Не короче 5 символов' })) as any).value } catch { return }
+  try { await api.post(`/accounting/esf/decisions/${row.id}/reject`, { note }); await load() } catch (e) { showError(e) }
+}
+
+async function executeDecision(row: any) {
+  if (!settings.value?.session) return showError({ message: 'Нет входа в ИС ЭСФ', fix: 'Нажмите «Войти в ИС ЭСФ» и подпишите вход ключом ЭЦП.' })
+  row._busy = true
+  try {
+    if (row.kind === 'LINK_BASIS') { await api.post(`/accounting/esf/decisions/${row.id}/execute`, {}); ElMessage.success('Основание привязано') }
+    else await signAndExecute(row.id)
     await load()
   } catch (e) { ncaError(e) }
   row._busy = false

@@ -6,7 +6,7 @@ import { PrismaService } from '../src/prisma/prisma.service';
 import { EsfService } from '../src/modules/accounting/esf/esf.service';
 import { esfDate, parseInvoice } from '../src/modules/accounting/esf/invoice-xml';
 import { EsfSoapClient } from '../src/modules/accounting/esf/esf-soap.client';
-import { makeServices, makeOrg, makeTrade } from './accounting-helpers';
+import { makeServices, makeOrg, makeTrade, ctxFor } from './accounting-helpers';
 import { makeCertFactory } from './esf-certs';
 
 const prisma = new PrismaService();
@@ -62,6 +62,20 @@ async function stockAndSell(ctx: any, t: any, date = '2026-10-05') {
 // Тестовые ключи «как у НУЦ»: ИИН подписанта = БИН организации в этих тестах (123456789021).
 const certs = makeCertFactory();
 const signer = certs.cert({ iin: '123456789021', bin: '123456789021' });
+
+/** Второй сотрудник той же организации (для «четырёх глаз»), по умолчанию — главный бухгалтер. */
+async function colleague(ctx: { organizationId: string }, role = 'chief_accountant') {
+  const user = await prisma.user.create({ data: { organizationId: ctx.organizationId, email: `c-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@test.local`, passwordHash: 'x', firstName: 'Второй', lastName: 'Сотрудник' } });
+  await prisma.orgMembership.create({ data: { userId: user.id, organizationId: ctx.organizationId, role } });
+  return ctxFor(ctx.organizationId, user.id, role);
+}
+
+/** Решение: предложить → утвердить (другим, если нужно) → данные для подписи. */
+async function decided(ctx: any, kind: string, ids: string[], opts: { reason?: string; approver?: any } = {}) {
+  const d = await esf.proposeDecision(ctx, { kind: kind as any, ids, reason: opts.reason, basis: 'Сверено с договором и перепиской' });
+  await esf.approveDecision(opts.approver ?? ctx, d.id);
+  return { d, data: await esf.decisionSigningData(ctx, d.id) };
+}
 const authKey = certs.cert({ iin: '123456789021', bin: '123456789021', keyUsage: 'digitalSignature,keyEncipherment' });
 const certB64 = (pem: string) => pem.replace(/-----[^-]+-----/g, '').replace(/\s+/g, '');
 afterAll(() => certs.cleanup());
@@ -262,9 +276,14 @@ describe('ЭСФ: вход, подпись, отправка, статусы', (
     expect(Number(list.items[0].totalNds)).toBe(1600);
     const row = await prisma.esfInvoice.findFirst({ where: { organizationId: ctx.organizationId, direction: 'INBOUND' } });
     expect(row!.counterpartyId).toBe(t.supplier.id);
-    expect(row!.sourceDocId).toBe(supply.id); // привязан к поступлению: тот же поставщик и сумма
+    // Автоматика только предлагает поступление-основание; основанием его делает решение человека (FP-018).
+    expect(row!.sourceDocId).toBeNull();
+    expect(row!.suggestedSourceDocId).toBe(supply.id);
+    // Техническое подтверждение получения — отдельно от юридического решения.
     expect(confirmed).toContain('<id>555</id>');
     expect(row!.status).toBe('DELIVERED');
+    expect(row!.deliveryConfirmedAt).not.toBeNull();
+    expect(row!.businessDecision).toBeNull();
     // повторная загрузка не дублирует
     await esf.refresh(ctx);
     expect((await esf.list(ctx, { direction: 'INBOUND' })).items).toHaveLength(1);
@@ -324,11 +343,14 @@ describe('ЭСФ: возврат (дополнительный ЭСФ) и отз
     await expectCode(esf.prepare(ctx, ret2.id), 'ESF_RETURN_BASE_NOT_REGISTERED');
   });
 
-  it('отзыв: подписывается список {id, причина} в формате SDK; результат ИС ЭСФ сохраняется; для неподходящих — отказ', async () => {
+  it('отзыв — решением: основание, другой утверждающий, подпись списка {id, причина} в формате SDK; повтор недоступен', async () => {
     const { ctx, inv } = await registeredSale();
-    await expectCode(esf.actionData(ctx, { action: 'REVOKE', ids: [inv.id] }), 'ESF_REASON');
-    const d = await esf.actionData(ctx, { action: 'REVOKE', ids: [inv.id], reason: 'Ошибка в цене "А&Б"' });
-    expect(d.data).toBe(`<signedContent><idsWithReasons><idWithReason><id>${inv.esfId}</id><reason>Ошибка в цене "А&amp;Б"</reason></idWithReason></idsWithReasons></signedContent>`);
+    await expectCode(esf.proposeDecision(ctx, { kind: 'REVOKE', ids: [inv.id], basis: 'Сверено с договором' }), 'ESF_REASON');
+    const d = await esf.proposeDecision(ctx, { kind: 'REVOKE', ids: [inv.id], reason: 'Ошибка в цене "А&Б"', basis: 'Письмо покупателя от 06.10' });
+    await expectCode(esf.approveDecision(ctx, d.id), 'ESF_FOUR_EYES'); // автор не утверждает свой отзыв
+    await esf.approveDecision(await colleague(ctx), d.id);
+    const data = await esf.decisionSigningData(ctx, d.id);
+    expect(data.data).toBe(`<signedContent><idsWithReasons><idWithReason><id>${inv.esfId}</id><reason>Ошибка в цене "А&amp;Б"</reason></idWithReason></idsWithReasons></signedContent>`);
 
     let req = '';
     esf.fetcher = fakeEsf({
@@ -336,24 +358,23 @@ describe('ЭСФ: возврат (дополнительный ЭСФ) и отз
       queryInvoiceSummaryById: () => `<invoiceSummaryList><invoiceSummary><invoiceId>${inv.esfId}</invoiceId><invoiceStatus>REVOKED</invoiceStatus></invoiceSummary></invoiceSummaryList>`,
       queryUpdates: () => `<lastEventDate>2026-10-23T10:00:00.000+05:00</lastEventDate><lastBlock>true</lastBlock><invoiceInfoList/>`,
     }).fetcher;
-    // причина изменилась после выдачи на подпись — подписанные байты уже другие
-    await expectCode(esf.action(ctx, { action: 'REVOKE', ids: [inv.id], reason: 'Другая причина', signature: signer.sign(d.data), certificate: signer.pem, signingToken: d.signingToken }), 'ESF_STALE_SIGNATURE');
-    expect(req).toBe('');
-    const r = await esf.action(ctx, { action: 'REVOKE', ids: [inv.id], reason: 'Ошибка в цене "А&Б"', signature: signer.sign(d.data), certificate: signer.pem, signingToken: d.signingToken });
-    expect(r.changed).toBe(1);
+    const r = await esf.executeDecision(ctx, d.id, { signature: signer.sign(data.data), certificate: signer.pem, signingToken: data.signingToken });
+    expect([r.status, r.changed]).toEqual(['EXECUTED', 1]);
     expect(req).toContain('<esf:revokeInvoiceByIdRequest>');
     expect(req).toContain(`<invoiceIdWithReason><id>${inv.esfId}</id><reason>Ошибка в цене "А&amp;Б"</reason></invoiceIdWithReason>`);
     let row = await prisma.esfInvoice.findUnique({ where: { id: inv.id } });
-    expect(row).toMatchObject({ status: 'SENT', esfStatus: 'WAITING_CUSTOMER_REVOKE_CONFIRMATION', cancelReason: 'Ошибка в цене "А&Б"' });
+    expect(row).toMatchObject({ status: 'SENT', esfStatus: 'WAITING_CUSTOMER_REVOKE_CONFIRMATION', cancelReason: 'Ошибка в цене "А&Б"', businessDecision: 'REVOKE_REQUESTED' });
+    // одно решение исполняется один раз
+    await expectCode(esf.executeDecision(ctx, d.id, { signature: signer.sign(data.data), certificate: signer.pem, signingToken: data.signingToken }), 'ESF_DECISION_NOT_APPROVED');
     // покупатель подтвердил — опрос статуса доводит до REVOKED
     await esf.refresh(ctx);
     row = await prisma.esfInvoice.findUnique({ where: { id: inv.id } });
     expect(row!.status).toBe('REVOKED');
     // повторный отзыв недоступен
-    await expectCode(esf.actionData(ctx, { action: 'REVOKE', ids: [inv.id], reason: 'x' }), 'ESF_ACTION_NOT_ALLOWED');
+    await expectCode(esf.proposeDecision(ctx, { kind: 'REVOKE', ids: [inv.id], reason: 'x', basis: 'ещё раз' }), 'ESF_ACTION_NOT_ALLOWED');
   });
 
-  it('входящие: подтверждение дополнительного ЭСФ и подтверждение отзыва (подпись списка id)', async () => {
+  it('входящие: подтверждение дополнительного ЭСФ и подтверждение отзыва — решениями (подпись списка id)', async () => {
     const { ctx } = await setupOrg();
     await esf.updateSettings(ctx, { signerIin: '123456789021' });
     await prisma.esfSession.create({ data: { organizationId: ctx.organizationId, environment: 'TEST', sessionId: 'S', iin: '123456789021', tin: '123456789021' } });
@@ -361,24 +382,28 @@ describe('ЭСФ: возврат (дополнительный ЭСФ) и отз
     const base = BigInt(Date.now()) * 100n;
     const add = await mk(base + 1n, 'ADDITIONAL_INVOICE', 'WAITING_CUSTOMER_CONFIRMATION');
     const rev = await mk(base + 2n, 'ORDINARY_INVOICE', 'WAITING_CUSTOMER_REVOKE_CONFIRMATION');
-    const approve = await esf.actionData(ctx, { action: 'APPROVE', ids: [add.id] });
-    expect(approve.data).toBe(`<signedContent><ids><id>${base + 1n}</id></ids></signedContent>`);
-    await expectCode(esf.actionData(ctx, { action: 'APPROVE', ids: [rev.id] }), 'ESF_ACTION_NOT_ALLOWED');
+    await expectCode(esf.proposeDecision(ctx, { kind: 'APPROVE', ids: [rev.id], basis: 'Сверено с поставкой' }), 'ESF_ACTION_NOT_ALLOWED');
+    const approve = await decided(ctx, 'APPROVE', [add.id]); // подтверждение — без «четырёх глаз» по умолчанию
+    expect(approve.data.data).toBe(`<signedContent><ids><id>${base + 1n}</id></ids></signedContent>`);
     const ops: string[] = [];
     esf.fetcher = fakeEsf({
       approveInvoiceById: () => { ops.push('approve'); return `<resultList><changeStatusResult><invoiceSummary><invoiceId>${base + 1n}</invoiceId><invoiceStatus>DELIVERED</invoiceStatus></invoiceSummary><isChanged>true</isChanged></changeStatusResult></resultList>`; },
       revokeConfirmInvoiceById: () => { ops.push('confirmRevoke'); return `<resultList><changeStatusResult><invoiceSummary><invoiceId>${base + 2n}</invoiceId><invoiceStatus>REVOKED</invoiceStatus></invoiceSummary><isChanged>true</isChanged></changeStatusResult></resultList>`; },
     }).fetcher;
-    await expectCode(esf.action(ctx, { action: 'APPROVE', ids: [add.id], signature: 's', certificate: 'c', signingToken: approve.signingToken }), 'ESF_CERT');
-    // токен одной операции не подходит для другой
-    await expectCode(esf.action(ctx, { action: 'CONFIRM_REVOKE', ids: [rev.id], signature: signer.sign(approve.data), certificate: signer.pem, signingToken: approve.signingToken }), 'ESF_SIGN_REQUEST_INVALID');
+    await expectCode(esf.executeDecision(ctx, approve.d.id, { signature: 's', certificate: 'c', signingToken: approve.data.signingToken }), 'ESF_CERT');
+    // неудачное исполнение закрывает решение — нужно новое (а не повтор того же)
+    expect((await prisma.esfDecision.findUniqueOrThrow({ where: { id: approve.d.id } })).status).toBe('FAILED');
+    const approve2 = await decided(ctx, 'APPROVE', [add.id]);
+    const confirm = await decided(ctx, 'CONFIRM_REVOKE', [rev.id]);
+    // токен одного решения не подходит для другого
+    await expectCode(esf.executeDecision(ctx, confirm.d.id, { signature: signer.sign(approve2.data.data), certificate: signer.pem, signingToken: approve2.data.signingToken }), 'ESF_SIGN_REQUEST_INVALID');
     expect(ops).toEqual([]);
-    await esf.action(ctx, { action: 'APPROVE', ids: [add.id], signature: signer.sign(approve.data), certificate: signer.pem, signingToken: approve.signingToken });
-    const confirm = await esf.actionData(ctx, { action: 'CONFIRM_REVOKE', ids: [rev.id] });
-    await esf.action(ctx, { action: 'CONFIRM_REVOKE', ids: [rev.id], signature: signer.sign(confirm.data), certificate: signer.pem, signingToken: confirm.signingToken });
+    await esf.executeDecision(ctx, approve2.d.id, { signature: signer.sign(approve2.data.data), certificate: signer.pem, signingToken: approve2.data.signingToken });
+    const confirm2 = await decided(ctx, 'CONFIRM_REVOKE', [rev.id]);
+    await esf.executeDecision(ctx, confirm2.d.id, { signature: signer.sign(confirm2.data.data), certificate: signer.pem, signingToken: confirm2.data.signingToken });
     expect(ops).toEqual(['approve', 'confirmRevoke']);
-    expect((await prisma.esfInvoice.findUnique({ where: { id: add.id } }))!.status).toBe('DELIVERED');
-    expect((await prisma.esfInvoice.findUnique({ where: { id: rev.id } }))!.status).toBe('REVOKED');
+    expect(await prisma.esfInvoice.findUnique({ where: { id: add.id } })).toMatchObject({ status: 'DELIVERED', businessDecision: 'APPROVED' });
+    expect(await prisma.esfInvoice.findUnique({ where: { id: rev.id } })).toMatchObject({ status: 'REVOKED', businessDecision: 'REVOKE_CONFIRMED' });
   });
 });
 
@@ -544,5 +569,112 @@ describe('FP-017: отправка и сверка результата — по
     expect(log[0]).toMatchObject({ userId: ctx.userId, reason: 'сверка не нашла, ИС ЭСФ проверена вручную' });
     // теперь можно подписать заново
     expect((await esf.signData(ctx, [i1.id])).items).toHaveLength(1);
+  });
+});
+
+describe('FP-018: решения по исправлению, дополнению и отзыву', () => {
+  /** Входящий ЭСФ в нужном состоянии + открытая сессия. */
+  async function inbound(invoiceType = 'ADDITIONAL_INVOICE', st = 'WAITING_CUSTOMER_CONFIRMATION', extra: any = {}) {
+    const { ctx, t } = await setupOrg();
+    await esf.updateSettings(ctx, { signerIin: '123456789021' });
+    await prisma.esfSession.create({ data: { organizationId: ctx.organizationId, environment: 'TEST', sessionId: 'S', iin: '123456789021', tin: '123456789021' } });
+    const esfId = BigInt(Date.now()) * 100n + BigInt(Math.floor(Math.random() * 100));
+    const inv = await prisma.esfInvoice.create({ data: { organizationId: ctx.organizationId, direction: 'INBOUND', invoiceType, num: String(esfId), date: new Date('2026-10-10'), turnoverDate: new Date('2026-10-10'), status: st, esfStatus: st, esfId, body: '<x/>', bodyHash: 'x', lastUpdateAt: new Date('2026-10-10T00:00:00Z'), ...extra } });
+    return { ctx, t, inv };
+  }
+
+  it('техническое подтверждение не является согласием: импорт не утверждает исправленный/дополнительный ЭСФ сам', async () => {
+    const { ctx } = await setupOrg();
+    await esf.updateSettings(ctx, { signerIin: '123456789021' });
+    await prisma.esfSession.create({ data: { organizationId: ctx.organizationId, environment: 'TEST', sessionId: 'S', iin: '123456789021', tin: '123456789021' } });
+    const body = `<?xml version="1.0" encoding="UTF-8"?><v2:invoice xmlns:a="abstractInvoice.esf" xmlns:v2="v2.esf"><date>12.10.2026</date><invoiceType>ADDITIONAL_INVOICE</invoiceType><num>88</num><operatorFullname>X</operatorFullname><relatedInvoice><date>02.10.2026</date><num>77</num><registrationNumber>ESF-987654321098-20261002-0077</registrationNumber></relatedInvoice><turnoverDate>12.10.2026</turnoverDate><customers><customer><countryCode>KZ</countryCode><name>Мы</name><tin>123456789021</tin></customer></customers><deliveryTerm><hasContract>false</hasContract><paymentForm>NON_CASH</paymentForm></deliveryTerm><productSet><currencyCode>KZT</currencyCode><products><product><catalogTruId>1</catalogTruId><description>Яблоки</description><ndsAmount>-160.00</ndsAmount><ndsRate>16</ndsRate><priceWithTax>-1160.00</priceWithTax><priceWithoutTax>-1000.00</priceWithoutTax><truOriginCode>4</truOriginCode><turnoverSize>-1000.00</turnoverSize></product></products><totalExciseAmount>0</totalExciseAmount><totalNdsAmount>-160.00</totalNdsAmount><totalPriceWithTax>-1160.00</totalPriceWithTax><totalPriceWithoutTax>-1000.00</totalPriceWithoutTax><totalTurnoverSize>-1000.00</totalTurnoverSize></productSet><sellers><seller><name>ТОО Поставщик</name><tin>987654321098</tin></seller></sellers></v2:invoice>`;
+    const original = await prisma.esfInvoice.create({ data: { organizationId: ctx.organizationId, direction: 'INBOUND', invoiceType: 'ORDINARY_INVOICE', num: '77', date: new Date('2026-10-02'), turnoverDate: new Date('2026-10-01'), sellerTin: '987654321098', status: 'DELIVERED', esfStatus: 'DELIVERED', esfId: BigInt(Date.now()) * 10n, registrationNumber: 'ESF-987654321098-20261002-0077', body: '<x/>', bodyHash: 'x' } });
+    const esc = body.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const ops: string[] = [];
+    const newId = BigInt(Date.now()) * 10n + 7n;
+    esf.fetcher = fakeEsf({
+      queryUpdates: () => `<lastEventDate>2026-10-23T10:00:00.000+05:00</lastEventDate><lastInvoiceId>${newId}</lastInvoiceId><lastBlock>true</lastBlock><invoiceInfoList><invoiceInfo><invoiceBody>${esc}</invoiceBody><invoiceId>${newId}</invoiceId><registrationNumber>ESF-987654321098-20261012-0088</registrationNumber><inputDate>2026-10-12T10:00:00+05:00</inputDate><lastUpdateDate>2026-10-12T10:00:00+05:00</lastUpdateDate><signatureValid>true</signatureValid><invoiceStatus>WAITING_CUSTOMER_CONFIRMATION</invoiceStatus><version>InvoiceV2</version><signature>x</signature><signatureType>COMPANY</signatureType><certificate>x</certificate></invoiceInfo></invoiceInfoList>`,
+      confirmInvoiceById: () => { ops.push('confirm'); return '<invoiceSummaryList/>'; },
+      approveInvoiceById: () => { ops.push('approve'); return '<resultList/>'; },
+      declineInvoiceById: () => { ops.push('decline'); return '<resultList/>'; },
+    }).fetcher;
+    await esf.refresh(ctx);
+    const add = await prisma.esfInvoice.findFirstOrThrow({ where: { organizationId: ctx.organizationId, esfId: newId } });
+    expect(ops).toEqual([]); // ждёт подтверждения — ни согласия, ни отказа без человека
+    expect(add).toMatchObject({ status: 'WAITING_CUSTOMER_CONFIRMATION', businessDecision: null, relatedInvoiceId: original.id }); // цепочка к исходному
+    expect(await prisma.esfDecision.count({ where: { organizationId: ctx.organizationId } })).toBe(0);
+  });
+
+  it('основание обязательно; отклонение — с причиной; второе решение по тому же ЭСФ, пока первое в работе, — нельзя', async () => {
+    const { ctx, inv } = await inbound();
+    await expectCode(esf.proposeDecision(ctx, { kind: 'APPROVE', ids: [inv.id], basis: '' }), 'ESF_BASIS');
+    await expectCode(esf.proposeDecision(ctx, { kind: 'DECLINE', ids: [inv.id], basis: 'Сверка с поставкой' }), 'ESF_REASON');
+    const d = await esf.proposeDecision(ctx, { kind: 'DECLINE', ids: [inv.id], reason: 'Цены не согласованы', basis: 'Договор № 5, п. 3' });
+    expect(d).toMatchObject({ status: 'PROPOSED', fourEyes: true, dueAt: null, dueSource: 'NOT_CONFIGURED', requiredPermission: 'acc.esf.approve' });
+    await expectCode(esf.proposeDecision(ctx, { kind: 'APPROVE', ids: [inv.id], basis: 'Сверено' }), 'ESF_DECISION_PENDING');
+    await esf.rejectDecision(ctx, d.id, 'Передумали, нужна сверка');
+    expect((await esf.proposeDecision(ctx, { kind: 'APPROVE', ids: [inv.id], basis: 'Сверено с поставкой' })).status).toBe('PROPOSED');
+  });
+
+  it('роль: бухгалтер предлагает, но не утверждает; отклонение утверждает другой сотрудник', async () => {
+    const { ctx, inv } = await inbound();
+    const accountant = await colleague(ctx, 'accountant');
+    const d = await esf.proposeDecision(accountant, { kind: 'DECLINE', ids: [inv.id], reason: 'Не наш товар', basis: 'Накладная не поступала' });
+    await expectCode(esf.approveDecision(accountant, d.id), 'FORBIDDEN');
+    await esf.approveDecision(ctx, d.id); // главный бухгалтер, не автор
+    expect((await prisma.esfDecision.findUniqueOrThrow({ where: { id: d.id } })).decidedBy).toBe(ctx.userId);
+  });
+
+  it('без утверждения не подписать и не исполнить; утверждение действует 24 часа', async () => {
+    const { ctx, inv } = await inbound();
+    const d = await esf.proposeDecision(ctx, { kind: 'APPROVE', ids: [inv.id], basis: 'Сверено с поставкой' });
+    await expectCode(esf.decisionSigningData(ctx, d.id), 'ESF_DECISION_NOT_APPROVED');
+    await expectCode(esf.executeDecision(ctx, d.id, { signature: 's', certificate: 'c' }), 'ESF_DECISION_NOT_APPROVED');
+    await esf.approveDecision(ctx, d.id);
+    await prisma.esfDecision.update({ where: { id: d.id }, data: { approvalExpiresAt: new Date(Date.now() - 1000) } });
+    await expectCode(esf.decisionSigningData(ctx, d.id), 'ESF_DECISION_EXPIRED');
+  });
+
+  it('ЭСФ изменился после утверждения — решение устарело и не исполняется', async () => {
+    const { ctx, inv } = await inbound();
+    const { d, data } = await decided(ctx, 'APPROVE', [inv.id]);
+    let called = false;
+    esf.fetcher = fakeEsf({ approveInvoiceById: () => { called = true; return '<resultList/>'; } }).fetcher;
+    await prisma.esfInvoice.update({ where: { id: inv.id }, data: { esfStatus: 'DECLINED', status: 'DECLINED' } }); // например, отклонил кто-то в портале
+    await expectCode(esf.executeDecision(ctx, d.id, { signature: signer.sign(data.data), certificate: signer.pem, signingToken: data.signingToken }), 'ESF_DECISION_STALE');
+    expect(called).toBe(false);
+    expect((await prisma.esfDecision.findUniqueOrThrow({ where: { id: d.id } })).status).toBe('STALE');
+  });
+
+  it('срок — из правила методолога; просрочка видна, но ничего не решается автоматически', async () => {
+    const { ctx, inv } = await inbound();
+    await expectCode(esf.updateSettings(ctx, { decisionRules: { DECLINE: { deadlineDays: 0 } } }), 'ESF_RULE');
+    await esf.updateSettings(ctx, { decisionRules: { APPROVE: { deadlineDays: 5 } } });
+    const d = await esf.proposeDecision(ctx, { kind: 'APPROVE', ids: [inv.id], basis: 'Сверено с поставкой' });
+    expect([d.dueSource, d.dueAt!.toISOString()]).toEqual(['RULE', '2026-10-15T00:00:00.000Z']); // lastUpdateAt + 5 дней
+    const list = await esf.decisions(ctx);
+    expect(list.find((x) => x.id === d.id)).toMatchObject({ overdue: true, status: 'PROPOSED' });
+    await esf.tick();
+    expect((await prisma.esfDecision.findUniqueOrThrow({ where: { id: d.id } })).status).toBe('PROPOSED');
+    expect((await prisma.esfInvoice.findUniqueOrThrow({ where: { id: inv.id } })).businessDecision).toBeNull();
+  });
+
+  it('основание входящего: предложение автоматики становится основанием только утверждённым решением', async () => {
+    const { ctx, t, inv } = await inbound('ORDINARY_INVOICE', 'DELIVERED');
+    const supply = await s.trade.create(ctx, { docType: 'SUPPLY', date: '2026-10-10', counterpartyId: t.supplier.id, storeId: t.s1.id, lines: [{ productId: t.goods.id, qty: '1', price: '100' }], status: 'POSTED' });
+    const other = await setupOrg();
+    const foreign = await s.trade.create(other.ctx, { docType: 'SUPPLY', date: '2026-10-10', counterpartyId: other.t.supplier.id, storeId: other.t.s1.id, lines: [{ productId: other.t.goods.id, qty: '1', price: '100' }], status: 'POSTED' });
+    await expectCode(esf.proposeDecision(ctx, { kind: 'LINK_BASIS', ids: [inv.id], basisDocId: foreign.id, basis: 'Совпадает сумма' }), 'REF_FOREIGN');
+    const { d } = await (async () => {
+      const p = await esf.proposeDecision(ctx, { kind: 'LINK_BASIS', ids: [inv.id], basisDocId: supply.id, basis: 'Совпадает накладная № 12' });
+      await expectCode(esf.decisionSigningData(ctx, p.id), 'ESF_DECISION_NOT_APPROVED');
+      await esf.approveDecision(ctx, p.id);
+      return { d: p };
+    })();
+    expect((await prisma.esfInvoice.findUniqueOrThrow({ where: { id: inv.id } })).sourceDocId).toBeNull();
+    const r = await esf.executeDecision(ctx, d.id);
+    expect(r.status).toBe('EXECUTED');
+    expect(await prisma.esfInvoice.findUniqueOrThrow({ where: { id: inv.id } })).toMatchObject({ sourceDocId: supply.id, businessDecision: 'BASIS_LINKED' });
+    expect(await prisma.auditLog.count({ where: { entity: 'esf_decision', entityId: d.id } })).toBe(3); // предложено, утверждено, исполнено
   });
 });

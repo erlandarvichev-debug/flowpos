@@ -71,7 +71,7 @@ ESF | P0 | Integration engineer | L | PLANNED
 Зависимости: FP-015,FP-016,FP-021. Приёмка: Lost response/restart → UNKNOWN; status lookup доказан; нет слепого resend.
 
 ## FP-018 · Решения по исправлению дополнению отзыву
-ESF | P0 | Methodologist/Backend | M | PLANNED
+ESF | P0 | Methodologist/Backend | M | DONE_LOCAL — см. `FP-018-ESF-DECISIONS.md` (не выкладывалось)
 Зависимости: FP-012,FP-016. Приёмка: Technical ACK отдельно от business acceptance; сроки/роль/основание; explicit approval.
 
 ## FP-019 · Частичный зачёт НДС и корректировки

@@ -9,6 +9,7 @@ export const PERMISSIONS = [
   'acc.policy.manage',
   'acc.audit.read',
   'acc.esf.read', 'acc.esf.send',
+  'acc.esf.approve', // FP-018: утверждение решений по ЭСФ (отзыв, отклонение, подтверждение, основание)
   'hr.read', 'hr.manage', 'payroll.approve',
   'org.members.manage',
   // FP-008: старые модули и обмен
