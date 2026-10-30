@@ -3,10 +3,13 @@
 // Нет контекста — строк нет (fail-closed). Системный режим (вход до определения клиента, фоновые задачи
 // по всем клиентам) включается только явно — runAsSystem.
 import { AsyncLocalStorage } from 'async_hooks';
+import { randomUUID } from 'crypto';
 
 export interface DbContext {
   tenantId?: string;
   system?: boolean;
+  /** FP-022: код трассировки — связывает действие в интерфейсе, фоновую задачу, вызов шлюза и запись журнала. */
+  traceId?: string;
 }
 
 export const dbContext = new AsyncLocalStorage<DbContext>();
@@ -18,12 +21,23 @@ export const currentDbContext = (): DbContext => dbContext.getStore() ?? {};
 
 /** Выполнить в системном режиме: RLS пропускает все строки. Только для серверного кода с собственной проверкой доступа. */
 export function runAsSystem<T>(fn: () => PromiseLike<T> | T): Promise<T> {
-  return dbContext.run({ system: true }, async () => await fn());
+  return dbContext.run({ system: true, traceId: currentDbContext().traceId }, async () => await fn());
 }
 
 /** Выполнить от имени клиента (фоновая обработка одной организации). */
 export function runAsTenant<T>(tenantId: string, fn: () => PromiseLike<T> | T): Promise<T> {
-  return dbContext.run({ tenantId }, async () => await fn());
+  return dbContext.run({ tenantId, traceId: currentDbContext().traceId }, async () => await fn());
+}
+
+/** Новый код трассировки (UUID). */
+export const newTraceId = () => randomUUID();
+
+/** Входящий код трассировки принимается только в безопасной форме (попадает в логи и заголовки). */
+export const validTraceId = (v: unknown): string | undefined => (typeof v === 'string' && /^[\w-]{8,64}$/.test(v) ? v : undefined);
+
+/** Выполнить фоновую задачу под своим кодом трассировки (например, `esf-tick:<uuid>`). */
+export function runWithTrace<T>(traceId: string, fn: () => PromiseLike<T> | T): Promise<T> {
+  return dbContext.run({ ...currentDbContext(), traceId }, async () => await fn());
 }
 
 /**

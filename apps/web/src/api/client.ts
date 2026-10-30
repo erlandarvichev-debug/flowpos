@@ -7,6 +7,9 @@ export const api = axios.create({
 })
 
 api.interceptors.request.use((config) => {
+  // FP-022: код трассировки действия — сервер пишет его в журнал и логи, а при ошибке пользователь видит его
+  // в сообщении и может назвать поддержке.
+  if (!config.headers['X-Request-Id']) config.headers['X-Request-Id'] = newRequestId()
   const token = localStorage.getItem('fp_token')
   if (token) config.headers.Authorization = `Bearer ${token}`
   try {
@@ -15,6 +18,12 @@ api.interceptors.request.use((config) => {
   } catch { /* storage недоступен */ }
   return config
 })
+
+function newRequestId() {
+  return globalThis.crypto && 'randomUUID' in globalThis.crypto
+    ? globalThis.crypto.randomUUID()
+    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`
+}
 
 let refreshing: Promise<string | null> | null = null
 
@@ -45,7 +54,10 @@ api.interceptors.response.use(
       localStorage.removeItem('fp_token')
       window.location.href = '/login'
     }
-    return Promise.reject(err.response?.data || err)
+    const data = err.response?.data
+    const traceId = err.response?.headers?.['x-request-id'] || original?.headers?.['X-Request-Id']
+    if (data && typeof data === 'object' && traceId && !data.traceId) data.traceId = traceId
+    return Promise.reject(data || err)
   },
 )
 

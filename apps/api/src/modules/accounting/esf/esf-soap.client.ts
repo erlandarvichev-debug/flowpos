@@ -2,7 +2,13 @@
 // test3.esf.kgd.gov.kz и комплект разработчика КГД (esf-sdk-290824).
 // Аутентификация: AuthService.createAuthTicket(iin) → тикет подписывается XMLDSig ключом AUTH на стороне
 // владельца ЭЦП (NCALayer) → SessionService.createSessionSigned. Пароли и ключи сервер не хранит.
+import { Logger } from '@nestjs/common';
 import { XMLParser } from 'fast-xml-parser';
+import { redact } from '../../../common/redact';
+
+// FP-022: попытка вызова шлюза — строка лога с кодом трассировки (его добавляет RedactingLogger), операцией,
+// средой, длительностью и исходом. Тела запроса/ответа (тикеты, подписи, сессии) в лог не пишутся.
+const gwLog = new Logger('ESF-GW');
 
 export const ESF_ENDPOINTS: Record<string, string> = {
   TEST: 'https://test3.esf.kgd.gov.kz:8443/esf-web/ws/api1',
@@ -59,6 +65,19 @@ export class EsfSoapClient {
 
   /** Вызов операции: body — содержимое soap:Body (элемент запроса с префиксом esf:). */
   async call(service: string, body: string): Promise<any> {
+    const op = /<esf:(\w+)/.exec(body)?.[1] ?? '?';
+    const started = Date.now();
+    try {
+      const r = await this.callRaw(service, body);
+      gwLog.debug(`${service}.${op} ${this.baseUrl.includes('test') ? 'TEST' : 'PROD'} ok ${Date.now() - started}ms`);
+      return r;
+    } catch (e: any) {
+      gwLog.warn(`${service}.${op} ${this.baseUrl.includes('test') ? 'TEST' : 'PROD'} ${e instanceof EsfSoapError ? e.code : 'ERROR'} ${Date.now() - started}ms: ${redact(e?.message ?? e).slice(0, 200)}`);
+      throw e;
+    }
+  }
+
+  private async callRaw(service: string, body: string): Promise<any> {
     const envelope = `<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:esf="esf"><soapenv:Header/><soapenv:Body>${body}</soapenv:Body></soapenv:Envelope>`;
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), this.timeoutMs);

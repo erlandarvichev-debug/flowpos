@@ -14,6 +14,7 @@ import { AutopilotService } from './autopilot/autopilot.service';
 import { TradeDocumentsService } from './autopilot/trade-documents.service';
 import { BankImportService } from './bank/bank-import.service';
 import { EsfService } from './esf/esf.service';
+import { EsfMonitorService } from './esf/esf-monitor.service';
 import { VatCreditService } from './vat/vat-credit.service';
 import { StatementsService } from './statements/statements.service';
 import { fileName, toPdf, toXlsx, trialBalanceXlsx } from './statements/statement-export';
@@ -43,6 +44,7 @@ export class AccountingController {
     private trade: TradeDocumentsService,
     private bank: BankImportService,
     private esf: EsfService,
+    private esfMonitor: EsfMonitorService,
     private statements: StatementsService,
     private closing: ClosingService,
     private payroll: PayrollService,
@@ -137,6 +139,10 @@ export class AccountingController {
 
   @Get('esf/summary') @RequirePermission('acc.esf.read')
   esfSummary(@Org() ctx: OrgContext) { return this.esf.summary(ctx); }
+
+  /** FP-022: состояние обмена с ИС ЭСФ и открытые оповещения организации. */
+  @Get('esf/health') @RequirePermission('acc.esf.read')
+  esfHealth(@Org() ctx: OrgContext) { return this.esfMonitor.health(ctx.organizationId); }
 
   @Get('esf/invoices') @RequirePermission('acc.esf.read')
   esfList(@Org() ctx: OrgContext, @Query() q: any) { return this.esf.list(ctx, q); }

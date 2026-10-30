@@ -226,11 +226,14 @@ model AuditLog {
   organizationId String? @map("organization_id")
   reason    String?
   ts        DateTime @default(now())
+  /// FP-022: код трассировки запроса/фоновой задачи (заполняет БД из set_config контекста запроса)
+  traceId   String?  @default(dbgenerated("NULLIF(current_setting('flowpos.trace_id'::text, true), ''::text)")) @map("trace_id")
 
   user User? @relation(fields: [userId], references: [id])
 
   @@index([entity, entityId])
   @@index([ts])
+  @@index([traceId])
   @@map("audit_log")
 }
 
@@ -2129,9 +2132,39 @@ model EsfSettings {
   decisionRules       Json?     @map("decision_rules")
   inboundLastEventAt  DateTime? @map("inbound_last_event_at")
   inboundLastId       BigInt?   @map("inbound_last_id")
+  /// FP-022: состояние обмена — последняя успешная синхронизация, последняя ошибка (без секретов), сбоев подряд
+  syncOkAt            DateTime? @map("sync_ok_at")
+  syncErrorAt         DateTime? @map("sync_error_at")
+  syncError           String?   @map("sync_error")
+  syncFailures        Int       @default(0) @map("sync_failures")
   updatedAt           DateTime  @updatedAt @map("updated_at")
 
   @@map("esf_settings")
+}
+
+/// FP-022: оповещение мониторинга по организации. Одно открытое на ключ; повторное уведомление — только при
+/// росте важности или по истечении интервала подавления. Владелец и runbook — в правиле (esf-alerts.ts).
+model OpsAlert {
+  id             String    @id @default(uuid())
+  organizationId String    @map("organization_id")
+  key            String    // ESF_UNKNOWN, ESF_SYNC_STALE, …
+  /// = key, пока оповещение открыто; null после закрытия — уникальность «одно открытое на ключ» без частичного индекса
+  openKey        String?   @map("open_key")
+  severity       String    // WARNING | CRITICAL
+  owner          String
+  runbook        String
+  message        String
+  value          Json?
+  openedAt       DateTime  @default(now()) @map("opened_at")
+  lastSeenAt     DateTime  @default(now()) @map("last_seen_at")
+  notifiedAt     DateTime? @map("notified_at")
+  notifyCount    Int       @default(0) @map("notify_count")
+  resolvedAt     DateTime? @map("resolved_at")
+  traceId        String?   @map("trace_id")
+
+  @@unique([organizationId, openKey])
+  @@index([organizationId, resolvedAt])
+  @@map("ops_alerts")
 }
 
 /// Сессия ИС ЭСФ (открыта подписанным тикетом). Секретов не содержит: только sessionId.

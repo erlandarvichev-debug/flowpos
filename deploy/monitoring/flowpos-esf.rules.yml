@@ -1,0 +1,55 @@
+# FP-022: правила Prometheus для FlowPOS (ИС ЭСФ и outbox). Проверка: promtool check rules flowpos-esf.rules.yml
+# Сбор: job "flowpos-api", http://127.0.0.1:3000/api/v1/ops/metrics, bearer_token = OPS_METRICS_TOKEN из api.env.
+#
+# Зачем, если API сам открывает оповещения (ops_alerts)? Внутренние оповещения не сработают, когда API лежит или
+# фоновая обработка встала. Эти правила — внешний сторож: «процесс жив», «обработка идёт», плюс дублирование
+# критичных условий. Ответственный и действия — docs/erp/runbooks/ESF.md (ссылка в annotations.runbook).
+groups:
+  - name: flowpos-esf
+    rules:
+      - alert: FlowposApiDown
+        expr: up{job="flowpos-api"} == 0
+        for: 2m
+        labels: { severity: critical, owner: sre }
+        annotations:
+          summary: "API FlowPOS не отвечает на сбор метрик"
+          runbook: "docs/erp/runbooks/ESF.md#flowpos-api-down"
+
+      - alert: FlowposEsfWorkerStalled
+        # Проход по организациям идёт раз в ESF_INTERVAL_MS (60 с); 10 минут без прохода — обработка встала.
+        expr: flowpos_esf_worker_last_tick_age_seconds > 600 or absent(flowpos_esf_worker_last_tick_age_seconds)
+        for: 5m
+        labels: { severity: critical, owner: sre }
+        annotations:
+          summary: "Фоновая обработка ЭСФ не выполняется"
+          runbook: "docs/erp/runbooks/ESF.md#flowpos-esf-worker-stalled"
+
+      - alert: FlowposEsfSendingLeaseExpired
+        expr: flowpos_esf_sending_lease_expired > 0
+        for: 5m
+        labels: { severity: critical, owner: sre }
+        annotations:
+          summary: "ЭСФ «отправляются» дольше аренды ({{ $labels.organization_id }})"
+          runbook: "docs/erp/runbooks/ESF.md#esf-sending-stuck"
+
+      - alert: FlowposEsfUnknownOld
+        expr: flowpos_esf_unknown_oldest_age_seconds > 86400
+        labels: { severity: critical, owner: accountant }
+        annotations:
+          summary: "UNKNOWN дольше суток ({{ $labels.organization_id }})"
+          runbook: "docs/erp/runbooks/ESF.md#esf-unknown"
+
+      - alert: FlowposEsfSyncFailing
+        expr: flowpos_esf_sync_failures >= 10
+        labels: { severity: critical, owner: sre }
+        annotations:
+          summary: "Синхронизация с ИС ЭСФ не удаётся ({{ $labels.organization_id }})"
+          runbook: "docs/erp/runbooks/ESF.md#esf-sync-failing"
+
+      - alert: FlowposOutboxLeaseExpired
+        expr: flowpos_outbox_lease_expired > 0
+        for: 10m
+        labels: { severity: warning, owner: sre }
+        annotations:
+          summary: "Outbox: аренда истекла, а сообщение в SENDING (воркер push упал?)"
+          runbook: "docs/erp/runbooks/ESF.md#outbox-lease-expired"

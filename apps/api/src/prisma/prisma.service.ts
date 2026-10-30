@@ -24,7 +24,8 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     const base = this as PrismaClient;
     const ctx = (db: { $executeRaw: PrismaClient['$executeRaw'] }) => {
       const c = currentDbContext();
-      return db.$executeRaw`SELECT set_config('flowpos.tenant_id', ${c.tenantId ?? ''}, true), set_config('flowpos.system', ${c.system ? 'on' : 'off'}, true)`;
+      // FP-022: flowpos.trace_id — значение по умолчанию audit_log.trace_id (журнал связан с запросом/задачей).
+      return db.$executeRaw`SELECT set_config('flowpos.tenant_id', ${c.tenantId ?? ''}, true), set_config('flowpos.system', ${c.system ? 'on' : 'off'}, true), set_config('flowpos.trace_id', ${c.traceId ?? ''}, true)`;
     };
     const extended = base.$extends({
       query: {

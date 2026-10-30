@@ -6,6 +6,8 @@ import { PrismaService } from '../src/prisma/prisma.service';
 import { EsfService } from '../src/modules/accounting/esf/esf.service';
 import { esfDate, parseInvoice } from '../src/modules/accounting/esf/invoice-xml';
 import { EsfSoapClient } from '../src/modules/accounting/esf/esf-soap.client';
+import { EsfMonitorService } from '../src/modules/accounting/esf/esf-monitor.service';
+import { runWithTrace } from '../src/common/db-context';
 import { makeServices, makeOrg, makeTrade, ctxFor } from './accounting-helpers';
 import { makeCertFactory } from './esf-certs';
 
@@ -726,5 +728,164 @@ describe('FP-020: рабочее место — списки, фильтры, к
     expect((await esf.get(w.ctx, w.unknown.id)).unknown).toMatchObject({ canRelease: false });
     await prisma.auditLog.create({ data: { organizationId: w.ctx.organizationId, action: 'ESF_RECONCILE_NOT_FOUND', entity: 'esf_invoice', entityId: w.unknown.id } });
     expect((await esf.get(w.ctx, w.unknown.id)).unknown).toMatchObject({ canRelease: true });
+  });
+});
+
+describe('FP-022: метрики, оповещения, трассировка, карантин входящих', () => {
+  const monitor = new EsfMonitorService(prisma);
+  const sent: any[] = [];
+  monitor.notifier = async (p) => { sent.push(p); };
+  const HOUR = 3600_000;
+
+  async function orgWithSession() {
+    const { ctx, t } = await setupOrg();
+    await esf.updateSettings(ctx, { signerIin: '123456789021' });
+    await prisma.esfSession.create({ data: { organizationId: ctx.organizationId, environment: 'TEST', sessionId: 'S-SECRET-SESSION', iin: '123456789021', tin: '123456789021' } });
+    return { ctx, t };
+  }
+  const mk = (ctx: any, n: number, d: Record<string, unknown>) => prisma.esfInvoice.create({ data: { organizationId: ctx.organizationId, direction: 'OUTBOUND', invoiceType: 'ORDINARY_INVOICE', num: `${Date.now()}${n}`, date: new Date(), turnoverDate: new Date(), status: 'SENT', body: '<x/>', bodyHash: 'x', ...d } });
+
+  it('метрики: UNKNOWN и возраст, зависшая отправка, готовые, отклонённые, отказы подписи, просроченные решения', async () => {
+    const { ctx } = await orgWithSession();
+    const now = new Date();
+    await mk(ctx, 1, { status: 'UNKNOWN', sentAt: new Date(now.getTime() - 2 * HOUR) });
+    await mk(ctx, 2, { status: 'UNKNOWN', sentAt: new Date(now.getTime() - 5 * 60_000) });
+    await mk(ctx, 3, { status: 'SENDING', sentAt: new Date(now.getTime() - 10 * 60_000) });
+    await mk(ctx, 4, { status: 'SENDING', sentAt: new Date(now.getTime() - 60_000) }); // в пределах аренды
+    await mk(ctx, 5, { status: 'READY' });
+    await mk(ctx, 6, { status: 'REJECTED' });
+    await prisma.auditLog.create({ data: { organizationId: ctx.organizationId, action: 'ESF_SIGNING_REJECTED', entity: 'esf_invoice', entityId: 'x' } });
+    const w = await mk(ctx, 7, { direction: 'INBOUND', status: 'WAITING_CUSTOMER_CONFIRMATION', esfStatus: 'WAITING_CUSTOMER_CONFIRMATION', invoiceType: 'ADDITIONAL_INVOICE' });
+    const d = await esf.proposeDecision(ctx, { kind: 'APPROVE', ids: [w.id], basis: 'Сверено' });
+    await prisma.esfDecision.update({ where: { id: d.id }, data: { dueAt: new Date(now.getTime() - 60_000) } });
+
+    const m = await monitor.metrics(ctx.organizationId, now);
+    expect(m).toMatchObject({ sessionOpen: true, unknownCount: 2, sendingStuck: 1, readyCount: 1, rejected24h: 1, signingFailures24h: 1, decisionsOverdue: 1, quarantineCount: 0, syncOkAgeSec: null });
+    expect(m.unknownOldestAgeSec).toBeGreaterThanOrEqual(2 * 3600 - 5);
+  });
+
+  it('оповещение: открыть и уведомить → повтор подавлен → напоминание после интервала → рост важности → закрытие', async () => {
+    const { ctx } = await orgWithSession();
+    const t0 = new Date();
+    const u = await mk(ctx, 1, { status: 'UNKNOWN', sentAt: new Date(t0.getTime() - HOUR) });
+    sent.length = 0;
+    const at = (h: number) => new Date(t0.getTime() + h * HOUR);
+    // Синхронизация идёт исправно — в игре только оповещение UNKNOWN.
+    const ev = async (h: number) => {
+      await prisma.esfSettings.update({ where: { organizationId: ctx.organizationId }, data: { syncOkAt: at(h) } });
+      return monitor.evaluate(ctx.organizationId, at(h));
+    };
+
+    await ev(0);
+    expect(sent.map((p) => `${p.event}:${p.key}:${p.severity}`)).toEqual(['RAISED:ESF_UNKNOWN:WARNING']);
+    expect(sent[0].owner).toMatch(/бухгалтер/);
+    expect(sent[0].runbook).toBe('docs/erp/runbooks/ESF.md#esf-unknown');
+    await ev(1);
+    expect(sent).toHaveLength(1); // подавлено
+    expect(await prisma.opsAlert.count({ where: { organizationId: ctx.organizationId, resolvedAt: null } })).toBe(1);
+    await ev(6.1);
+    expect(sent.at(-1).event).toBe('REMINDER');
+    await ev(24);
+    expect(`${sent.at(-1).event}:${sent.at(-1).severity}`).toBe('ESCALATED:CRITICAL');
+    const n = sent.length;
+    // Сверка нашла ЭСФ — оповещение закрывается; повторное срабатывание откроет новое (не воскресит старое).
+    await prisma.esfInvoice.update({ where: { id: u.id }, data: { status: 'SENT' } });
+    await ev(24.1);
+    expect(sent.slice(n).map((p) => p.event)).toEqual(['RESOLVED']);
+    const all = await prisma.opsAlert.findMany({ where: { organizationId: ctx.organizationId } });
+    expect(all).toHaveLength(1);
+    expect(all[0]).toMatchObject({ resolvedAt: expect.any(Date), openKey: null, notifyCount: 3 });
+    expect((await prisma.auditLog.findMany({ where: { organizationId: ctx.organizationId, entity: 'ops_alert' }, orderBy: { ts: 'asc' } })).map((a) => a.action)).toEqual(['OPS_ALERT_RAISED', 'OPS_ALERT_RESOLVED']);
+    // Снова сработало — новое оповещение с уведомлением, закрытое остаётся в истории.
+    await prisma.esfInvoice.update({ where: { id: u.id }, data: { status: 'UNKNOWN' } });
+    await ev(25);
+    expect(sent.at(-1)).toMatchObject({ event: 'RAISED', key: 'ESF_UNKNOWN' });
+    expect(await prisma.opsAlert.count({ where: { organizationId: ctx.organizationId } })).toBe(2);
+  });
+
+  it('гонка оценок: второй процесс со устаревшим чтением не открывает дубль и не уведомляет повторно', async () => {
+    const { ctx } = await orgWithSession();
+    await mk(ctx, 1, { status: 'SENDING', sentAt: new Date(Date.now() - HOUR) });
+    sent.length = 0;
+    await monitor.evaluate(ctx.organizationId);
+    // Второй процесс прочитал «открытых нет» до того, как первый записал своё — защищает только уникальность в БД.
+    const stale = new Proxy(prisma, { get: (tgt, prop) => (prop === 'opsAlert' ? new Proxy(tgt.opsAlert, { get: (a, k) => (k === 'findMany' ? async () => [] : (a as any)[k]) }) : (tgt as any)[prop]) });
+    const racer = new EsfMonitorService(stale as any);
+    racer.notifier = monitor.notifier;
+    await racer.evaluate(ctx.organizationId);
+    expect(await prisma.opsAlert.count({ where: { organizationId: ctx.organizationId, key: 'ESF_SENDING_STUCK' } })).toBe(1);
+    expect(sent.filter((p) => p.key === 'ESF_SENDING_STUCK')).toHaveLength(1);
+  });
+
+  it('неразобранный входящий ЭСФ не теряется: карантин в журнале, метрика, курсор идёт дальше', async () => {
+    const { ctx } = await orgWithSession();
+    esf.fetcher = fakeEsf({
+      queryUpdates: () => `<lastEventDate>2026-10-23T10:00:00.000+05:00</lastEventDate><lastInvoiceId>777</lastInvoiceId><lastBlock>true</lastBlock><invoiceInfoList><invoiceInfo><invoiceBody>&lt;broken</invoiceBody><invoiceId>777</invoiceId><registrationNumber>ESF-1-0777</registrationNumber><invoiceStatus>CREATED</invoiceStatus></invoiceInfo></invoiceInfoList>`,
+    }).fetcher;
+    const r = await esf.refresh(ctx);
+    expect(r.inbound).toBe(0);
+    const q = await prisma.auditLog.findFirst({ where: { organizationId: ctx.organizationId, action: 'ESF_INBOUND_UNPARSED' } });
+    expect(q!.entityId).toBe('777');
+    expect(q!.after).toMatchObject({ body: '<broken', registrationNumber: 'ESF-1-0777', bodySha256: expect.stringMatching(/^[0-9a-f]{64}$/) });
+    expect((await monitor.metrics(ctx.organizationId)).quarantineCount).toBe(1);
+    expect((await esf.settings(ctx)).inboundLastId).toBe('777');
+    // Тот же ЭСФ позже попал в реестр (FP-024: повторная обработка) — из карантина уходит.
+    await mk(ctx, 1, { direction: 'INBOUND', esfId: 777n });
+    expect((await monitor.metrics(ctx.organizationId)).quarantineCount).toBe(0);
+  });
+
+  it('состояние синхронизации: ошибка без секретов, сбои подряд, успех сбрасывает', async () => {
+    const { ctx } = await orgWithSession();
+    esf.fetcher = async () => { throw new Error('connect ECONNREFUSED postgresql://u:hunter2@h sessionId=S-SECRET-SESSION'); };
+    await expect(esf.refresh(ctx)).rejects.toBeTruthy();
+    await expect(esf.refresh(ctx)).rejects.toBeTruthy();
+    let st = await prisma.esfSettings.findUniqueOrThrow({ where: { organizationId: ctx.organizationId } });
+    expect(st.syncFailures).toBe(2);
+    expect(st.syncError).toMatch(/ESF_NETWORK/);
+    expect(st.syncError).not.toMatch(/hunter2|S-SECRET-SESSION/);
+    esf.fetcher = fakeEsf({
+      createSessionSigned: () => '<sessionId>S-NEW</sessionId>',
+      queryUpdates: () => `<lastEventDate>2026-10-23T10:00:00.000+05:00</lastEventDate><lastBlock>true</lastBlock><invoiceInfoList/>`,
+    }).fetcher;
+    // Новый вход — счёт сбоев заново (ошибки прошлой сессии к ней не относятся).
+    await esf.openSession(ctx, '<authSign><ds:Signature/></authSign>');
+    st = await prisma.esfSettings.findUniqueOrThrow({ where: { organizationId: ctx.organizationId } });
+    expect(st.syncFailures).toBe(0);
+    expect(st.syncOkAt).toBeNull();
+    await esf.refresh(ctx);
+    st = await prisma.esfSettings.findUniqueOrThrow({ where: { organizationId: ctx.organizationId } });
+    expect(st.syncFailures).toBe(0);
+    expect(st.syncOkAt).not.toBeNull();
+  });
+
+  it('отказ проверки подписи пишется в журнал (без подписи и сертификата)', async () => {
+    const { ctx, t } = await orgWithSession();
+    await esf.updateSettings(ctx, { vatRegistrationDate: '2020-01-15', transportTypeCode: '30', defaultGoodsOrigin: '5' });
+    const sale = await stockAndSell(ctx, t);
+    const inv = await esf.prepare(ctx, sale.id);
+    await expect(esf.upload(ctx, { certificate: signer.pem, items: [{ id: inv.id, signature: 'AAAA', signingToken: 'bad' }] })).rejects.toBeTruthy();
+    const a = await prisma.auditLog.findFirst({ where: { organizationId: ctx.organizationId, action: 'ESF_SIGNING_REJECTED' } });
+    expect(a!.entityId).toBe(inv.id);
+    expect(JSON.stringify(a!.after)).not.toMatch(/AAAA|BEGIN CERTIFICATE/);
+  });
+
+  it('код трассировки попадает в журнал — и в обычном запросе, и в транзакции', async () => {
+    const { ctx } = await orgWithSession();
+    await runWithTrace('trace-int-0001', async () => {
+      await prisma.auditLog.create({ data: { organizationId: ctx.organizationId, action: 'T1', entity: 't', entityId: 'a' } });
+      await prisma.$transaction(async (tx) => { await tx.auditLog.create({ data: { organizationId: ctx.organizationId, action: 'T2', entity: 't', entityId: 'b' } }); });
+    });
+    await prisma.auditLog.create({ data: { organizationId: ctx.organizationId, action: 'T3', entity: 't', entityId: 'c' } });
+    const rows = await prisma.auditLog.findMany({ where: { organizationId: ctx.organizationId, entity: 't' }, orderBy: { action: 'asc' } });
+    expect(rows.map((r) => r.traceId)).toEqual(['trace-int-0001', 'trace-int-0001', null]);
+  });
+
+  it('выгрузка Prometheus: метрики организаций, без имён и БИН', async () => {
+    const { ctx } = await orgWithSession();
+    await mk(ctx, 1, { status: 'UNKNOWN', sentAt: new Date() });
+    const text = await monitor.prometheus();
+    expect(text).toContain(`flowpos_esf_unknown_count{organization_id="${ctx.organizationId}",environment="TEST"} 1`);
+    expect(text).toMatch(/# TYPE flowpos_outbox_lease_expired gauge\nflowpos_outbox_lease_expired \d+/);
+    expect(text).not.toContain('123456789021');
   });
 });

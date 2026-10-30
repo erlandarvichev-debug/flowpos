@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { createHash } from 'crypto';
 import { PrismaService } from '../../../prisma/prisma.service';
@@ -11,7 +11,9 @@ import { EsfSoapClient, EsfSoapError, Fetcher } from './esf-soap.client';
 import { EsfSerializationError, serializeInvoice } from './invoice-serializer';
 import { EsfSigningError, checkSigner, inspectCertificate, issueSigningRequest, signingEvidence, signingSecret, verifyRawSignature, verifySigningRequest } from './esf-signing';
 import { ESF_UNITS } from './units.data';
-import { runAsSystem, runAsTenant } from '../../../common/db-context';
+import { newTraceId, runAsSystem, runAsTenant, runWithTrace } from '../../../common/db-context';
+import { redact } from '../../../common/redact';
+import { EsfMonitorService } from './esf-monitor.service';
 
 type Tx = Prisma.TransactionClient;
 export type EsfAction = 'REVOKE' | 'DECLINE' | 'APPROVE' | 'CONFIRM_REVOKE';
@@ -50,12 +52,12 @@ export class EsfService implements OnModuleInit, OnModuleDestroy {
   /** Подменяется в тестах. */
   fetcher?: Fetcher;
 
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService, @Optional() private monitor?: EsfMonitorService) {}
 
   onModuleInit() {
     if (process.env.ESF_WORKER_DISABLED === '1' || process.env.NODE_ENV === 'test') return;
     const every = Number(process.env.ESF_INTERVAL_MS || 60000);
-    this.timer = setInterval(() => this.tick().catch((e) => this.log.error(e.message)), every);
+    this.timer = setInterval(() => this.tick().catch((e) => this.log.error(redact(e))), every);
   }
 
   onModuleDestroy() {
@@ -442,6 +444,8 @@ export class EsfService implements OnModuleInit, OnModuleDestroy {
     const sessionId = await this.wrap(() => this.client(s.environment).createSessionSigned(org.inn!, signedTicket));
     await this.prisma.esfSession.updateMany({ where: { organizationId: ctx.organizationId, environment: s.environment, closedAt: null }, data: { closedAt: new Date() } });
     const row = await this.prisma.esfSession.create({ data: { organizationId: ctx.organizationId, environment: s.environment, sessionId, iin: s.signerIin, tin: org.inn, openedBy: ctx.userId } });
+    // FP-022: новая сессия — счёт сбоев синхронизации заново (ошибки прошлой сессии к ней не относятся).
+    await this.prisma.esfSettings.updateMany({ where: { organizationId: ctx.organizationId }, data: { syncFailures: 0 } });
     await this.prisma.auditLog.create({ data: { userId: ctx.userId, organizationId: ctx.organizationId, action: 'ESF_SESSION_OPEN', entity: 'esf_session', entityId: row.id, after: { environment: s.environment, iin: s.signerIin, tin: org.inn } as any } });
     return { environment: s.environment, iin: s.signerIin, openedAt: row.createdAt };
   }
@@ -598,6 +602,12 @@ export class EsfService implements OnModuleInit, OnModuleDestroy {
         return { subjectId: it.subjectId, ...signingEvidence(cert, v, hashes[k]) };
       });
     } catch (e) {
+      // FP-022: отказ проверки подписи — в журнал (метрика и оповещение «не тот ключ»); саму подпись не пишем.
+      if (e instanceof EsfSigningError) {
+        // Запись в журнал — лучшая попытка: её сбой не должен подменять собой ошибку подписи для пользователя.
+        await this.prisma.auditLog.create({ data: { userId: ctx.userId, organizationId: ctx.organizationId, action: 'ESF_SIGNING_REJECTED', entity: 'esf_invoice', entityId: items.map((i) => i.subjectId).join(','), after: { code: e.code, kind: items[0]?.kind } as any } })
+          .catch((err) => this.log.error(`Журнал ESF_SIGNING_REJECTED не записан: ${redact(err)}`));
+      }
       return signingError(e);
     }
   }
@@ -840,7 +850,20 @@ export class EsfService implements OnModuleInit, OnModuleDestroy {
 
   async refresh(ctx: OrgContext) {
     const { env, session } = await this.requireSession(ctx.organizationId);
-    return this.refreshWith(ctx.organizationId, env, session);
+    return this.syncWith(ctx.organizationId, env, session);
+  }
+
+  /** FP-022: синхронизация с записью состояния обмена (успех / ошибка без секретов / сбоев подряд). */
+  private async syncWith(organizationId: string, env: string, session: { id: string; sessionId: string }) {
+    try {
+      const r = await this.refreshWith(organizationId, env, session);
+      await this.prisma.esfSettings.updateMany({ where: { organizationId }, data: { syncOkAt: new Date(), syncFailures: 0 } });
+      return r;
+    } catch (e: any) {
+      const text = redact(`${e?.response?.code ?? e?.code ?? e?.name ?? 'ERROR'}: ${e?.message ?? e}`).slice(0, 300);
+      await this.prisma.esfSettings.updateMany({ where: { organizationId }, data: { syncErrorAt: new Date(), syncError: text, syncFailures: { increment: 1 } } }).catch(() => undefined);
+      throw e;
+    }
   }
 
   private async refreshWith(organizationId: string, env: string, session: { id: string; sessionId: string }) {
@@ -898,7 +921,17 @@ export class EsfService implements OnModuleInit, OnModuleDestroy {
       for (const info of r.items) {
         if (!info.invoiceId) continue;
         let p;
-        try { p = parseInvoice(info.invoiceBody); } catch { continue; }
+        try {
+          p = parseInvoice(info.invoiceBody);
+        } catch (e: any) {
+          // FP-022: раньше такой ЭСФ молча пропускался, а курсор уходил дальше — документ терялся без следа.
+          // Временный карантин до FP-024: тело как получено, хэш и причина — в журнал; метрика и оповещение.
+          const body = String(info.invoiceBody ?? '');
+          await this.prisma.auditLog.create({ data: { userId: null, organizationId, action: 'ESF_INBOUND_UNPARSED', entity: 'esf_inbound', entityId: String(info.invoiceId),
+            after: { environment: env, registrationNumber: info.registrationNumber ?? null, invoiceStatus: info.invoiceStatus ?? null, bodySha256: sha256(body), bodyBytes: Buffer.byteLength(body), body: body.slice(0, 1_000_000), error: redact(e?.message ?? e).slice(0, 300) } as any } });
+          this.log.warn(`Входящий ЭСФ ${info.invoiceId} не разобран и помещён в карантин: ${redact(e?.message ?? e)}`);
+          continue;
+        }
         const cp = p.seller.tin ? await this.prisma.counterparty.findFirst({ where: { inn: p.seller.tin, deleted: false, OR: [{ organizationId }, { organizationId: null }] } }) : null;
         const data = {
           organizationId, environment: env, direction: 'INBOUND', invoiceType: p.invoiceType, num: p.num || String(info.invoiceId),
@@ -977,8 +1010,16 @@ export class EsfService implements OnModuleInit, OnModuleDestroy {
       for (const s of orgs) {
         const tenantId = tenantOf.get(s.organizationId);
         if (!tenantId) continue;
-        await runAsTenant(tenantId, () => this.tickOrganization(s, tenantId));
+        // FP-022: свой код трассировки на проход по организации — связывает журнал, вызовы ИС ЭСФ и оповещения.
+        await runWithTrace(`esf-tick-${newTraceId()}`, () => runAsTenant(tenantId, async () => {
+          try {
+            await this.tickOrganization(s, tenantId);
+          } finally {
+            if (this.monitor) await this.monitor.evaluate(s.organizationId).catch((e) => this.log.error(`Оценка оповещений: ${redact(e)}`));
+          }
+        }));
       }
+      EsfMonitorService.lastTickAt = new Date();
     } finally {
       this.running = false;
     }
@@ -995,7 +1036,7 @@ export class EsfService implements OnModuleInit, OnModuleDestroy {
     await this.recoverStaleSending(s.organizationId);
     const session = await this.activeSession(this.prisma, s.organizationId, s.environment);
     if (session) {
-      try { await this.refreshWith(s.organizationId, s.environment, session); } catch (e: any) { this.log.warn(`${s.organizationId}: ${e.message}`); }
+      try { await this.syncWith(s.organizationId, s.environment, session); } catch (e: any) { this.log.warn(`${s.organizationId}: ${redact(e?.message ?? e)}`); }
     }
   }
 

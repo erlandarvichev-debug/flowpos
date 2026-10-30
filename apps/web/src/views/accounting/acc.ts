@@ -46,7 +46,8 @@ export function idem() {
 /** Понятная ошибка: что произошло + что исправить + переход. */
 export function showError(e: any) {
   const message = e?.message || 'Ошибка'
-  const fix = e?.fix
+  // FP-022: код обращения — по нему поддержка найдёт запрос в журнале и логах.
+  const fix = [e?.fix, e?.traceId ? `Код обращения: ${e.traceId}` : ''].filter(Boolean).join('\n\n') || undefined
   const link = e?.link
   if (link) {
     ElMessageBox.confirm(fix ? `${message}\n\n${fix}` : message, 'Ошибка', {

@@ -87,7 +87,7 @@ Platform | P0 | Backend | M | DONE_LOCAL — см. `FP-021-LEASE-FENCING-RETRY.m
 Зависимости: FP-009. Приёмка: Stale worker не подтверждает чужой lease; jitter/Retry-After; unsafe stage не retry.
 
 ## FP-022 · Метрики и runbook ESF
-ESF | P1 | SRE/Integration | M | PLANNED
+ESF | P1 | SRE/Integration | M | DONE_LOCAL — см. `FP-022-ESF-METRICS-RUNBOOK.md` (карантин временный до FP-024; экран визуально не проверен; не выкладывалось)
 Зависимости: FP-012,FP-017,FP-024. Приёмка: Alerts по lag/UNKNOWN/quarantine; trace и ответственный; secret redaction.
 
 ## FP-023 · Уполномоченный ESF sandbox pilot

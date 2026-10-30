@@ -3,6 +3,7 @@ import { ValidationPipe } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import * as cookieParser from 'cookie-parser';
 import { AppModule } from './app.module';
+import { RedactingLogger } from './common/redacting-logger';
 
 /** Боевой режим не стартует с небезопасной конфигурацией (иначе JWT подписывается общеизвестным ключом). */
 function assertProductionConfig() {
@@ -22,7 +23,12 @@ function assertProductionConfig() {
 
 async function bootstrap() {
   assertProductionConfig();
-  const app = await NestFactory.create(AppModule);
+  // FP-022: все логи — без секретов и с кодом трассировки.
+  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  const logger = new RedactingLogger();
+  // В бою без debug (каждый вызов ИС ЭСФ — строка [ESF-GW]); включить для разбора: LOG_DEBUG=1.
+  if (process.env.NODE_ENV === 'production' && process.env.LOG_DEBUG !== '1') logger.setLogLevels(['log', 'warn', 'error', 'fatal']);
+  app.useLogger(logger);
 
   app.use(cookieParser());
   app.setGlobalPrefix('api/v1');
@@ -38,6 +44,7 @@ async function bootstrap() {
   app.enableCors({
     origin: process.env.CORS_ORIGIN || 'http://localhost:5173',
     credentials: true,
+    exposedHeaders: ['X-Request-Id'],
   });
 
   const config = new DocumentBuilder()

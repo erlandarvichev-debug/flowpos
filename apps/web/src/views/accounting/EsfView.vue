@@ -12,6 +12,8 @@
       </div>
     </div>
 
+    <EsfHealth :health="health" />
+
     <el-row :gutter="12" style="margin-bottom: 12px;">
       <el-col :xs="12" :md="5"><el-card><el-statistic title="Реализации без ЭСФ" :value="summary?.pendingDocs ?? 0" /></el-card></el-col>
       <el-col :xs="12" :md="5"><el-card><el-statistic title="Готовы к подписи" :value="count('OUTBOUND', ['READY'])" /></el-card></el-col>
@@ -55,6 +57,7 @@
       </el-tab-pane>
 
       <el-tab-pane label="Настройки" name="SETTINGS">
+        <EsfHealth :health="health && { ...health, alerts: [] }" detailed />
         <el-card v-if="form">
           <el-form label-width="290px" style="max-width: 820px;" :disabled="!org.can('acc.policy.manage')">
             <el-form-item label="Среда ИС ЭСФ">
@@ -189,6 +192,7 @@ import { useI18n } from '@/composables/useI18n'
 import { fmtDate, fmtMoney, showError } from './acc'
 import { NCALAYER_DOWNLOAD, NcaLayerError, signAuthXml, signRaw } from '@/utils/ncalayer'
 import EsfCard from './esf/EsfCard.vue'
+import EsfHealth from './esf/EsfHealth.vue'
 import { STATUS } from './esf/status'
 import BulkResult, { type BulkRow } from './esf/BulkResult.vue'
 
@@ -201,6 +205,7 @@ const loading = ref(false)
 const busy = reactive({ login: false, refresh: false, send: false, save: false, prepareAll: false })
 const settings = ref<any>(null)
 const summary = ref<any>(null)
+const health = ref<any>(null)
 const items = ref<any[]>([])
 const pending = ref<any[]>([])
 const selected = ref<any[]>([])
@@ -283,6 +288,7 @@ async function load() {
   try {
     settings.value = await api.get('/accounting/esf/settings')
     summary.value = await api.get('/accounting/esf/summary')
+    health.value = await api.get('/accounting/esf/health').catch(() => null)
     if (tab.value === 'SETTINGS') {
       const s = settings.value
       form.value = { environment: s.environment, signerIin: s.signerIin ?? '', operatorFullname: s.operatorFullname ?? '', signatureType: s.signatureType, vatRegistrationDate: s.vatRegistrationDate ? String(s.vatRegistrationDate).slice(0, 10) : null, transportTypeCode: s.transportTypeCode ?? '', defaultGoodsOrigin: s.defaultGoodsOrigin ?? '', autoPrepare: s.autoPrepare }
