@@ -36,7 +36,7 @@ const stockOps = new StockOpsService(prisma);
 const pos = new PosService(prisma);
 const hr = new HrService(prisma);
 const posting = new PostingService(prisma);
-const sync = new SyncService(prisma, new OnecAdapter(prisma), outbox, { add: async () => undefined } as any);
+const sync = new SyncService(prisma, new OnecAdapter(prisma), outbox);
 const onecPull = new OnecPullService(prisma as any);
 const uid = () => randomUUID().slice(0, 8);
 

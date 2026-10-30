@@ -355,6 +355,12 @@ model Outbox {
   attempts        Int         @default(0)
   nextAttemptAt   DateTime    @default(now()) @map("next_attempt_at")
   lastError       String?     @map("last_error")
+  // FP-021: аренда записи воркером. Подтвердить результат может только владелец текущей аренды
+  // (lease_owner + fencing_version); stage — дошла ли попытка до сети (CLAIMED — нет, SENDING — запрос отправлялся).
+  leaseOwner      String?     @map("lease_owner")
+  leaseUntil      DateTime?   @map("lease_until")
+  fencingVersion  Int         @default(0) @map("fencing_version")
+  stage           String?
   processedAt     DateTime?   @map("processed_at")
   createdAt       DateTime    @default(now()) @map("created_at")
   updatedAt       DateTime    @updatedAt @map("updated_at")
@@ -373,6 +379,7 @@ enum OutboxStatus {
   DONE
   ERROR
   DEAD
+  UNKNOWN // FP-021: запрос мог дойти до 1С, а ответ потерян — автоматически не повторяется, решает оператор
 }
 
 model SyncLog {

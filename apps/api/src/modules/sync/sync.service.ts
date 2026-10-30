@@ -1,6 +1,4 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { InjectQueue } from '@nestjs/bull';
-import { Queue } from 'bull';
+import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { v4 as uuidv4 } from 'uuid';
 import { PrismaService } from '../../prisma/prisma.service';
 import { OutboxService } from '../../common/outbox/outbox.service';
@@ -19,7 +17,6 @@ export class SyncService {
     private prisma: PrismaService,
     private onec: OnecAdapter,
     private outbox: OutboxService,
-    @InjectQueue('sync-to-1c') private syncQueue: Queue,
   ) {}
 
   private async connection(s: Scope, id: string) {
@@ -61,11 +58,7 @@ export class SyncService {
       },
     });
 
-    await this.syncQueue.add('process', { syncQueueId: record.id }, {
-      attempts: 5,
-      backoff: { type: 'exponential', delay: 5000 },
-    });
-
+    // Отправит push-worker (аренда, fencing, повторы — FP-021).
     return record;
   }
 
@@ -137,6 +130,25 @@ export class SyncService {
 
   async listOutbox(s: Scope, query: { status?: string; cursor?: string; limit?: number }) {
     return this.outbox.list(query.status, query.cursor, Number(query.limit) || 50, await this.outboxIds(s));
+  }
+
+  /**
+   * Вернуть запись из UNKNOWN/DLQ в очередь — решение оператора после сверки с 1С (FP-021): для UNKNOWN
+   * повтор может создать дубль, поэтому нужна причина; действие пишется в журнал.
+   */
+  async requeueOutbox(s: Scope, id: string, reason: string) {
+    if (!reason || reason.trim().length < 5) throw new BadRequestException({ code: 'REASON_REQUIRED', message: 'Укажите причину (не короче 5 символов): что проверено в 1С' });
+    if (!(await this.outboxIds(s)).includes(id)) throw new NotFoundException('Запись очереди не найдена');
+    const before = await this.prisma.outbox.findUniqueOrThrow({ where: { id } });
+    const { count } = await this.prisma.outbox.updateMany({
+      where: { id, status: { in: ['UNKNOWN', 'DEAD', 'ERROR'] } },
+      data: { status: 'PENDING', attempts: 0, nextAttemptAt: new Date(), stage: null, leaseOwner: null, leaseUntil: null, lastError: `Возвращено оператором: ${reason.trim()}` },
+    });
+    if (count !== 1) throw new ConflictException({ code: 'OUTBOX_NOT_REQUEUEABLE', message: `Запись в статусе ${before.status} — вернуть в очередь можно только из UNKNOWN, DEAD или ERROR` });
+    await this.prisma.auditLog.create({
+      data: { userId: s.userId, organizationId: s.organizationId, action: 'OUTBOX_REQUEUE', entity: 'outbox', entityId: id, before: { status: before.status, attempts: before.attempts, lastError: before.lastError }, reason: reason.trim() },
+    });
+    return { ok: true, id, previousStatus: before.status };
   }
 
   // ── Конфликты ───────────────────────────────────────────────────────────────

@@ -49,6 +49,14 @@ export class SyncController {
     return this.sync.resolveConflict(s, id, body.resolution);
   }
 
+  /** Вернуть запись из UNKNOWN/DLQ в очередь после сверки с 1С (FP-021). */
+  @Post('outbox/:id/requeue')
+  @RequirePermission('sync.manage')
+  @RequireMfa()
+  requeueOutbox(@CurrentScope() s: Scope, @Param('id') id: string, @Body() body: { reason: string }) {
+    return this.sync.requeueOutbox(s, id, body?.reason);
+  }
+
   @Get('instances')
   @RequirePermission('sync.read')
   getInstances(@CurrentScope() s: Scope) {

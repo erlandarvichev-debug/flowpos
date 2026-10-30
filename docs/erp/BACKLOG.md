@@ -83,7 +83,7 @@ ESF | P1 | Frontend | L | PLANNED
 Зависимости: FP-008,FP-012,FP-017,FP-018. Приёмка: Tabs/filters/card/raw/history; UNKNOWN только сверка; partial bulk result; доступность клавиатурой.
 
 ## FP-021 · Jobs lease fencing retry и DLQ
-Platform | P0 | Backend | M | PLANNED
+Platform | P0 | Backend | M | DONE_LOCAL — см. `FP-021-LEASE-FENCING-RETRY.md` (очередь outbox → 1С; не выкладывалось)
 Зависимости: FP-009. Приёмка: Stale worker не подтверждает чужой lease; jitter/Retry-After; unsafe stage не retry.
 
 ## FP-022 · Метрики и runbook ESF
