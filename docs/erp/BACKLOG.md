@@ -27,7 +27,7 @@ POS | P0 | QA/Pilot owner | L | PLANNED
 Зависимости: FP-003,FP-005. Приёмка: Продажа/возврат/смешанная оплата/печать/обрыв; ноль необъяснённых расхождений.
 
 ## FP-007 · Tenant и organization composite identity
-Platform | P0 | Backend | M | PLANNED
+Platform | P0 | Backend | M | DONE_LOCAL — см. `FP-007-TENANT-IDENTITY.md` (не выкладывалось; остаток — FP-008/FP-009)
 Зависимости: FP-001. Приёмка: Два клиента и две организации не видят/не связывают чужие объекты.
 
 ## FP-008 · OIDC sessions RBAC grants и MFA
