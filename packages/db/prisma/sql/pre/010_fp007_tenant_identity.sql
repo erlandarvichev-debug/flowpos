@@ -141,3 +141,26 @@ BEGIN
     EXECUTE format('CREATE UNIQUE INDEX IF NOT EXISTS %I ON %I (%I, id)', spec[1] || '_' || spec[2] || '_id_key', spec[1], spec[2]);
   END LOOP;
 END $$;
+
+-- Ключи синхронизации с 1С и МойСклад — в пределах клиента: две базы 1С из одного шаблона имеют одинаковые
+-- GUID, и при глобальном ключе синхронизация одного клиента перезаписала бы запись другого.
+-- Имена — как у Prisma; старые глобальные ключи снимает db push.
+DO $$
+DECLARE
+  spec text[];
+BEGIN
+  IF to_regclass('public.organizations') IS NULL THEN
+    RETURN;
+  END IF;
+  FOREACH spec SLICE 1 IN ARRAY ARRAY[
+    ['product_groups', 'tenant_id', 'onec_base', 'onec_guid'], ['product_groups', 'tenant_id', 'ms_account_id', 'ms_id'],
+    ['products',       'tenant_id', 'onec_base', 'onec_guid'], ['products',       'tenant_id', 'ms_account_id', 'ms_id'],
+    ['stores',         'tenant_id', 'onec_base', 'onec_guid'], ['stores',         'tenant_id', 'ms_account_id', 'ms_id'],
+    ['counterparties', 'tenant_id', 'onec_base', 'onec_guid'], ['counterparties', 'tenant_id', 'ms_account_id', 'ms_id'],
+    ['documents',      'tenant_id', 'onec_base', 'onec_guid']
+  ] LOOP
+    CONTINUE WHEN to_regclass('public.' || spec[1]) IS NULL;
+    EXECUTE format('CREATE UNIQUE INDEX IF NOT EXISTS %I ON %I (%I, %I, %I)',
+                   format('%s_%s_%s_%s_key', spec[1], spec[2], spec[3], spec[4]), spec[1], spec[2], spec[3], spec[4]);
+  END LOOP;
+END $$;

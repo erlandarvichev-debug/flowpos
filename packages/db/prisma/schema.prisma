@@ -267,7 +267,7 @@ model IdMap {
 
   connection OnecConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
 
-  @@id([entity, localId])
+  @@id([connectionId, entity, localId])
   @@unique([entity, connectionId, onecGuid])
   @@index([entity, connectionId])
   @@map("id_map")
@@ -356,8 +356,8 @@ model ProductGroup {
   children ProductGroup[] @relation("GroupTree")
   products Product[]
 
-  @@unique([onecBase, onecGuid])
-  @@unique([msAccountId, msId])
+  @@unique([tenantId, onecBase, onecGuid])
+  @@unique([tenantId, msAccountId, msId])
   @@index([syncStatus])
   @@unique([tenantId, id])
   @@map("product_groups")
@@ -430,8 +430,8 @@ model Product {
   docLines   DocumentLine[]
   stocks     Stock[]
 
-  @@unique([onecBase, onecGuid])
-  @@unique([msAccountId, msId])
+  @@unique([tenantId, onecBase, onecGuid])
+  @@unique([tenantId, msAccountId, msId])
   @@index([name])
   @@index([syncStatus])
   @@unique([tenantId, id])
@@ -530,8 +530,8 @@ model Store {
   shiftPlans   ShiftPlan[]
   openShifts   OpenShift[]
 
-  @@unique([onecBase, onecGuid])
-  @@unique([msAccountId, msId])
+  @@unique([tenantId, onecBase, onecGuid])
+  @@unique([tenantId, msAccountId, msId])
   @@unique([tenantId, id])
   @@unique([organizationId, id])
   @@map("stores")
@@ -609,8 +609,8 @@ model Counterparty {
   contracts  Contract[]
   documents  Document[]
 
-  @@unique([onecBase, onecGuid])
-  @@unique([msAccountId, msId])
+  @@unique([tenantId, onecBase, onecGuid])
+  @@unique([tenantId, msAccountId, msId])
   @@index([name])
   @@index([syncStatus])
   @@unique([tenantId, id])
@@ -695,7 +695,7 @@ model Document {
   storeTo      Store?        @relation("DocumentStoreTo", fields: [tenantId, storeToId], references: [tenantId, id])
   lines        DocumentLine[]
 
-  @@unique([onecBase, onecGuid])
+  @@unique([tenantId, onecBase, onecGuid])
   @@index([docType, date])
   @@index([syncStatus])
   @@index([status])
@@ -922,7 +922,7 @@ model Employee {
   payrolls      Payroll[]
   hrContracts   HrContract[]
 
-  @@unique([onecBase, onecGuid])
+  @@unique([organizationId, onecBase, onecGuid])
   @@index([lastName, firstName])
   @@unique([organizationId, id])
   @@index([organizationId])

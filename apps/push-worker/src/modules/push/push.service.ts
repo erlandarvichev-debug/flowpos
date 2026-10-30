@@ -139,7 +139,7 @@ export class PushService {
 
     // Обновляем IdMap
     await tx.idMap.upsert({
-      where: { entity_localId: { entity, localId } },
+      where: { connectionId_entity_localId: { connectionId, entity, localId } },
       create: { entity, localId, connectionId, onecGuid: guid, syncedAt: new Date() },
       update: { onecGuid: guid, syncedAt: new Date() },
     });

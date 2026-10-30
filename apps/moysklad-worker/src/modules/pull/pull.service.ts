@@ -3,6 +3,13 @@ import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../../prisma.service';
 import { MoyskladHttpClient, MsProduct, MsCounterparty, MsStore, MsProductFolder, MsUom } from '@flowpos/moysklad-client';
 
+/** Клиент и организация подключения: всё, что пришло из этого аккаунта МойСклад, пишется только сюда (FP-007). */
+interface SyncScope {
+  tenantId: string;
+  organizationId: string;
+}
+const scopeOf = (conn: { organizationId: string; organization: { tenantId: string } }): SyncScope => ({ tenantId: conn.organization.tenantId, organizationId: conn.organizationId });
+
 @Injectable()
 export class MsPullService {
   private readonly logger = new Logger(MsPullService.name);
@@ -12,13 +19,14 @@ export class MsPullService {
   /** Товары, контрагенты, склады — каждые 5 минут */
   @Cron('*/5 * * * *')
   async pullOperational() {
-    const connections = await this.prisma.moyskladConnection.findMany({ where: { isActive: true } });
+    const connections = await this.prisma.moyskladConnection.findMany({ where: { isActive: true }, include: { organization: { select: { tenantId: true } } } });
     for (const conn of connections) {
       const client = new MoyskladHttpClient({ token: conn.tokenEnc });
+      const sc = scopeOf(conn);
       await Promise.all([
-        this.pullProducts(client, conn.id, conn.accountId),
-        this.pullCounterparties(client, conn.id, conn.accountId),
-        this.pullStores(client, conn.id, conn.accountId),
+        this.pullProducts(client, sc, conn.id, conn.accountId),
+        this.pullCounterparties(client, sc, conn.id, conn.accountId),
+        this.pullStores(client, sc, conn.id, conn.accountId),
       ]);
     }
   }
@@ -26,12 +34,13 @@ export class MsPullService {
   /** Справочники — каждые 30 минут */
   @Cron('*/30 * * * *')
   async pullSlow() {
-    const connections = await this.prisma.moyskladConnection.findMany({ where: { isActive: true } });
+    const connections = await this.prisma.moyskladConnection.findMany({ where: { isActive: true }, include: { organization: { select: { tenantId: true } } } });
     for (const conn of connections) {
       const client = new MoyskladHttpClient({ token: conn.tokenEnc });
+      const sc = scopeOf(conn);
       await Promise.all([
-        this.pullProductFolders(client, conn.id, conn.accountId),
-        this.pullUoms(client, conn.id, conn.accountId),
+        this.pullProductFolders(client, sc, conn.id, conn.accountId),
+        this.pullUoms(client, sc, conn.id, conn.accountId),
       ]);
     }
   }
@@ -51,7 +60,7 @@ export class MsPullService {
     });
   }
 
-  private async pullProducts(client: MoyskladHttpClient, connectionId: string, accountId: string) {
+  private async pullProducts(client: MoyskladHttpClient, sc: SyncScope, connectionId: string, accountId: string) {
     const startedAt = new Date();
     let count = 0;
     let error: string | undefined;
@@ -64,7 +73,7 @@ export class MsPullService {
       for await (const batch of gen) {
         await this.prisma.$transaction(async (tx) => {
           for (const item of batch) {
-            await this.upsertProduct(tx, item, connectionId, accountId);
+            await this.upsertProduct(tx, sc, item, connectionId, accountId);
             count++;
             lastUpdated = item.updated;
           }
@@ -82,7 +91,7 @@ export class MsPullService {
     });
   }
 
-  private async pullCounterparties(client: MoyskladHttpClient, connectionId: string, accountId: string) {
+  private async pullCounterparties(client: MoyskladHttpClient, sc: SyncScope, connectionId: string, accountId: string) {
     const startedAt = new Date();
     let count = 0;
     let error: string | undefined;
@@ -95,7 +104,7 @@ export class MsPullService {
       for await (const batch of gen) {
         await this.prisma.$transaction(async (tx) => {
           for (const item of batch) {
-            await this.upsertCounterparty(tx, item, connectionId, accountId);
+            await this.upsertCounterparty(tx, sc, item, connectionId, accountId);
             count++;
             lastUpdated = item.updated;
           }
@@ -113,7 +122,7 @@ export class MsPullService {
     });
   }
 
-  private async pullStores(client: MoyskladHttpClient, connectionId: string, accountId: string) {
+  private async pullStores(client: MoyskladHttpClient, sc: SyncScope, connectionId: string, accountId: string) {
     const startedAt = new Date();
     let count = 0;
     let error: string | undefined;
@@ -126,7 +135,7 @@ export class MsPullService {
       for await (const batch of gen) {
         await this.prisma.$transaction(async (tx) => {
           for (const item of batch) {
-            await this.upsertStore(tx, item, connectionId, accountId);
+            await this.upsertStore(tx, sc, item, connectionId, accountId);
             count++;
             lastUpdated = item.updated;
           }
@@ -144,7 +153,7 @@ export class MsPullService {
     });
   }
 
-  private async pullProductFolders(client: MoyskladHttpClient, connectionId: string, accountId: string) {
+  private async pullProductFolders(client: MoyskladHttpClient, sc: SyncScope, connectionId: string, accountId: string) {
     const startedAt = new Date();
     let count = 0;
     let error: string | undefined;
@@ -157,7 +166,7 @@ export class MsPullService {
       for await (const batch of gen) {
         await this.prisma.$transaction(async (tx) => {
           for (const item of batch) {
-            await this.upsertProductFolder(tx, item, connectionId, accountId);
+            await this.upsertProductFolder(tx, sc, item, connectionId, accountId);
             count++;
             lastUpdated = item.updated;
           }
@@ -175,7 +184,7 @@ export class MsPullService {
     });
   }
 
-  private async pullUoms(client: MoyskladHttpClient, connectionId: string, accountId: string) {
+  private async pullUoms(client: MoyskladHttpClient, sc: SyncScope, connectionId: string, accountId: string) {
     const startedAt = new Date();
     let count = 0;
     let error: string | undefined;
@@ -188,7 +197,7 @@ export class MsPullService {
       for await (const batch of gen) {
         await this.prisma.$transaction(async (tx) => {
           for (const item of batch) {
-            await this.upsertUom(tx, item, connectionId, accountId);
+            await this.upsertUom(tx, sc, item, connectionId, accountId);
             count++;
             lastUpdated = item.updated;
           }
@@ -206,17 +215,17 @@ export class MsPullService {
     });
   }
 
-  private async upsertProduct(tx: any, item: MsProduct, connectionId: string, accountId: string) {
+  private async upsertProduct(tx: any, sc: SyncScope, item: MsProduct, connectionId: string, accountId: string) {
     const deleted = item.deleted ?? item.archived ?? false;
-    const existing = await tx.product.findFirst({ where: { msId: item.id, msAccountId: accountId } });
-    const defaultUom = await tx.uom.findFirst({ where: { isBase: true } });
+    const existing = await tx.product.findFirst({ where: { tenantId: sc.tenantId, msId: item.id, msAccountId: accountId } });
+    const defaultUom = await tx.uom.findFirst({ where: { tenantId: sc.tenantId, isBase: true } });
 
     const uomId = item.uom?.id
-      ? (await tx.uom.findFirst({ where: { msId: item.uom.id } }))?.id ?? defaultUom?.id ?? ''
+      ? (await tx.uom.findFirst({ where: { tenantId: sc.tenantId, msId: item.uom.id } }))?.id ?? defaultUom?.id ?? ''
       : defaultUom?.id ?? '';
 
     const groupId = item.productFolder?.id
-      ? (await tx.productGroup.findFirst({ where: { msId: item.productFolder.id } }))?.id ?? null
+      ? (await tx.productGroup.findFirst({ where: { tenantId: sc.tenantId, msId: item.productFolder.id } }))?.id ?? null
       : null;
 
     const barcode = item.barcodes?.[0]?.ean13 ?? item.barcodes?.[0]?.ean8 ?? item.barcodes?.[0]?.code128 ?? null;
@@ -232,14 +241,14 @@ export class MsPullService {
       });
     } else {
       await tx.product.create({
-        data: { name: item.name, code: item.code, article: item.article, barcode, groupId, uomId: uomId || '', msId: item.id, msAccountId: accountId, msConnectionId: connectionId, msUpdated: new Date(item.updated), syncStatus: 'SYNCED', owner: 'C1', deleted },
+        data: { tenantId: sc.tenantId, name: item.name, code: item.code, article: item.article, barcode, groupId, uomId: uomId || '', msId: item.id, msAccountId: accountId, msConnectionId: connectionId, msUpdated: new Date(item.updated), syncStatus: 'SYNCED', owner: 'C1', deleted },
       });
     }
   }
 
-  private async upsertCounterparty(tx: any, item: MsCounterparty, connectionId: string, accountId: string) {
+  private async upsertCounterparty(tx: any, sc: SyncScope, item: MsCounterparty, connectionId: string, accountId: string) {
     const deleted = item.deleted ?? item.archived ?? false;
-    const existing = await tx.counterparty.findFirst({ where: { msId: item.id, msAccountId: accountId } });
+    const existing = await tx.counterparty.findFirst({ where: { tenantId: sc.tenantId, msId: item.id, msAccountId: accountId } });
     const payload = { name: item.name, fullName: item.fullName ?? null, inn: item.inn ?? null, kpp: item.kpp ?? null, phone: item.phone ?? null, email: item.email ?? null, deleted, msUpdated: new Date(item.updated), syncStatus: 'SYNCED' };
 
     if (existing) {
@@ -249,43 +258,43 @@ export class MsPullService {
       }
       await tx.counterparty.update({ where: { id: existing.id }, data: payload });
     } else {
-      await tx.counterparty.create({ data: { ...payload, msId: item.id, msAccountId: accountId, msConnectionId: connectionId, owner: 'C1' } });
+      await tx.counterparty.create({ data: { ...payload, tenantId: sc.tenantId, msId: item.id, msAccountId: accountId, msConnectionId: connectionId, owner: 'C1' } });
     }
   }
 
-  private async upsertStore(tx: any, item: MsStore, connectionId: string, accountId: string) {
+  private async upsertStore(tx: any, sc: SyncScope, item: MsStore, connectionId: string, accountId: string) {
     const deleted = item.deleted ?? item.archived ?? false;
-    const existing = await tx.store.findFirst({ where: { msId: item.id, msAccountId: accountId } });
+    const existing = await tx.store.findFirst({ where: { organizationId: sc.organizationId, msId: item.id, msAccountId: accountId } });
     const payload = { name: item.name, code: item.code ?? null, address: item.address ?? null, deleted, msUpdated: new Date(item.updated), syncStatus: 'SYNCED' };
 
     if (existing) {
       await tx.store.update({ where: { id: existing.id }, data: payload });
     } else {
-      const org = await tx.organization.findFirst();
-      await tx.store.create({ data: { ...payload, msId: item.id, msAccountId: accountId, msConnectionId: connectionId, organizationId: org?.id ?? '', owner: 'C1' } });
+      // Склад — в организации подключения (раньше — в первой попавшейся организации базы).
+      await tx.store.create({ data: { ...payload, msId: item.id, msAccountId: accountId, msConnectionId: connectionId, tenantId: sc.tenantId, organizationId: sc.organizationId, owner: 'C1' } });
     }
   }
 
-  private async upsertProductFolder(tx: any, item: MsProductFolder, connectionId: string, accountId: string) {
+  private async upsertProductFolder(tx: any, sc: SyncScope, item: MsProductFolder, connectionId: string, accountId: string) {
     const deleted = item.deleted ?? item.archived ?? false;
-    const existing = await tx.productGroup.findFirst({ where: { msId: item.id, msAccountId: accountId } });
+    const existing = await tx.productGroup.findFirst({ where: { tenantId: sc.tenantId, msId: item.id, msAccountId: accountId } });
     const payload = { name: item.name, code: item.code ?? null, deleted, msUpdated: new Date(item.updated), syncStatus: 'SYNCED' };
 
     if (existing) {
       await tx.productGroup.update({ where: { id: existing.id }, data: payload });
     } else {
-      await tx.productGroup.create({ data: { ...payload, msId: item.id, msAccountId: accountId, msConnectionId: connectionId, owner: 'C1' } });
+      await tx.productGroup.create({ data: { ...payload, tenantId: sc.tenantId, msId: item.id, msAccountId: accountId, msConnectionId: connectionId, owner: 'C1' } });
     }
   }
 
-  private async upsertUom(tx: any, item: MsUom, connectionId: string, accountId: string) {
-    const existing = await tx.uom.findFirst({ where: { msId: item.id, msAccountId: accountId } });
+  private async upsertUom(tx: any, sc: SyncScope, item: MsUom, connectionId: string, accountId: string) {
+    const existing = await tx.uom.findFirst({ where: { tenantId: sc.tenantId, msId: item.id, msAccountId: accountId } });
     const payload = { name: item.name, shortName: item.code ?? item.name, msUpdated: new Date(item.updated) };
 
     if (existing) {
       await tx.uom.update({ where: { id: existing.id }, data: payload });
     } else {
-      await tx.uom.create({ data: { ...payload, msId: item.id, msAccountId: accountId, msConnectionId: connectionId } });
+      await tx.uom.create({ data: { ...payload, tenantId: sc.tenantId, msId: item.id, msAccountId: accountId, msConnectionId: connectionId } });
     }
   }
 }

@@ -1,6 +1,7 @@
 import { Controller, Get, Post, Param, Body, Query, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { CurrentScope, Scope } from '../../common/scope';
 import { SyncService } from './sync.service';
 
 @ApiTags('sync')
@@ -11,52 +12,52 @@ export class SyncController {
   constructor(private sync: SyncService) {}
 
   @Get('status')
-  getQueueStatus() {
-    return this.sync.getQueueStatus();
+  getQueueStatus(@CurrentScope() s: Scope) {
+    return this.sync.getQueueStatus(s);
   }
 
   @Get('queue')
-  getQueue(@Query() query: any) {
-    return this.sync.getQueueItems(query);
+  getQueue(@CurrentScope() s: Scope, @Query() query: any) {
+    return this.sync.getQueueItems(s, query);
   }
 
   @Get('outbox')
-  getOutbox(@Query() query: any) {
-    return this.sync.listOutbox(query);
+  getOutbox(@CurrentScope() s: Scope, @Query() query: any) {
+    return this.sync.listOutbox(s, query);
   }
 
   @Get('outbox/status')
-  getOutboxStatus() {
-    return this.sync.getOutboxStatus();
+  getOutboxStatus(@CurrentScope() s: Scope) {
+    return this.sync.getOutboxStatus(s);
   }
 
   @Get('conflicts')
-  listConflicts(@Query() query: any) {
-    return this.sync.listConflicts(query);
+  listConflicts(@CurrentScope() s: Scope, @Query() query: any) {
+    return this.sync.listConflicts(s, query);
   }
 
   @Post('conflicts/:id/resolve')
-  resolveConflict(@Param('id') id: string, @Body() body: { resolution: 'keep_local' | 'take_1c' }) {
-    return this.sync.resolveConflict(id, body.resolution);
+  resolveConflict(@CurrentScope() s: Scope, @Param('id') id: string, @Body() body: { resolution: 'keep_local' | 'take_1c' }) {
+    return this.sync.resolveConflict(s, id, body.resolution);
   }
 
   @Get('instances')
-  getInstances() {
-    return this.sync.getInstances();
+  getInstances(@CurrentScope() s: Scope) {
+    return this.sync.getInstances(s);
   }
 
   @Post('instances')
-  createInstance(@Body() body: any) {
-    return this.sync.createInstance(body);
+  createInstance(@CurrentScope() s: Scope, @Body() body: any) {
+    return this.sync.createInstance(s, body);
   }
 
   @Post('instances/:id/sync')
-  triggerSync(@Param('id') id: string) {
-    return this.sync.triggerSync(id);
+  triggerSync(@CurrentScope() s: Scope, @Param('id') id: string) {
+    return this.sync.triggerSync(s, id);
   }
 
   @Get('instances/:id/logs')
-  getSyncLogs(@Param('id') id: string) {
-    return this.sync.getSyncLogs(id);
+  getSyncLogs(@CurrentScope() s: Scope, @Param('id') id: string) {
+    return this.sync.getSyncLogs(s, id);
   }
 }

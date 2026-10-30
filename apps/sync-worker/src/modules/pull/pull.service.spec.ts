@@ -20,6 +20,7 @@ const mockPrisma = {
 const makeConn = () => ({
   id: 'conn1', baseUrl: 'http://1c.local', baseCode: 'main',
   username: 'admin', passwordEnc: 'pass', instanceType: 'ONPREM',
+  organizationId: 'org1', organization: { tenantId: 't1' },
 });
 
 const makeDelta = (items: any[] = [], hasMore = false) => ({

@@ -154,3 +154,11 @@ BEGIN
   CREATE UNIQUE INDEX IF NOT EXISTS time_sheets_organization_id_id_key ON time_sheets (organization_id, id);
   CREATE UNIQUE INDEX IF NOT EXISTS time_sheets_organization_id_month_year_key ON time_sheets (organization_id, month, year);
 END $$;
+
+-- Ключ синхронизации сотрудников с 1С — в пределах организации (см. 010).
+DO $$
+BEGIN
+  IF to_regclass('public.employees') IS NOT NULL THEN
+    CREATE UNIQUE INDEX IF NOT EXISTS employees_organization_id_onec_base_onec_guid_key ON employees (organization_id, onec_base, onec_guid);
+  END IF;
+END $$;

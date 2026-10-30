@@ -18,6 +18,9 @@ import { PosService } from '../src/modules/pos/pos.service';
 import { HrService } from '../src/modules/hr/hr.service';
 import { PostingService } from '../src/modules/accounting/core/posting.service';
 import { ctxFor } from './accounting-helpers';
+import { SyncService } from '../src/modules/sync/sync.service';
+import { OnecAdapter } from '../src/modules/sync/onec.adapter';
+import { PullService as OnecPullService } from '../../sync-worker/src/modules/pull/pull.service';
 import { DEFAULT_TENANT, defaultTenant } from './accounting-helpers';
 
 const prisma = new PrismaService();
@@ -33,6 +36,8 @@ const stockOps = new StockOpsService(prisma);
 const pos = new PosService(prisma);
 const hr = new HrService(prisma);
 const posting = new PostingService(prisma);
+const sync = new SyncService(prisma, new OnecAdapter(prisma), outbox, { add: async () => undefined } as any);
+const onecPull = new OnecPullService(prisma as any);
 const uid = () => randomUUID().slice(0, 8);
 
 let t2: string;
@@ -64,6 +69,8 @@ afterAll(async () => {
   // Второй клиент и всё его — удалить, чтобы тестовая БД снова была с одним клиентом.
   const orgs = (await prisma.organization.findMany({ where: { tenantId: t2 }, select: { id: true } })).map((o) => o.id);
   const docs = (await prisma.document.findMany({ where: { tenantId: t2 }, select: { id: true } })).map((d) => d.id);
+  await prisma.idMap.deleteMany({ where: { connection: { organizationId: { in: orgs } } } });
+  await prisma.onecConnection.deleteMany({ where: { organizationId: { in: orgs } } });
   await prisma.outbox.deleteMany({ where: { localId: { in: docs } } });
   await prisma.document.deleteMany({ where: { tenantId: t2 } });
   await prisma.pOSCashOp.deleteMany({ where: { shift: { terminal: { tenantId: t2 } } } });
@@ -299,6 +306,63 @@ describe('FP-007: кадры старого модуля', () => {
     });
     expect(await code(write(eA2.id))).toBe('REF_FOREIGN');
     expect(await code(write(eA.id))).toBe('OK');
+  });
+});
+
+describe('FP-007: обмен с 1С', () => {
+  const conn = (s: Scope, name: string) => prisma.onecConnection.create({
+    data: { organizationId: s.organizationId, name, baseCode: `base-${uid()}`, baseUrl: 'http://1c.invalid', username: 'u', passwordEnc: 'секрет-пароля' },
+  });
+
+  it('подключения — только своей организации и без пароля; чужое подключение не запускается и не читается', async () => {
+    const cA = await conn(A, 'A');
+    const cB = await conn(B, 'B');
+    const list = await sync.getInstances(A);
+    expect(list.map((c) => c.id)).toContain(cA.id);
+    expect(list.map((c) => c.id)).not.toContain(cB.id);
+    expect(JSON.stringify(list)).not.toContain('секрет-пароля');
+    expect(await code(sync.triggerSync(A, cB.id))).toBe(404);
+    expect(await code(sync.getSyncLogs(A, cB.id))).toBe(404);
+    const created = await sync.createInstance(A, { name: 'Новое', baseCode: `b-${uid()}`, baseUrl: 'http://1c.invalid', username: 'u', passwordEnc: 'p2', organizationId: undefined, tenantId: t2 });
+    expect([created.organizationId, JSON.stringify(created).includes('p2')]).toEqual([A.organizationId, false]);
+  });
+
+  it('очередь обмена и разрешение конфликтов — только по документам своей организации', async () => {
+    const store = await stores.create(B, { name: `Склад B ${uid()}` });
+    const productB = await items.create(B, { name: `Товар B ${uid()}`, uomId: uomB });
+    const docB = await sales.createOrder(B, { date: '2026-10-30', storeId: store.id, items: [{ productId: productB.id, qty: 1, price: 1 }] });
+    const idsA = (await sync.listOutbox(A, { limit: 500 })).data.map((o) => o.localId);
+    const idsB = (await sync.listOutbox(B, { limit: 500 })).data.map((o) => o.localId);
+    expect(idsB).toContain(docB.id);
+    expect(idsA).not.toContain(docB.id);
+    expect((await sync.getQueueItems(A, { limit: 500 })).items.map((o) => o.localId)).not.toContain(docB.id);
+    expect(await code(sync.resolveConflict(A, docB.id, 'keep_local'))).toBe(404);
+  });
+
+  it('одинаковый GUID 1С у двух клиентов — разные товары; синхронизация одного не трогает другого', async () => {
+    const guid = randomUUID();
+    const base = 'default';
+    const cA = await conn(A, 'A');
+    const cB = await conn(B, 'B');
+    const scA = { tenantId: A.tenantId, organizationId: A.organizationId };
+    const scB = { tenantId: B.tenantId, organizationId: B.organizationId };
+    // Воркер берёт базовую единицу клиента (без неё товар из 1С не создаётся — так было и раньше).
+    for (const tenantId of [A.tenantId, B.tenantId]) {
+      if (!(await prisma.uom.findFirst({ where: { tenantId, isBase: true } }))) await prisma.uom.create({ data: { tenantId, name: 'шт', shortName: 'шт', isBase: true } });
+    }
+    const upsert = (sc: any, connectionId: string, name: string) => prisma.$transaction((tx) =>
+      (onecPull as any).upsertMirror(tx, sc, 'product', base, connectionId, { guid, version: '1', deletionMark: false, data: { name } }));
+    await upsert(scA, cA.id, 'Товар клиента A');
+    await upsert(scB, cB.id, 'Товар клиента B');
+    const rows = await prisma.product.findMany({ where: { onecBase: base, onecGuid: guid }, orderBy: { name: 'asc' } });
+    expect(rows.map((r) => [r.tenantId, r.name])).toEqual([[A.tenantId, 'Товар клиента A'], [B.tenantId, 'Товар клиента B']]);
+    await upsert(scB, cB.id, 'B переименовал');
+    expect((await prisma.product.findFirstOrThrow({ where: { tenantId: A.tenantId, onecGuid: guid } })).name).toBe('Товар клиента A');
+
+    // Склад из 1С — в организации подключения, а не в первой попавшейся.
+    const storeGuid = randomUUID();
+    await prisma.$transaction((tx) => (onecPull as any).upsertMirror(tx, scB, 'store', base, cB.id, { guid: storeGuid, version: '1', deletionMark: false, data: { name: 'Склад из 1С' } }));
+    expect((await prisma.store.findFirstOrThrow({ where: { onecGuid: storeGuid } })).organizationId).toBe(B.organizationId);
   });
 });
 

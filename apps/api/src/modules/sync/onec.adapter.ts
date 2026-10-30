@@ -18,7 +18,7 @@ export class OnecAdapter {
   }
 
   async syncItemsFromOnec(connectionId: string) {
-    const connection = await this.prisma.onecConnection.findUnique({ where: { id: connectionId } });
+    const connection = await this.prisma.onecConnection.findUnique({ where: { id: connectionId }, include: { organization: { select: { tenantId: true } } } });
     if (!connection || !connection.isActive) return;
 
     const cursorRow = await this.prisma.syncCursor.findUnique({
@@ -44,7 +44,7 @@ export class OnecAdapter {
         if (records.length === 0) break;
 
         for (const rec of records) {
-          await this.upsertProduct(connectionId, rec);
+          await this.upsertProduct(connectionId, connection.organization.tenantId, rec);
           cursorTs = rec.Timestamp;
         }
 
@@ -62,9 +62,10 @@ export class OnecAdapter {
     });
   }
 
-  private async upsertProduct(connectionId: string, rec: any) {
+  /** Товар ищется и создаётся только у клиента подключения (FP-007): GUID 1С не уникален между базами. */
+  private async upsertProduct(connectionId: string, tenantId: string, rec: any) {
     const existing = await this.prisma.product.findFirst({
-      where: { onecGuid: rec.Ref_Key },
+      where: { tenantId, onecGuid: rec.Ref_Key },
     });
 
     const productData = {
@@ -77,9 +78,9 @@ export class OnecAdapter {
     if (existing) {
       await this.prisma.product.update({ where: { id: existing.id }, data: productData });
     } else {
-      const defaultUom = await this.prisma.uom.findFirst({ where: { isBase: true } });
+      const defaultUom = await this.prisma.uom.findFirst({ where: { tenantId, isBase: true } });
       if (defaultUom) {
-        await this.prisma.product.create({ data: { ...productData, uomId: defaultUom.id } });
+        await this.prisma.product.create({ data: { ...productData, tenantId, uomId: defaultUom.id } });
       }
     }
 

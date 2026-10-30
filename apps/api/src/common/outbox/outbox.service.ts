@@ -28,19 +28,21 @@ export class OutboxService {
     });
   }
 
-  async getStatus() {
+  async getStatus(ids?: string[]) {
+    const scope = ids ? { id: { in: ids } } : {};
     const [pending, sending, done, error, dead] = await Promise.all([
-      this.prisma.outbox.count({ where: { status: 'PENDING' } }),
-      this.prisma.outbox.count({ where: { status: 'SENDING' } }),
-      this.prisma.outbox.count({ where: { status: 'DONE' } }),
-      this.prisma.outbox.count({ where: { status: 'ERROR' } }),
-      this.prisma.outbox.count({ where: { status: 'DEAD' } }),
+      this.prisma.outbox.count({ where: { ...scope, status: 'PENDING' } }),
+      this.prisma.outbox.count({ where: { ...scope, status: 'SENDING' } }),
+      this.prisma.outbox.count({ where: { ...scope, status: 'DONE' } }),
+      this.prisma.outbox.count({ where: { ...scope, status: 'ERROR' } }),
+      this.prisma.outbox.count({ where: { ...scope, status: 'DEAD' } }),
     ]);
     return { pending, sending, done, error, dead };
   }
 
-  async list(status?: string, cursor?: string, limit = 50) {
-    const where: any = {};
+  /** ids — ограничение видимости (FP-007: записи своей организации); не задано — все (служебное использование). */
+  async list(status?: string, cursor?: string, limit = 50, ids?: string[]) {
+    const where: any = ids ? { id: { in: ids } } : {};
     if (status) where.status = status;
     if (cursor) where.createdAt = { lt: new Date(cursor) };
 

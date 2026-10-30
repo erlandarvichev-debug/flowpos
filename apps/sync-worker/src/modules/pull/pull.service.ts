@@ -7,6 +7,12 @@ import type { OnecEntity, DeltaItem } from '@flowpos/onec-client';
 const OPERATIONAL_ENTITIES: OnecEntity[] = ['product', 'counterparty', 'store', 'uom', 'price_type'];
 const SLOW_ENTITIES: OnecEntity[] = ['product_group', 'currency'];
 
+/** Клиент и организация подключения: всё, что пришло из этой базы 1С, пишется только сюда. */
+export interface SyncScope {
+  tenantId: string;
+  organizationId: string;
+}
+
 @Injectable()
 export class PullService {
   private readonly logger = new Logger(PullService.name);
@@ -26,9 +32,11 @@ export class PullService {
   }
 
   async pullEntities(entities: OnecEntity[]) {
-    const connections = await this.prisma.onecConnection.findMany({ where: { isActive: true } });
+    // Область записи — организация подключения и её клиент (FP-007): данные одной базы 1С не попадают к другому клиенту.
+    const connections = await this.prisma.onecConnection.findMany({ where: { isActive: true }, include: { organization: { select: { tenantId: true } } } });
 
     for (const conn of connections) {
+      const sc: SyncScope = { tenantId: conn.organization.tenantId, organizationId: conn.organizationId };
       const client = new OnecHttpClient({
         baseUrl: conn.baseUrl,
         baseCode: conn.baseCode,
@@ -38,13 +46,14 @@ export class PullService {
       });
 
       for (const entity of entities) {
-        await this.pullEntity(client, conn.id, conn.baseCode, entity);
+        await this.pullEntity(client, sc, conn.id, conn.baseCode, entity);
       }
     }
   }
 
   private async pullEntity(
     client: OnecHttpClient,
+    sc: SyncScope,
     connectionId: string,
     baseCode: string,
     entity: OnecEntity,
@@ -67,7 +76,7 @@ export class PullService {
         if (resp.items.length > 0) {
           await this.prisma.$transaction(async (tx) => {
             for (const item of resp.items) {
-              await this.upsertMirror(tx, entity, baseCode, connectionId, item);
+              await this.upsertMirror(tx, sc, entity, baseCode, connectionId, item);
               count++;
             }
 
@@ -102,36 +111,36 @@ export class PullService {
     });
   }
 
-  private async upsertMirror(tx: any, entity: OnecEntity, baseCode: string, connectionId: string, item: DeltaItem) {
+  private async upsertMirror(tx: any, sc: SyncScope, entity: OnecEntity, baseCode: string, connectionId: string, item: DeltaItem) {
     const { guid, version, data, deletionMark } = item;
 
     switch (entity) {
       case 'product':
-        await this.upsertProduct(tx, baseCode, guid, version, data, deletionMark);
+        await this.upsertProduct(tx, sc, baseCode, guid, version, data, deletionMark);
         break;
       case 'counterparty':
-        await this.upsertCounterparty(tx, baseCode, guid, version, data, deletionMark);
+        await this.upsertCounterparty(tx, sc, baseCode, guid, version, data, deletionMark);
         break;
       case 'store':
-        await this.upsertStore(tx, baseCode, guid, version, data, deletionMark);
+        await this.upsertStore(tx, sc, baseCode, guid, version, data, deletionMark);
         break;
       case 'product_group':
-        await this.upsertProductGroup(tx, baseCode, guid, version, data, deletionMark);
+        await this.upsertProductGroup(tx, sc, baseCode, guid, version, data, deletionMark);
         break;
       case 'uom':
-        await this.upsertUom(tx, baseCode, guid, data, deletionMark);
+        await this.upsertUom(tx, sc, baseCode, guid, data, deletionMark);
         break;
     }
 
     await tx.idMap.upsert({
-      where: { entity_localId: { entity, localId: guid } },
+      where: { connectionId_entity_localId: { connectionId, entity, localId: guid } },
       create: { entity, localId: guid, connectionId, onecGuid: guid, syncedAt: new Date() },
       update: { syncedAt: new Date() },
     });
   }
 
-  private async upsertProduct(tx: any, base: string, guid: string, version: string, d: any, deleted: boolean) {
-    const existing = await tx.product.findFirst({ where: { onecBase: base, onecGuid: guid } });
+  private async upsertProduct(tx: any, sc: SyncScope, base: string, guid: string, version: string, d: any, deleted: boolean) {
+    const existing = await tx.product.findFirst({ where: { tenantId: sc.tenantId, onecBase: base, onecGuid: guid } });
 
     if (existing) {
       if (existing.syncStatus === 'DIRTY' || existing.syncStatus === 'CONFLICT') {
@@ -157,16 +166,17 @@ export class PullService {
         },
       });
     } else {
-      const defaultUom = await tx.uom.findFirst({ where: { isBase: true } });
+      const defaultUom = await tx.uom.findFirst({ where: { tenantId: sc.tenantId, isBase: true } });
       await tx.product.create({
         data: {
+          tenantId: sc.tenantId,
           name: d.name ?? 'Без имени',
           code: d.code,
           article: d.article,
           barcode: d.barcode,
           vatRate: d.vat_rate,
           uomId: d.uom_guid
-            ? (await tx.uom.findFirst({ where: { onecGuid: d.uom_guid } }))?.id ?? defaultUom?.id ?? ''
+            ? (await tx.uom.findFirst({ where: { tenantId: sc.tenantId, onecGuid: d.uom_guid } }))?.id ?? defaultUom?.id ?? ''
             : defaultUom?.id ?? '',
           onecGuid: guid,
           onecBase: base,
@@ -179,8 +189,8 @@ export class PullService {
     }
   }
 
-  private async upsertCounterparty(tx: any, base: string, guid: string, version: string, d: any, deleted: boolean) {
-    const existing = await tx.counterparty.findFirst({ where: { onecBase: base, onecGuid: guid } });
+  private async upsertCounterparty(tx: any, sc: SyncScope, base: string, guid: string, version: string, d: any, deleted: boolean) {
+    const existing = await tx.counterparty.findFirst({ where: { tenantId: sc.tenantId, onecBase: base, onecGuid: guid } });
     const payload = {
       name: d.name ?? 'Без имени',
       inn: d.inn,
@@ -198,37 +208,37 @@ export class PullService {
       }
       await tx.counterparty.update({ where: { id: existing.id }, data: payload });
     } else {
-      await tx.counterparty.create({ data: { ...payload, onecGuid: guid, onecBase: base, owner: 'C1' } });
+      await tx.counterparty.create({ data: { ...payload, tenantId: sc.tenantId, onecGuid: guid, onecBase: base, owner: 'C1' } });
     }
   }
 
-  private async upsertStore(tx: any, base: string, guid: string, version: string, d: any, deleted: boolean) {
-    const existing = await tx.store.findFirst({ where: { onecBase: base, onecGuid: guid } });
+  private async upsertStore(tx: any, sc: SyncScope, base: string, guid: string, version: string, d: any, deleted: boolean) {
+    const existing = await tx.store.findFirst({ where: { organizationId: sc.organizationId, onecBase: base, onecGuid: guid } });
     const payload = { name: d.name ?? 'Без имени', code: d.code, deleted, syncStatus: 'SYNCED' };
     if (existing) {
       await tx.store.update({ where: { id: existing.id }, data: payload });
     } else {
-      const org = await tx.organization.findFirst();
-      await tx.store.create({ data: { ...payload, onecGuid: guid, onecBase: base, organizationId: org?.id ?? '', owner: 'C1' } });
+      // Склад — в организации подключения (раньше — в первой попавшейся организации базы).
+      await tx.store.create({ data: { ...payload, onecGuid: guid, onecBase: base, tenantId: sc.tenantId, organizationId: sc.organizationId, owner: 'C1' } });
     }
   }
 
-  private async upsertProductGroup(tx: any, base: string, guid: string, version: string, d: any, deleted: boolean) {
-    const existing = await tx.productGroup.findFirst({ where: { onecBase: base, onecGuid: guid } });
+  private async upsertProductGroup(tx: any, sc: SyncScope, base: string, guid: string, version: string, d: any, deleted: boolean) {
+    const existing = await tx.productGroup.findFirst({ where: { tenantId: sc.tenantId, onecBase: base, onecGuid: guid } });
     const payload = { name: d.name ?? 'Без имени', code: d.code, deleted, syncStatus: 'SYNCED' };
     if (existing) {
       await tx.productGroup.update({ where: { id: existing.id }, data: payload });
     } else {
-      await tx.productGroup.create({ data: { ...payload, onecGuid: guid, onecBase: base, owner: 'C1' } });
+      await tx.productGroup.create({ data: { ...payload, tenantId: sc.tenantId, onecGuid: guid, onecBase: base, owner: 'C1' } });
     }
   }
 
-  private async upsertUom(tx: any, base: string, guid: string, d: any, deleted: boolean) {
-    const existing = await tx.uom.findFirst({ where: { onecBase: base, onecGuid: guid } });
+  private async upsertUom(tx: any, sc: SyncScope, base: string, guid: string, d: any, deleted: boolean) {
+    const existing = await tx.uom.findFirst({ where: { tenantId: sc.tenantId, onecBase: base, onecGuid: guid } });
     if (existing) {
       await tx.uom.update({ where: { id: existing.id }, data: { name: d.name, shortName: d.short_name ?? d.name, deleted } });
     } else {
-      await tx.uom.create({ data: { name: d.name, shortName: d.short_name ?? d.name, onecGuid: guid, onecBase: base, deleted } });
+      await tx.uom.create({ data: { tenantId: sc.tenantId, name: d.name, shortName: d.short_name ?? d.name, onecGuid: guid, onecBase: base, deleted } });
     }
   }
 }

@@ -49,7 +49,7 @@ describe('MsPullService', () => {
     });
 
     it('тянет данные для каждого активного подключения', async () => {
-      const conn = { id: 'conn1', tokenEnc: 'token123', accountId: 'acc1' };
+      const conn = { id: 'conn1', tokenEnc: 'token123', accountId: 'acc1', organizationId: 'org1', organization: { tenantId: 't1' } };
       mockPrisma.moyskladConnection.findMany.mockResolvedValue([conn]);
       mockPrisma.moyskladSyncCursor.findUnique.mockResolvedValue(null);
       mockPrisma.moyskladSyncLog.create.mockResolvedValue({});
@@ -74,7 +74,7 @@ describe('MsPullService', () => {
   });
 
   describe('upsert логика (через pullOperational)', () => {
-    const conn = { id: 'conn1', tokenEnc: 'token123', accountId: 'acc1' };
+    const conn = { id: 'conn1', tokenEnc: 'token123', accountId: 'acc1', organizationId: 'org1', organization: { tenantId: 't1' } };
 
     beforeEach(() => {
       mockPrisma.moyskladConnection.findMany.mockResolvedValue([conn]);
