@@ -214,6 +214,22 @@ export class AccountingController {
   @Post('esf/invoices/:id/release-unknown') @RequirePermission('acc.esf.send')
   esfReleaseUnknown(@Org() ctx: OrgContext, @Param('id') id: string, @Body() b: any) { return this.esf.releaseUnknown(ctx, id, b?.reason); }
 
+  /**
+   * FP-024: карантин входящих ЭСФ. Просмотр — acc.esf.read; повторная обработка и решения — acc.esf.send
+   * с обязательной причиной (журнал). Тело документа — только в карточке записи.
+   */
+  @Get('esf/quarantine') @RequirePermission('acc.esf.read')
+  esfQuarantine(@Org() ctx: OrgContext, @Query() q: any) { return this.esf.inbound.list(ctx, q); }
+
+  @Get('esf/quarantine/:id') @RequirePermission('acc.esf.read')
+  esfQuarantineGet(@Org() ctx: OrgContext, @Param('id') id: string) { return this.esf.inbound.get(ctx, id); }
+
+  @Post('esf/quarantine/:id/replay') @RequirePermission('acc.esf.send')
+  esfQuarantineReplay(@Org() ctx: OrgContext, @Param('id') id: string, @Body() b: any) { return this.esf.inbound.replay(ctx, id, b?.reason); }
+
+  @Post('esf/quarantine/:id/resolve') @RequirePermission('acc.esf.send')
+  esfQuarantineResolve(@Org() ctx: OrgContext, @Param('id') id: string, @Body() b: any) { return this.esf.inbound.resolve(ctx, id, b?.action, b?.reason); }
+
   @Post('esf/refresh') @RequirePermission('acc.esf.read')
   esfRefresh(@Org() ctx: OrgContext) { return this.esf.refresh(ctx); }
 

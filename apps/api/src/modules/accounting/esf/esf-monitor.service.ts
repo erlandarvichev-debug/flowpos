@@ -29,7 +29,7 @@ export class EsfMonitorService {
     const base = { organizationId, environment: env };
     const day = new Date(now.getTime() - DAY_MS);
     const age = (d: Date | null | undefined) => (d ? Math.max(0, Math.round((now.getTime() - d.getTime()) / 1000)) : null);
-    const [session, unknown, sendingStuck, ready, rejected24h, signing, decisionsOverdue, quarantine] = await Promise.all([
+    const [session, unknown, sendingStuck, ready, rejected24h, signing, decisionsOverdue, quarantine, conflicts] = await Promise.all([
       this.prisma.esfSession.findFirst({ where: { organizationId, environment: env, closedAt: null }, select: { id: true } }),
       this.prisma.esfInvoice.aggregate({ where: { organizationId, environment: env, direction: 'OUTBOUND', status: 'UNKNOWN' }, _count: true, _min: { sentAt: true, updatedAt: true } }),
       this.prisma.esfInvoice.count({ where: { organizationId, environment: env, direction: 'OUTBOUND', status: 'SENDING', sentAt: { lt: new Date(now.getTime() - SEND_LEASE_MS) } } }),
@@ -37,7 +37,9 @@ export class EsfMonitorService {
       this.prisma.esfInvoice.count({ where: { organizationId, environment: env, direction: 'OUTBOUND', status: 'REJECTED', updatedAt: { gte: day } } }),
       this.prisma.auditLog.count({ where: { organizationId, action: 'ESF_SIGNING_REJECTED', ts: { gte: day } } }),
       this.prisma.esfDecision.count({ where: { organizationId, status: { in: ['PROPOSED', 'APPROVED'] }, dueAt: { lt: now } } }),
-      this.quarantineCount(organizationId),
+      // FP-024: открытые записи карантина входящих; конфликты (тот же ЭСФ — другое содержимое/тот же номер) — отдельно.
+      this.prisma.esfInboundQuarantine.count({ where: { organizationId, environment: env, status: 'OPEN' } }),
+      this.prisma.esfInboundQuarantine.count({ where: { organizationId, environment: env, status: 'OPEN', errorCode: { in: ['ESF_IN_HASH_CONFLICT', 'ESF_IN_KEY_CONFLICT'] } } }),
     ]);
     return {
       ...base,
@@ -50,23 +52,13 @@ export class EsfMonitorService {
       unknownOldestAgeSec: unknown._count ? age(unknown._min.sentAt ?? unknown._min.updatedAt) : null,
       sendingStuck,
       quarantineCount: quarantine,
+      quarantineConflicts: conflicts,
       readyCount: ready._count,
       readyOldestAgeSec: ready._count ? age(ready._min.createdAt) : null,
       rejected24h,
       signingFailures24h: signing,
       decisionsOverdue,
     };
-  }
-
-  /** Неразобранные входящие (журнал ESF_INBOUND_UNPARSED), которых так и нет в реестре. */
-  private async quarantineCount(organizationId: string) {
-    const r = await this.prisma.$queryRawUnsafe<{ n: bigint }[]>(
-      `SELECT count(DISTINCT a.entity_id) AS n FROM audit_log a
-        WHERE a.organization_id = $1 AND a.action = 'ESF_INBOUND_UNPARSED'
-          AND NOT EXISTS (SELECT 1 FROM esf_invoices i WHERE i.organization_id = a.organization_id AND i.direction = 'INBOUND' AND i.esf_id::text = a.entity_id)`,
-      organizationId,
-    );
-    return Number(r[0]?.n ?? 0);
   }
 
   /**
@@ -169,7 +161,8 @@ export class EsfMonitorService {
       g('flowpos_esf_unknown_count', 'ЭСФ с неизвестным результатом отправки', (m) => m.unknownCount);
       g('flowpos_esf_unknown_oldest_age_seconds', 'Возраст старейшего UNKNOWN', (m) => m.unknownOldestAgeSec);
       g('flowpos_esf_sending_lease_expired', 'Отправок дольше аренды', (m) => m.sendingStuck);
-      g('flowpos_esf_quarantine_count', 'Неразобранных входящих', (m) => m.quarantineCount);
+      g('flowpos_esf_quarantine_count', 'Входящих в карантине (открытых)', (m) => m.quarantineCount);
+      g('flowpos_esf_quarantine_conflicts', 'Из них конфликтов с реестром (то же ЭСФ — другое содержимое; тот же номер)', (m) => m.quarantineConflicts);
       g('flowpos_esf_ready_count', 'Готовых к отправке', (m) => m.readyCount);
       g('flowpos_esf_rejected_24h', 'Отклонено ИС ЭСФ за сутки', (m) => m.rejected24h);
       g('flowpos_esf_signing_failures_24h', 'Отказов проверки подписи за сутки', (m) => m.signingFailures24h);

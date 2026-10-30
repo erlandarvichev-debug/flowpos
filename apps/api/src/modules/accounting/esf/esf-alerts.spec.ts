@@ -4,7 +4,7 @@ import { EsfMetrics, RENOTIFY_MS, evaluateEsfAlerts, shouldNotify } from './esf-
 
 const base: EsfMetrics = {
   organizationId: 'o1', environment: 'TEST', sessionOpen: true, syncOkAgeSec: 60, syncFailures: 0, lastSyncError: null,
-  cursorLagSec: 3600, unknownCount: 0, unknownOldestAgeSec: null, sendingStuck: 0, quarantineCount: 0, readyCount: 0,
+  cursorLagSec: 3600, unknownCount: 0, unknownOldestAgeSec: null, sendingStuck: 0, quarantineCount: 0, quarantineConflicts: 0, readyCount: 0,
   readyOldestAgeSec: null, rejected24h: 0, signingFailures24h: 0, decisionsOverdue: 0,
 };
 const keys = (m: Partial<EsfMetrics>) => evaluateEsfAlerts({ ...base, ...m }).map((a) => `${a.key}:${a.severity}`);
@@ -44,6 +44,7 @@ describe('FP-022: правила оповещений ЭСФ', () => {
 
   it('карантин, отказы подписи, отклонённые, просроченные решения', () => {
     expect(keys({ quarantineCount: 1 })).toEqual(['ESF_QUARANTINE:WARNING']);
+    expect(keys({ quarantineCount: 2, quarantineConflicts: 1 })).toEqual(['ESF_QUARANTINE:CRITICAL']);
     expect(keys({ signingFailures24h: 2 })).toEqual([]);
     expect(keys({ signingFailures24h: 3 })).toEqual(['ESF_SIGNING_FAILURES:WARNING']);
     expect(keys({ rejected24h: 1 })).toEqual(['ESF_REJECTED:WARNING']);

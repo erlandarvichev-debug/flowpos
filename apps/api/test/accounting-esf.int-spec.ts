@@ -10,6 +10,7 @@ import { EsfMonitorService } from '../src/modules/accounting/esf/esf-monitor.ser
 import { runWithTrace } from '../src/common/db-context';
 import { makeServices, makeOrg, makeTrade, ctxFor } from './accounting-helpers';
 import { makeCertFactory } from './esf-certs';
+import { inboundXml } from './esf-inbound-xml';
 
 const prisma = new PrismaService();
 const s = makeServices(prisma);
@@ -817,21 +818,17 @@ describe('FP-022: метрики, оповещения, трассировка, 
     expect(sent.filter((p) => p.key === 'ESF_SENDING_STUCK')).toHaveLength(1);
   });
 
-  it('неразобранный входящий ЭСФ не теряется: карантин в журнале, метрика, курсор идёт дальше', async () => {
+  it('неразобранный входящий ЭСФ не теряется: карантин, метрика, курсор идёт дальше', async () => {
     const { ctx } = await orgWithSession();
     esf.fetcher = fakeEsf({
       queryUpdates: () => `<lastEventDate>2026-10-23T10:00:00.000+05:00</lastEventDate><lastInvoiceId>777</lastInvoiceId><lastBlock>true</lastBlock><invoiceInfoList><invoiceInfo><invoiceBody>&lt;broken</invoiceBody><invoiceId>777</invoiceId><registrationNumber>ESF-1-0777</registrationNumber><invoiceStatus>CREATED</invoiceStatus></invoiceInfo></invoiceInfoList>`,
     }).fetcher;
     const r = await esf.refresh(ctx);
     expect(r.inbound).toBe(0);
-    const q = await prisma.auditLog.findFirst({ where: { organizationId: ctx.organizationId, action: 'ESF_INBOUND_UNPARSED' } });
-    expect(q!.entityId).toBe('777');
-    expect(q!.after).toMatchObject({ body: '<broken', registrationNumber: 'ESF-1-0777', bodySha256: expect.stringMatching(/^[0-9a-f]{64}$/) });
+    const q = await prisma.esfInboundQuarantine.findFirstOrThrow({ where: { organizationId: ctx.organizationId } });
+    expect(q).toMatchObject({ esfId: 777n, body: '<broken', registrationNumber: 'ESF-1-0777', errorCode: 'ESF_IN_XML_MALFORMED', status: 'OPEN' });
     expect((await monitor.metrics(ctx.organizationId)).quarantineCount).toBe(1);
     expect((await esf.settings(ctx)).inboundLastId).toBe('777');
-    // Тот же ЭСФ позже попал в реестр (FP-024: повторная обработка) — из карантина уходит.
-    await mk(ctx, 1, { direction: 'INBOUND', esfId: 777n });
-    expect((await monitor.metrics(ctx.organizationId)).quarantineCount).toBe(0);
   });
 
   it('состояние синхронизации: ошибка без секретов, сбои подряд, успех сбрасывает', async () => {
@@ -887,5 +884,240 @@ describe('FP-022: метрики, оповещения, трассировка, 
     expect(text).toContain(`flowpos_esf_unknown_count{organization_id="${ctx.organizationId}",environment="TEST"} 1`);
     expect(text).toMatch(/# TYPE flowpos_outbox_lease_expired gauge\nflowpos_outbox_lease_expired \d+/);
     expect(text).not.toContain('123456789021');
+  });
+});
+
+describe('FP-024: карантин входящих и контролируемая повторная обработка', () => {
+  const monitor = new EsfMonitorService(prisma);
+  monitor.notifier = async () => {};
+  const xmlEsc = (x: string) => x.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  type Item = { id: string; body: string; status?: string; version?: string };
+  /** ИС ЭСФ отдаёт пачку входящих; подтверждение получения запоминается. */
+  function serve(items: Item[]) {
+    const confirmed: string[] = [];
+    esf.fetcher = fakeEsf({
+      queryUpdates: () => `<lastEventDate>2026-10-23T10:00:00.000+05:00</lastEventDate>${items.length ? `<lastInvoiceId>${items.at(-1)!.id}</lastInvoiceId>` : ''}<lastBlock>true</lastBlock><invoiceInfoList>${items.map((i) => `<invoiceInfo><invoiceBody>${xmlEsc(i.body)}</invoiceBody><invoiceId>${i.id}</invoiceId><registrationNumber>ESF-REG-${i.id}</registrationNumber><invoiceStatus>${i.status ?? 'CREATED'}</invoiceStatus>${i.version ? `<version>${i.version}</version>` : ''}<signature>SIG-SECRET</signature></invoiceInfo>`).join('')}</invoiceInfoList>`,
+      confirmInvoiceById: (b) => {
+        const ids = [...b.matchAll(/<id>(\d+)<\/id>/g)].map((m) => m[1]);
+        confirmed.push(...ids);
+        return `<invoiceSummaryList>${ids.map((id) => `<invoiceSummary><invoiceId>${id}</invoiceId><invoiceStatus>DELIVERED</invoiceStatus></invoiceSummary>`).join('')}</invoiceSummaryList>`;
+      },
+    }).fetcher;
+    return confirmed;
+  }
+  let seq = BigInt(Date.now()) * 1000n;
+  const nextId = () => String(++seq);
+  async function org() {
+    const { ctx, t } = await setupOrg();
+    await esf.updateSettings(ctx, { signerIin: '123456789021' });
+    await prisma.esfSession.create({ data: { organizationId: ctx.organizationId, environment: 'TEST', sessionId: 'S', iin: '123456789021', tin: '123456789021' } });
+    return { ctx, t };
+  }
+  const qOf = (ctx: any) => prisma.esfInboundQuarantine.findMany({ where: { organizationId: ctx.organizationId }, orderBy: { firstSeenAt: 'asc' } });
+  const inbound = (ctx: any) => prisma.esfInvoice.findMany({ where: { organizationId: ctx.organizationId, direction: 'INBOUND' } });
+
+  it('пачка: годный — в реестр, битые — в карантин с причиной; курсор дальше; повтор пачки не плодит записи', async () => {
+    const { ctx } = await org();
+    const [good, broken, garbage, noType] = [nextId(), nextId(), nextId(), nextId()];
+    const items = [
+      { id: good, body: inboundXml({ num: `G${good}` }) },
+      { id: broken, body: '<broken' },
+      { id: garbage, body: '<a><b></a>' }, // парсер съедает — раньше в реестре появлялась пустышка
+      { id: noType, body: inboundXml({ type: null, num: `N${noType}` }) },
+    ];
+    const confirmed = serve(items);
+    const r = await esf.refresh(ctx);
+    expect(r.inbound).toBe(1);
+    expect((await inbound(ctx)).map((i) => String(i.esfId))).toEqual([good]);
+    expect(confirmed).toEqual([good]); // карантинные не подтверждаются как полученные
+    const q = await qOf(ctx);
+    expect(q.map((x) => [String(x.esfId), x.errorCode])).toEqual([[broken, 'ESF_IN_XML_MALFORMED'], [garbage, 'ESF_IN_XML_MALFORMED'], [noType, 'ESF_IN_FIELD_INVALID']]);
+    expect(q[2].body).toBe(items[3].body); // тело целиком, как получено
+    expect(q[2].bodyBytes).toBe(Buffer.byteLength(items[3].body));
+    expect(q[2].envelope).toMatchObject({ registrationNumber: `ESF-REG-${noType}` });
+    expect(JSON.stringify(q[2].envelope)).not.toContain('SIG-SECRET');
+    expect((await esf.settings(ctx)).inboundLastId).toBe(noType);
+
+    await esf.refresh(ctx);
+    const again = await qOf(ctx);
+    expect(again).toHaveLength(3);
+    expect(again.every((x) => x.seenCount === 2)).toBe(true);
+    expect(await prisma.auditLog.count({ where: { organizationId: ctx.organizationId, action: 'ESF_QUARANTINE_ADDED' } })).toBe(3);
+    const m = await monitor.metrics(ctx.organizationId);
+    expect(m).toMatchObject({ quarantineCount: 3, quarantineConflicts: 0 });
+  });
+
+  it('тот же ЭСФ, другое содержимое: реестр не перезаписан, статус обновлён, конфликт CRITICAL, повтор не помогает', async () => {
+    const { ctx } = await org();
+    const id = nextId();
+    serve([{ id, body: inboundXml({ num: `H${id}` }) }]);
+    await esf.refresh(ctx);
+    const before = (await inbound(ctx))[0];
+    const changed = inboundXml({ num: `H${id}`, total: '99999.00' });
+    serve([{ id, body: changed, status: 'REVOKED' }]);
+    await esf.refresh(ctx);
+    const after = (await inbound(ctx))[0];
+    expect(after.bodyHash).toBe(before.bodyHash);
+    expect(Number(after.totalWithTax)).toBe(11600);
+    expect(after.esfStatus).toBe('REVOKED'); // статус ИС ЭСФ — про документ с этим ID, применяется и при конфликте
+    const [q] = await qOf(ctx);
+    expect(q).toMatchObject({ errorCode: 'ESF_IN_HASH_CONFLICT', existingInvoiceId: before.id, existingHash: before.bodyHash, body: changed, status: 'OPEN' });
+    expect((await monitor.metrics(ctx.organizationId)).quarantineConflicts).toBe(1);
+    await monitor.evaluate(ctx.organizationId);
+    expect(await prisma.opsAlert.findFirst({ where: { organizationId: ctx.organizationId, key: 'ESF_QUARANTINE', resolvedAt: null } })).toMatchObject({ severity: 'CRITICAL' });
+    await expectCode(esf.inbound.replay(ctx, q.id, 'Исправили разбор в 2.1.5'), 'ESF_QUARANTINE_NOT_REPLAYABLE');
+    await expectCode(esf.inbound.resolve(ctx, q.id, 'KEEP_EXISTING', 'ок'), 'REASON_REQUIRED');
+
+    // «Оставить прежнюю» закрывает; то же содержимое при следующем получении запись не открывает заново.
+    await esf.inbound.resolve(ctx, q.id, 'KEEP_EXISTING', 'Портал ИС ЭСФ показывает исходную сумму 11 600');
+    await esf.refresh(ctx);
+    const [q2] = await qOf(ctx);
+    expect(q2).toMatchObject({ status: 'RESOLVED', resolution: 'KEPT_EXISTING', seenCount: 2 });
+    expect((await monitor.metrics(ctx.organizationId)).quarantineCount).toBe(0);
+    await expectCode(esf.inbound.resolve(ctx, q.id, 'DISMISS', 'Повторное закрытие записи'), 'ESF_QUARANTINE_RESOLVED');
+    expect(await prisma.auditLog.findFirst({ where: { organizationId: ctx.organizationId, action: 'ESF_QUARANTINE_RESOLVED', entityId: q.id } })).toMatchObject({ userId: ctx.userId, reason: 'Портал ИС ЭСФ показывает исходную сумму 11 600' });
+  });
+
+  it('«Принять новую версию»: только без учётных действий и без гонки; прежнее тело сохраняется, журнал до/после', async () => {
+    const { ctx } = await org();
+    const id = nextId();
+    serve([{ id, body: inboundXml({ num: `A${id}` }) }]);
+    await esf.refresh(ctx);
+    const inv = (await inbound(ctx))[0];
+    const changed = inboundXml({ num: `A${id}`, total: '11700.00' });
+    serve([{ id, body: changed }]);
+    await esf.refresh(ctx);
+    const [q] = await qOf(ctx);
+
+    // Есть исполненное решение — подставить новую версию молча нельзя.
+    await prisma.esfInvoice.update({ where: { id: inv.id }, data: { businessDecision: 'APPROVED' } });
+    await expectCode(esf.inbound.resolve(ctx, q.id, 'ACCEPT_NEW', 'Поставщик переоформил ЭСФ'), 'ESF_QUARANTINE_HAS_EFFECTS');
+    await prisma.esfInvoice.update({ where: { id: inv.id }, data: { businessDecision: null } });
+    // Запись реестра изменилась после обнаружения конфликта — устаревшее решение отклоняется.
+    await prisma.esfInvoice.update({ where: { id: inv.id }, data: { bodyHash: 'другой' } });
+    await expectCode(esf.inbound.resolve(ctx, q.id, 'ACCEPT_NEW', 'Поставщик переоформил ЭСФ'), 'ESF_QUARANTINE_STALE');
+    await prisma.esfInvoice.update({ where: { id: inv.id }, data: { bodyHash: inv.bodyHash } });
+
+    const res = await esf.inbound.resolve(ctx, q.id, 'ACCEPT_NEW', 'Поставщик переоформил ЭСФ, портал подтверждает 11 700');
+    expect(res).toMatchObject({ resolution: 'ACCEPTED_NEW', invoiceId: inv.id });
+    const now = await prisma.esfInvoice.findUniqueOrThrow({ where: { id: inv.id } });
+    expect(now.body).toBe(changed);
+    expect(now.bodyHash).toBe(q.bodyHash);
+    expect(Number(now.totalWithTax)).toBe(11700);
+    const q2 = await prisma.esfInboundQuarantine.findUniqueOrThrow({ where: { id: q.id } });
+    expect(q2).toMatchObject({ status: 'RESOLVED', resolution: 'ACCEPTED_NEW', replacedBody: inv.body, resultInvoiceId: inv.id });
+    const a = await prisma.auditLog.findFirstOrThrow({ where: { organizationId: ctx.organizationId, action: 'ESF_QUARANTINE_ACCEPTED_NEW' } });
+    expect(a.before).toMatchObject({ bodySha256: inv.bodyHash, totalWithTax: '11600.00' });
+    expect(a.after).toMatchObject({ bodySha256: q.bodyHash, totalWithTax: '11700.00' });
+    // Следующее получение того же содержимого — без нового конфликта.
+    await esf.refresh(ctx);
+    expect(await prisma.esfInboundQuarantine.count({ where: { organizationId: ctx.organizationId, status: 'OPEN' } })).toBe(0);
+  });
+
+  it('номер и дата: у разных поставщиков совпадают законно; у одного поставщика — конфликт, синхронизация не встаёт', async () => {
+    const { ctx } = await org();
+    const [a, b, c, d] = [nextId(), nextId(), nextId(), nextId()];
+    serve([
+      { id: a, body: inboundXml({ num: '1', tin: '987654321098' }) },
+      { id: b, body: inboundXml({ num: '1', tin: '111111111111' }) },
+      { id: c, body: inboundXml({ num: '1', tin: '987654321098', total: '11601.00' }) },
+      { id: d, body: inboundXml({ num: '2', tin: '987654321098' }) },
+    ]);
+    const r = await esf.refresh(ctx);
+    expect(r.inbound).toBe(3);
+    expect((await inbound(ctx)).map((i) => String(i.esfId)).sort()).toEqual([a, b, d].sort());
+    const [q] = await qOf(ctx);
+    expect(q).toMatchObject({ esfId: BigInt(c), errorCode: 'ESF_IN_KEY_CONFLICT' });
+    expect(q.errorDetail).toContain(`ЭСФ ${a}`);
+    expect((await esf.settings(ctx)).inboundLastId).toBe(d);
+    // Поставщик отозвал дубль в ИС ЭСФ — закрыть с причиной.
+    await expectCode(esf.inbound.resolve(ctx, q.id, 'ACCEPT_NEW', 'Принять дубль номера поставщика'), 'BAD_ACTION');
+    await esf.inbound.resolve(ctx, q.id, 'DISMISS', 'Дубль номера у поставщика, отозван в портале');
+  });
+
+  it('повторная обработка: причина обязательна; неудача остаётся в карантине с попыткой; успех — в реестр и подтверждение', async () => {
+    const { ctx } = await org();
+    const badId = nextId(), goodId = nextId();
+    serve([{ id: badId, body: inboundXml({ tin: '12' }) }]);
+    await esf.refresh(ctx);
+    const [bad] = await qOf(ctx);
+    await expectCode(esf.inbound.replay(ctx, bad.id, ''), 'REASON_REQUIRED');
+    await expectCode(esf.inbound.resolve(ctx, bad.id, 'KEEP_EXISTING', 'Нечего оставлять — конфликта нет'), 'BAD_ACTION');
+    await expectCode(esf.inbound.resolve(ctx, bad.id, 'ACCEPT_NEW', 'Нечего принимать — конфликта нет'), 'BAD_ACTION');
+    const fail = await esf.inbound.replay(ctx, bad.id, 'Обновили справочник продавцов');
+    expect(fail).toMatchObject({ outcome: 'STILL_QUARANTINED', code: 'ESF_IN_FIELD_INVALID' });
+    expect(await prisma.esfInboundQuarantine.findUniqueOrThrow({ where: { id: bad.id } })).toMatchObject({ status: 'OPEN', replayAttempts: 1, seenCount: 1 });
+    expect(await prisma.auditLog.count({ where: { entityId: bad.id, action: 'ESF_QUARANTINE_REPLAY_FAILED' } })).toBe(1);
+
+    // Запись, перенесённая из журнала FP-022 (разбор тогда не умел), — теперь документ корректен.
+    const body = inboundXml({ num: `R${goodId}` });
+    const legacy = await prisma.esfInboundQuarantine.create({ data: { organizationId: ctx.organizationId, environment: 'TEST', esfId: BigInt(goodId), registrationNumber: `ESF-REG-${goodId}`, invoiceStatus: 'CREATED', body, bodyHash: require('crypto').createHash('sha256').update(body).digest('hex'), bodyBytes: Buffer.byteLength(body), errorCode: 'ESF_IN_LEGACY' } });
+    const [r1, r2] = await Promise.allSettled([
+      esf.inbound.replay(ctx, legacy.id, 'Разбор исправлен в FP-024'),
+      esf.inbound.replay(ctx, legacy.id, 'Разбор исправлен в FP-024'),
+    ]);
+    const ok = [r1, r2].filter((x) => x.status === 'fulfilled').map((x: any) => x.value.outcome);
+    expect(ok).toContain('IMPORTED');
+    expect(await prisma.esfInvoice.count({ where: { organizationId: ctx.organizationId, esfId: BigInt(goodId) } })).toBe(1);
+    const done = await prisma.esfInboundQuarantine.findUniqueOrThrow({ where: { id: legacy.id } });
+    expect(done).toMatchObject({ status: 'RESOLVED', resolution: 'REPLAYED', resolutionReason: 'Разбор исправлен в FP-024', resolvedBy: ctx.userId });
+    expect(done.resultInvoiceId).toBeTruthy();
+    // Техническое подтверждение получения — на следующем проходе синхронизации.
+    const confirmed = serve([]);
+    await esf.refresh(ctx);
+    expect(confirmed).toEqual([goodId]);
+    expect((await prisma.esfInvoice.findUniqueOrThrow({ where: { id: done.resultInvoiceId! } })).deliveryConfirmedAt).not.toBeNull();
+    await expectCode(esf.inbound.replay(ctx, legacy.id, 'Ещё раз на всякий случай'), 'ESF_QUARANTINE_RESOLVED');
+    // Второй процесс прочитал запись ещё открытой (устаревшее чтение): документ уже в реестре — повтор без эффекта,
+    // а решение первого не перезаписывается (закрытие только из OPEN).
+    const stale = new Proxy(prisma, { get: (tgt, prop) => (prop === 'esfInboundQuarantine' ? new Proxy(tgt.esfInboundQuarantine, { get: (a, k) => (k === 'findFirst' ? async () => ({ ...legacy }) : (a as any)[k]) }) : (tgt as any)[prop]) });
+    const racer = new (esf.inbound.constructor as any)(stale);
+    expect(await racer.replay(ctx, legacy.id, 'Опоздавший процесс повторяет')).toMatchObject({ outcome: 'ALREADY_IN_REGISTRY' });
+    expect(await prisma.esfInboundQuarantine.findUniqueOrThrow({ where: { id: legacy.id } })).toMatchObject({ resolutionReason: 'Разбор исправлен в FP-024' });
+    const late = await prisma.auditLog.findFirstOrThrow({ where: { entityId: legacy.id, action: 'ESF_QUARANTINE_REPLAYED', reason: 'Опоздавший процесс повторяет' } });
+    expect(late.after).toMatchObject({ resolvedNow: false });
+  });
+
+  it('перенос из журнала FP-022: идемпотентен; обрезанное тело повторно не обрабатывается', async () => {
+    const { ctx } = await org();
+    const id = nextId(), cut = nextId(), already = nextId();
+    const body = inboundXml({ num: `M${id}` });
+    const sha = (x: string) => require('crypto').createHash('sha256').update(x).digest('hex');
+    const ua = (entityId: string, after: any) => prisma.auditLog.create({ data: { organizationId: ctx.organizationId, action: 'ESF_INBOUND_UNPARSED', entity: 'esf_inbound', entityId, after } });
+    await ua(id, { environment: 'TEST', registrationNumber: 'R1', bodySha256: sha(body), bodyBytes: Buffer.byteLength(body), body, error: 'Не найден элемент invoice' });
+    await ua(cut, { environment: 'TEST', bodySha256: sha(body + 'хвост'), bodyBytes: 2_000_000, body });
+    await ua(already, { environment: 'TEST', bodySha256: sha(body), bodyBytes: 1, body });
+    await prisma.esfInvoice.create({ data: { organizationId: ctx.organizationId, direction: 'INBOUND', esfId: BigInt(already), num: `X${already}`, date: new Date(), turnoverDate: new Date(), body: '<x/>', bodyHash: 'x' } });
+    const sql = require('fs').readFileSync(join(__dirname, '../../../packages/db/prisma/sql/060_fp024_quarantine_backfill.sql'), 'utf8');
+    await prisma.$executeRawUnsafe(sql);
+    await prisma.$executeRawUnsafe(sql);
+    const q = await qOf(ctx);
+    expect(q.map((x) => [String(x.esfId), x.errorCode])).toEqual([[id, 'ESF_IN_LEGACY'], [cut, 'ESF_IN_LEGACY']]);
+    const cutRow = q.find((x) => String(x.esfId) === cut)!;
+    expect((await esf.inbound.get(ctx, cutRow.id)).bodyIntact).toBe(false);
+    await expectCode(esf.inbound.replay(ctx, cutRow.id, 'Пробуем после переноса'), 'ESF_QUARANTINE_BODY_INCOMPLETE');
+    const okRow = q.find((x) => String(x.esfId) === id)!;
+    expect(await esf.inbound.replay(ctx, okRow.id, 'Пробуем после переноса')).toMatchObject({ outcome: 'IMPORTED' });
+  });
+
+  it('список и карточка: только своя организация; таксономия с действием; без тела в списке', async () => {
+    const { ctx } = await org();
+    const other = await org();
+    serve([{ id: nextId(), body: '<broken' }]);
+    await esf.refresh(other.ctx);
+    serve([{ id: nextId(), body: inboundXml({ date: '31.02.2026' }) }]);
+    await esf.refresh(ctx);
+    const l = await esf.inbound.list(ctx);
+    expect(l.items).toHaveLength(1);
+    expect(l.items[0]).toMatchObject({ errorCode: 'ESF_IN_FIELD_INVALID', replayable: true, errorTitle: expect.stringMatching(/реквизит/) });
+    expect(l.items[0]).not.toHaveProperty('body');
+    expect(l.open).toEqual({ ESF_IN_FIELD_INVALID: 1 });
+    const otherId = (await qOf(other.ctx))[0].id;
+    await expectCode(esf.inbound.get(ctx, otherId), 'NOT_FOUND');
+    await expectCode(esf.inbound.replay(ctx, otherId, 'Чужая запись организации'), 'NOT_FOUND');
+    const card = await esf.inbound.get(ctx, l.items[0].id);
+    expect(card.bodyIntact).toBe(true);
+    expect(card.errorDetail).toMatch(/date: «31\.02\.2026»/);
+    expect(card.history.map((h: any) => h.action)).toEqual(['ESF_QUARANTINE_ADDED']);
   });
 });

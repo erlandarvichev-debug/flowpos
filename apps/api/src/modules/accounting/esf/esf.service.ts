@@ -14,6 +14,7 @@ import { ESF_UNITS } from './units.data';
 import { newTraceId, runAsSystem, runAsTenant, runWithTrace } from '../../../common/db-context';
 import { redact } from '../../../common/redact';
 import { EsfMonitorService } from './esf-monitor.service';
+import { EsfInboundService } from './esf-inbound.service';
 
 type Tx = Prisma.TransactionClient;
 export type EsfAction = 'REVOKE' | 'DECLINE' | 'APPROVE' | 'CONFIRM_REVOKE';
@@ -52,7 +53,12 @@ export class EsfService implements OnModuleInit, OnModuleDestroy {
   /** Подменяется в тестах. */
   fetcher?: Fetcher;
 
-  constructor(private prisma: PrismaService, @Optional() private monitor?: EsfMonitorService) {}
+  /** FP-024: приём входящих в реестр и карантин. */
+  readonly inbound: EsfInboundService;
+
+  constructor(private prisma: PrismaService, @Optional() private monitor?: EsfMonitorService) {
+    this.inbound = new EsfInboundService(prisma, this.log);
+  }
 
   onModuleInit() {
     if (process.env.ESF_WORKER_DISABLED === '1' || process.env.NODE_ENV === 'test') return;
@@ -920,44 +926,12 @@ export class EsfService implements OnModuleInit, OnModuleDestroy {
       const r = await this.wrap(() => client.queryUpdates(session.sessionId, 'INBOUND', lastEvent, lastId), session.id);
       for (const info of r.items) {
         if (!info.invoiceId) continue;
-        let p;
-        try {
-          p = parseInvoice(info.invoiceBody);
-        } catch (e: any) {
-          // FP-022: раньше такой ЭСФ молча пропускался, а курсор уходил дальше — документ терялся без следа.
-          // Временный карантин до FP-024: тело как получено, хэш и причина — в журнал; метрика и оповещение.
-          const body = String(info.invoiceBody ?? '');
-          await this.prisma.auditLog.create({ data: { userId: null, organizationId, action: 'ESF_INBOUND_UNPARSED', entity: 'esf_inbound', entityId: String(info.invoiceId),
-            after: { environment: env, registrationNumber: info.registrationNumber ?? null, invoiceStatus: info.invoiceStatus ?? null, bodySha256: sha256(body), bodyBytes: Buffer.byteLength(body), body: body.slice(0, 1_000_000), error: redact(e?.message ?? e).slice(0, 300) } as any } });
-          this.log.warn(`Входящий ЭСФ ${info.invoiceId} не разобран и помещён в карантин: ${redact(e?.message ?? e)}`);
-          continue;
+        // FP-024: проверка → реестр или карантин (исходное тело, причина по таксономии); курсор идёт дальше.
+        const res = await this.inbound.ingest(organizationId, env, info);
+        if (res.kind === 'imported') {
+          imported++;
+          if (res.confirm) toConfirm.push(String(info.invoiceId));
         }
-        const cp = p.seller.tin ? await this.prisma.counterparty.findFirst({ where: { inn: p.seller.tin, deleted: false, OR: [{ organizationId }, { organizationId: null }] } }) : null;
-        const data = {
-          organizationId, environment: env, direction: 'INBOUND', invoiceType: p.invoiceType, num: p.num || String(info.invoiceId),
-          date: p.date ? parseEsfDate(p.date) : new Date(), turnoverDate: p.turnoverDate ? parseEsfDate(p.turnoverDate) : new Date(),
-          sellerTin: p.seller.tin ?? null, sellerName: p.seller.name ?? null, customerTin: p.customer.tin ?? null, customerName: p.customer.name ?? null,
-          counterpartyId: cp?.id ?? null, currency: p.currencyCode, totalWithoutTax: new D(p.totals.priceWithoutTax), totalNds: new D(p.totals.ndsAmount), totalWithTax: new D(p.totals.priceWithTax),
-          status: info.invoiceStatus ?? 'CREATED', esfStatus: info.invoiceStatus ?? null, esfId: BigInt(info.invoiceId), registrationNumber: info.registrationNumber ?? null,
-          body: info.invoiceBody, bodyHash: sha256(info.invoiceBody), cancelReason: info.cancelReason ?? null, lastUpdateAt: info.lastUpdateDate ? new Date(info.lastUpdateDate) : new Date(),
-        };
-        // Цепочка: исправленный/дополнительный ЭСФ — к исходному входящему того же продавца (FP-018).
-        const rel = p.relatedInvoice;
-        const related = rel && p.invoiceType !== 'ORDINARY_INVOICE'
-          ? await this.prisma.esfInvoice.findFirst({
-              where: { organizationId, environment: env, direction: 'INBOUND', sellerTin: p.seller.tin ?? undefined,
-                OR: [...(rel.registrationNumber ? [{ registrationNumber: rel.registrationNumber }] : []), ...(rel.num && rel.date ? [{ num: rel.num, date: parseEsfDate(rel.date) }] : [])] },
-            })
-          : null;
-        const saved = await this.prisma.esfInvoice.upsert({ where: { organizationId_environment_direction_esfId: { organizationId, environment: env, direction: 'INBOUND', esfId: data.esfId } }, create: { ...data, relatedInvoiceId: related?.id ?? null }, update: { status: data.status, esfStatus: data.esfStatus, registrationNumber: data.registrationNumber, cancelReason: data.cancelReason, lastUpdateAt: data.lastUpdateAt, counterpartyId: data.counterpartyId, ...(related ? { relatedInvoiceId: related.id } : {}) } });
-        // Автоматика только предлагает поступление-основание (тот же поставщик, та же сумма); основанием его
-        // делает решение человека LINK_BASIS (FP-018).
-        if (!saved.sourceDocId && !saved.suggestedSourceDocId && saved.counterpartyId) {
-          const supply = await this.matchSupply(organizationId, saved.counterpartyId, saved.totalWithTax, saved.turnoverDate);
-          if (supply) await this.prisma.esfInvoice.update({ where: { id: saved.id }, data: { suggestedSourceDocId: supply } });
-        }
-        if (saved.esfStatus === 'CREATED') toConfirm.push(String(info.invoiceId));
-        imported++;
       }
       lastEvent = new Date(r.lastEventDate);
       lastId = r.lastInvoiceId ?? lastId;
@@ -966,6 +940,9 @@ export class EsfService implements OnModuleInit, OnModuleDestroy {
     // Техническое подтверждение получения (confirmInvoiceById, без подписи) — DELIVERED в ИС ЭСФ. Это НЕ согласие
     // с документом: юридическое решение (подтвердить/отклонить исправленный или дополнительный ЭСФ, отзыв) — только
     // решением человека (FP-018); businessDecision здесь не меняется.
+    // Плюс полученные ранее и не подтверждённые (например, после повторной обработки из карантина).
+    const pendingConfirm = await this.prisma.esfInvoice.findMany({ where: { organizationId, environment: env, direction: 'INBOUND', esfStatus: 'CREATED', deliveryConfirmedAt: null, esfId: { not: null } }, select: { esfId: true }, take: 500 });
+    for (const x of pendingConfirm) if (!toConfirm.includes(String(x.esfId))) toConfirm.push(String(x.esfId));
     for (let i = 0; i < toConfirm.length; i += 100) {
       const part = toConfirm.slice(i, i + 100);
       const res = await this.wrap(() => client.confirmInvoiceById(session.sessionId, part), session.id);
@@ -975,15 +952,6 @@ export class EsfService implements OnModuleInit, OnModuleDestroy {
     }
     await this.prisma.esfSettings.upsert({ where: { organizationId }, create: { organizationId, inboundLastEventAt: lastEvent, inboundLastId: lastId ? BigInt(lastId) : null }, update: { inboundLastEventAt: lastEvent, inboundLastId: lastId ? BigInt(lastId) : null } });
     return imported;
-  }
-
-  /** Поступление того же поставщика на ту же сумму (с НДС) в пределах ±10 дней от даты оборота. */
-  private async matchSupply(organizationId: string, counterpartyId: string, total: Prisma.Decimal, date: Date) {
-    const from = new Date(date.getTime() - 10 * 86400000), to = new Date(date.getTime() + 10 * 86400000);
-    const docs = await this.prisma.document.findMany({ where: { organizationId, counterpartyId, docType: 'SUPPLY', status: 'POSTED', deleted: false, date: { gte: from, lte: to }, total: { gte: new D(total).minus('0.01'), lte: new D(total).plus('0.01') } }, select: { id: true } });
-    if (docs.length !== 1) return null; // неоднозначно — оставляем на ручную привязку
-    const taken = await this.prisma.esfInvoice.findFirst({ where: { organizationId, direction: 'INBOUND', sourceDocId: docs[0].id } });
-    return taken ? null : docs[0].id;
   }
 
   /** Сводка для дашборда и бейджа. */

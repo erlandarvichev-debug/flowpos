@@ -56,6 +56,11 @@
         </el-card>
       </el-tab-pane>
 
+      <el-tab-pane name="QUARANTINE">
+        <template #label>Карантин <el-badge v-if="health?.metrics?.quarantineCount" :value="health.metrics.quarantineCount" type="danger" /></template>
+        <EsfQuarantine v-if="tab === 'QUARANTINE'" :can-act="canSend" @changed="load" @open-invoice="(id: string) => (cardId = id)" />
+      </el-tab-pane>
+
       <el-tab-pane label="Настройки" name="SETTINGS">
         <EsfHealth :health="health && { ...health, alerts: [] }" detailed />
         <el-card v-if="form">
@@ -193,6 +198,7 @@ import { fmtDate, fmtMoney, showError } from './acc'
 import { NCALAYER_DOWNLOAD, NcaLayerError, signAuthXml, signRaw } from '@/utils/ncalayer'
 import EsfCard from './esf/EsfCard.vue'
 import EsfHealth from './esf/EsfHealth.vue'
+import EsfQuarantine from './esf/EsfQuarantine.vue'
 import { STATUS } from './esf/status'
 import BulkResult, { type BulkRow } from './esf/BulkResult.vue'
 
@@ -294,6 +300,8 @@ async function load() {
       form.value = { environment: s.environment, signerIin: s.signerIin ?? '', operatorFullname: s.operatorFullname ?? '', signatureType: s.signatureType, vatRegistrationDate: s.vatRegistrationDate ? String(s.vatRegistrationDate).slice(0, 10) : null, transportTypeCode: s.transportTypeCode ?? '', defaultGoodsOrigin: s.defaultGoodsOrigin ?? '', autoPrepare: s.autoPrepare }
     } else if (tab.value === 'DECISIONS') {
       decisions.value = (await api.get('/accounting/esf/decisions')) as any
+    } else if (tab.value === 'QUARANTINE') {
+      // список грузит сама вкладка (EsfQuarantine)
     } else {
       const r = (await api.get('/accounting/esf/invoices', { params: listParams() })) as any
       items.value = r.items

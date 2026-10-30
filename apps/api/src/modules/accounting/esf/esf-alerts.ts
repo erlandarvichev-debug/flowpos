@@ -19,8 +19,9 @@ export interface EsfMetrics {
   unknownOldestAgeSec: number | null;
   /** Отправка дольше аренды (процесс упал/завис, восстановление не сработало). */
   sendingStuck: number;
-  /** Входящие, которые не удалось разобрать (временный карантин до FP-024). */
+  /** Открытые записи карантина входящих (FP-024) и из них конфликты с реестром. */
   quarantineCount: number;
+  quarantineConflicts: number;
   /** Подписанные готовые, но не отправленные; самый старый. */
   readyCount: number;
   readyOldestAgeSec: number | null;
@@ -97,7 +98,10 @@ export function evaluateEsfAlerts(m: EsfMetrics, t = ESF_THRESHOLDS): AlertFirin
       { unknownCount: m.unknownCount, readyCount: m.readyCount });
   }
   if (m.quarantineCount > 0) {
-    add('ESF_QUARANTINE', 'WARNING', OWNER_ACCOUNTANT, `${m.quarantineCount} входящих ЭСФ не удалось разобрать — они не попали в реестр`, { quarantineCount: m.quarantineCount });
+    // Конфликт с реестром (другое содержимое того же ЭСФ) — целостность данных: критично, пока не решит человек.
+    add('ESF_QUARANTINE', m.quarantineConflicts > 0 ? 'CRITICAL' : 'WARNING', OWNER_ACCOUNTANT,
+      `${m.quarantineCount} входящих ЭСФ в карантине — не попали в реестр${m.quarantineConflicts ? `; из них ${m.quarantineConflicts} конфликтуют с уже полученными` : ''}. Вкладка «Карантин»`,
+      { quarantineCount: m.quarantineCount, quarantineConflicts: m.quarantineConflicts });
   }
   if (m.signingFailures24h >= t.signingFailuresWarn) {
     add('ESF_SIGNING_FAILURES', 'WARNING', OWNER_ACCOUNTANT, `${m.signingFailures24h} отказов проверки подписи за сутки — возможно, выбран не тот ключ или сертификат`, { signingFailures24h: m.signingFailures24h });

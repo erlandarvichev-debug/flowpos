@@ -2167,6 +2167,46 @@ model OpsAlert {
   @@map("ops_alerts")
 }
 
+/// FP-024: карантин входящих ЭСФ — всё, что нельзя безопасно записать в реестр. Исходное тело хранится целиком
+/// (как получено), с хэшем и классифицированной причиной (esf-inbound.ts). Запись не удаляется: разбор — повторной
+/// обработкой (REPLAYED) или решением человека с причиной (ACCEPTED_NEW | KEPT_EXISTING | DISMISSED).
+/// Одна запись на (ЭСФ, содержимое): повтор того же получения увеличивает seenCount, а не плодит записи.
+model EsfInboundQuarantine {
+  id                 String    @id @default(uuid())
+  organizationId     String    @map("organization_id")
+  environment        String
+  esfId              BigInt    @map("esf_id")
+  registrationNumber String?   @map("registration_number")
+  invoiceStatus      String?   @map("invoice_status")   // статус ИС ЭСФ из конверта, как пришёл
+  envelope           Json?                               // остальные поля конверта invoiceInfo (без тела)
+  body               String                              // тело ровно как получено
+  bodyHash           String    @map("body_hash")         // sha256(utf-8)
+  bodyBytes          Int       @map("body_bytes")
+  /// Таксономия ESF_IN_* (esf-inbound.ts INBOUND_ERRORS)
+  errorCode          String    @map("error_code")
+  errorDetail        String?   @map("error_detail")      // техническая причина без секретов
+  /// Для конфликтов — запись реестра, с которой конфликт, и её хэш на момент обнаружения
+  existingInvoiceId  String?   @map("existing_invoice_id")
+  existingHash       String?   @map("existing_hash")
+  status             String    @default("OPEN")          // OPEN | RESOLVED
+  resolution         String?                             // REPLAYED | ACCEPTED_NEW | KEPT_EXISTING | DISMISSED
+  resolutionReason   String?   @map("resolution_reason")
+  resolvedBy         String?   @map("resolved_by")
+  resolvedAt         DateTime? @map("resolved_at")
+  resultInvoiceId    String?   @map("result_invoice_id") // запись реестра после повторной обработки/принятия
+  replacedBody       String?   @map("replaced_body")     // ACCEPTED_NEW: прежнее тело записи реестра
+  replayAttempts     Int       @default(0) @map("replay_attempts")
+  lastReplayAt       DateTime? @map("last_replay_at")
+  firstSeenAt        DateTime  @default(now()) @map("first_seen_at")
+  lastSeenAt         DateTime  @default(now()) @map("last_seen_at")
+  seenCount          Int       @default(1) @map("seen_count")
+  traceId            String?   @default(dbgenerated("NULLIF(current_setting('flowpos.trace_id'::text, true), ''::text)")) @map("trace_id")
+
+  @@unique([organizationId, environment, esfId, bodyHash])
+  @@index([organizationId, status])
+  @@map("esf_inbound_quarantine")
+}
+
 /// Сессия ИС ЭСФ (открыта подписанным тикетом). Секретов не содержит: только sessionId.
 model EsfSession {
   id             String    @id @default(uuid())
@@ -2228,7 +2268,8 @@ model EsfInvoice {
   createdAt          DateTime  @default(now()) @map("created_at")
   updatedAt          DateTime  @updatedAt @map("updated_at")
 
-  @@unique([organizationId, environment, direction, num, date])
+  // FP-024: номер и дата уникальны в пределах продавца — у разных поставщиков входящие «№1 от 01.10» законно совпадают.
+  @@unique([organizationId, environment, direction, sellerTin, num, date])
   @@unique([organizationId, environment, direction, esfId])
   @@index([organizationId, direction, status])
   @@index([sourceDocId])

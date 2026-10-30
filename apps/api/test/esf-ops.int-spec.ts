@@ -3,7 +3,7 @@
 import { INestApplication } from '@nestjs/common';
 import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../src/prisma/prisma.service';
-import { PASSWORD, call, startApp, uid, HttpApp } from './http-app';
+import { PASSWORD, call, login, makeUser, startApp, uid, HttpApp } from './http-app';
 import { DEFAULT_TENANT, defaultTenant } from './accounting-helpers';
 
 let h: HttpApp;
@@ -40,6 +40,7 @@ afterAll(async () => {
   if (prisma && t2) {
     const orgs = (await prisma.organization.findMany({ where: { tenantId: t2 }, select: { id: true } })).map((o) => o.id);
     await prisma.opsAlert.deleteMany({ where: { organizationId: { in: orgs } } });
+    await prisma.esfInboundQuarantine.deleteMany({ where: { organizationId: { in: orgs } } });
     await prisma.esfSettings.deleteMany({ where: { organizationId: { in: orgs } } });
     await prisma.auditLog.deleteMany({ where: { organizationId: { in: orgs } } });
     await prisma.authSession.deleteMany({ where: { user: { tenantId: t2 } } });
@@ -103,5 +104,31 @@ describe('FP-022 через HTTP', () => {
     expect(ok.text).toContain(`organization_id="${B.orgId}"`);
     expect(ok.text).toMatch(/flowpos_ops_alerts_open\{severity="WARNING"\} \d+/);
     expect(ok.text).not.toMatch(/990011223344|OpsA|OpsB/);
+  });
+
+  it('FP-024 карантин по HTTP: чужой клиент не видит и не обрабатывает; аудитор видит, но не обрабатывает', async () => {
+    const body = '<broken';
+    const mk = (orgId: string) => prisma.esfInboundQuarantine.create({ data: { organizationId: orgId, environment: 'TEST', esfId: BigInt(Date.now()) * 1000n + BigInt(Math.floor(Math.random() * 1000)), body, bodyHash: require('crypto').createHash('sha256').update(body).digest('hex'), bodyBytes: 7, errorCode: 'ESF_IN_LEGACY' } });
+    const qa = await mk(A.orgId);
+    const qb = await mk(B.orgId);
+    const list = await call(h, 'GET', '/accounting/esf/quarantine', { token: A.token });
+    expect(list.status).toBe(200);
+    expect(list.body.items.map((i: any) => i.id)).toEqual([qa.id]);
+    expect(list.body.items[0].esfId).toBe(qa.esfId.toString());
+    expect((await call(h, 'GET', `/accounting/esf/quarantine/${qb.id}`, { token: A.token })).status).toBe(404);
+    expect((await call(h, 'POST', `/accounting/esf/quarantine/${qb.id}/replay`, { token: A.token, body: { reason: 'Попытка чужой записи' } })).status).toBe(404);
+    const card = await call(h, 'GET', `/accounting/esf/quarantine/${qa.id}`, { token: A.token });
+    expect(card.body).toMatchObject({ body, bodyIntact: true, errorCode: 'ESF_IN_LEGACY', replayable: true });
+
+    const aud = await makeUser(h, DEFAULT_TENANT, A.orgId, { role: 'auditor', name: 'Aud' });
+    const audToken = (await login(h, aud.email)).token;
+    expect((await call(h, 'GET', `/accounting/esf/quarantine/${qa.id}`, { token: audToken })).status).toBe(200);
+    expect((await call(h, 'POST', `/accounting/esf/quarantine/${qa.id}/resolve`, { token: audToken, body: { action: 'DISMISS', reason: 'Аудитор закрывает запись' } })).status).toBe(403);
+    const trace = `replay-${uid()}`;
+    const replay = await call(h, 'POST', `/accounting/esf/quarantine/${qa.id}/replay`, { token: A.token, body: { reason: 'Повтор после исправления' }, headers: { 'x-request-id': trace } });
+    expect(replay.status).toBe(201);
+    expect(replay.body).toMatchObject({ outcome: 'STILL_QUARANTINED', code: 'ESF_IN_XML_MALFORMED' });
+    const a = await prisma.auditLog.findFirstOrThrow({ where: { organizationId: A.orgId, action: 'ESF_QUARANTINE_REPLAY_FAILED', entityId: qa.id } });
+    expect(a.traceId).toBe(trace);
   });
 });

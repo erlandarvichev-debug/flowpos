@@ -16,7 +16,7 @@
         <el-descriptions-item label="Курсор входящих">{{ m.cursorLagSec == null ? '—' : `${age(m.cursorLagSec)} назад` }}</el-descriptions-item>
         <el-descriptions-item label="Результат неизвестен (на сверке)">{{ m.unknownCount }}<span v-if="m.unknownOldestAgeSec != null" class="muted"> · старейший {{ age(m.unknownOldestAgeSec) }}</span></el-descriptions-item>
         <el-descriptions-item label="Отправка зависла">{{ m.sendingStuck }}</el-descriptions-item>
-        <el-descriptions-item label="Входящие не разобраны (карантин)">{{ m.quarantineCount }}</el-descriptions-item>
+        <el-descriptions-item label="Входящие в карантине">{{ m.quarantineCount }}<span v-if="m.quarantineConflicts" class="muted"> · конфликтов с реестром {{ m.quarantineConflicts }}</span></el-descriptions-item>
         <el-descriptions-item label="Отклонено за сутки">{{ m.rejected24h }}</el-descriptions-item>
         <el-descriptions-item label="Отказов проверки подписи за сутки">{{ m.signingFailures24h }}</el-descriptions-item>
         <el-descriptions-item label="Просроченных решений">{{ m.decisionsOverdue }}</el-descriptions-item>
