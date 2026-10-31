@@ -53,7 +53,7 @@ export class PurchasesService {
     const total = items.reduce((sum: number, i: any) => sum + i.qty * i.price, 0);
 
     return this.prisma.$transaction(async (tx) => {
-      await assertTradeRefs(tx, s, { counterpartyId: rest.counterpartyId, contractId: rest.contractId, storeIds: [rest.storeId], productIds: items.map((i) => i.productId) });
+      await assertTradeRefs(tx, s, { counterpartyId: rest.counterpartyId, contractId: rest.contractId, date: rest.date, storeIds: [rest.storeId], productIds: items.map((i) => i.productId) });
       const number = await nextNumber(tx, s, 'PURCHASE_ORDER', 'ЗП', 6);
       const created = await tx.document.create({
         data: {
@@ -91,7 +91,7 @@ export class PurchasesService {
     await this.findOrder(s, id);
     const { tenantId, organizationId, ...rest } = docHeader(s, data);
     return this.prisma.$transaction(async (tx) => {
-      await assertTradeRefs(tx, s, { counterpartyId: rest.counterpartyId, contractId: rest.contractId, storeIds: [rest.storeId] });
+      await assertTradeRefs(tx, s, { counterpartyId: rest.counterpartyId, contractId: rest.contractId, date: rest.date, storeIds: [rest.storeId] });
       const updated = await tx.document.update({ where: { id }, data: rest });
 
       await this.outbox.enqueueInTx(tx, {
@@ -132,7 +132,7 @@ export class PurchasesService {
     const total = items.reduce((sum: number, i: any) => sum + i.qty * i.price, 0);
 
     return this.prisma.$transaction(async (tx) => {
-      await assertTradeRefs(tx, s, { counterpartyId: rest.counterpartyId, contractId: rest.contractId, storeIds: [rest.storeId], productIds: items.map((i) => i.productId) });
+      await assertTradeRefs(tx, s, { counterpartyId: rest.counterpartyId, contractId: rest.contractId, date: rest.date, storeIds: [rest.storeId], productIds: items.map((i) => i.productId) });
       const number = await nextNumber(tx, s, 'SUPPLY', 'ПТ', 6);
       const receipt = await tx.document.create({
         data: {

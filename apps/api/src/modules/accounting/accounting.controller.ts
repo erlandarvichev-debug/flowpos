@@ -262,8 +262,8 @@ export class AccountingController {
   tradeRestore(@Org() ctx: OrgContext, @Param('id') id: string) { return this.trade.restore(ctx, id); }
 
   @Get('contracts') @RequirePermission('acc.refs.read')
-  contracts(@Query('counterpartyId') counterpartyId?: string) {
-    return this.refs.contracts(counterpartyId);
+  contracts(@Org() ctx: OrgContext, @Query('counterpartyId') counterpartyId?: string) {
+    return this.refs.contracts(ctx, counterpartyId);
   }
 
   @Post('trade-documents/:id/create-based') @RequirePermission('acc.doc.write') @ApiHeader(IDEMP_HEADER)

@@ -30,6 +30,49 @@ export class CounterpartiesController {
     return this.cp.findOne(s, id);
   }
 
+  // FP-026: реквизиты с датами действия и договоры своей организации.
+  @Get(':id/requisites')
+  @RequirePermission('catalog.read')
+  requisites(@CurrentScope() s: Scope, @Param('id') id: string, @Query('on') on?: string) {
+    return this.cp.requisitesOn(s, id, on);
+  }
+
+  @Post(':id/addresses')
+  @RequirePermission('catalog.manage')
+  addAddress(@CurrentScope() s: Scope, @Param('id') id: string, @Body() body: any) {
+    return this.cp.addAddress(s, id, body ?? {});
+  }
+
+  @Post(':id/bank-accounts')
+  @RequirePermission('catalog.manage')
+  addBankAccount(@CurrentScope() s: Scope, @Param('id') id: string, @Body() body: any) {
+    return this.cp.addBankAccount(s, id, body ?? {});
+  }
+
+  @Post(':id/bank-accounts/:accountId/close')
+  @RequirePermission('catalog.manage')
+  closeBankAccount(@CurrentScope() s: Scope, @Param('id') id: string, @Param('accountId') accountId: string, @Body() body: any) {
+    return this.cp.closeBankAccount(s, id, accountId, body ?? {});
+  }
+
+  @Get(':id/contracts')
+  @RequirePermission('catalog.read')
+  contracts(@CurrentScope() s: Scope, @Param('id') id: string) {
+    return this.cp.contracts(s, id);
+  }
+
+  @Post(':id/contracts')
+  @RequirePermission('catalog.manage')
+  createContract(@CurrentScope() s: Scope, @Param('id') id: string, @Body() body: any) {
+    return this.cp.createContract(s, id, body ?? {});
+  }
+
+  @Put(':id/contracts/:contractId')
+  @RequirePermission('catalog.manage')
+  updateContract(@CurrentScope() s: Scope, @Param('id') id: string, @Param('contractId') contractId: string, @Body() body: any) {
+    return this.cp.updateContract(s, id, contractId, body ?? {});
+  }
+
   @Post()
   @RequirePermission('catalog.manage')
   create(@CurrentScope() s: Scope, @Body() body: any) {

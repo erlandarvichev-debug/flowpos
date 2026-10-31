@@ -54,7 +54,7 @@ export class SalesService {
     const total = items.reduce((sum: number, i: any) => sum + i.qty * i.price, 0);
 
     return this.prisma.$transaction(async (tx) => {
-      await assertTradeRefs(tx, s, { counterpartyId: rest.counterpartyId, contractId: rest.contractId, storeIds: [rest.storeId], productIds: items.map((i) => i.productId) });
+      await assertTradeRefs(tx, s, { counterpartyId: rest.counterpartyId, contractId: rest.contractId, date: rest.date, storeIds: [rest.storeId], productIds: items.map((i) => i.productId) });
       const number = await nextNumber(tx, s, 'CUSTOMER_ORDER', 'ЗК', 6);
       const created = await tx.document.create({
         data: {
@@ -114,7 +114,7 @@ export class SalesService {
     const total = items.reduce((sum: number, i: any) => sum + i.qty * i.price, 0);
 
     return this.prisma.$transaction(async (tx) => {
-      await assertTradeRefs(tx, s, { counterpartyId: rest.counterpartyId, contractId: rest.contractId, storeIds: [rest.storeId], productIds: items.map((i) => i.productId) });
+      await assertTradeRefs(tx, s, { counterpartyId: rest.counterpartyId, contractId: rest.contractId, date: rest.date, storeIds: [rest.storeId], productIds: items.map((i) => i.productId) });
       const number = await nextNumber(tx, s, 'DEMAND', 'РЛ', 6);
       const created = await tx.document.create({
         data: {

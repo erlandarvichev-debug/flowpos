@@ -119,7 +119,9 @@ describe('FP-007: клиент над организацией', () => {
       await rejected(tx, () => tx.stock.create({ data: { productId: w.t2c.product.id, storeId: w.t2c.store.id, binId: bin.id, tenantId: DEFAULT_TENANT } }));
       await rejected(tx, () => tx.product.create({ data: { tenantId: w.t2.id, name: 'чужая единица', uomId: w.t1c.uom.id } }));
       await rejected(tx, () => tx.productBarcode.create({ data: { tenantId: w.t2.id, productId: w.t1c.product.id, barcode: `46${uid()}` } }));
-      await rejected(tx, () => tx.contract.create({ data: { tenantId: w.t2.id, counterpartyId: w.t1c.counterparty.id, number: '1' } }));
+      await rejected(tx, () => tx.contract.create({ data: { tenantId: w.t2.id, organizationId: w.b.id, counterpartyId: w.t1c.counterparty.id, number: '1' } }));
+      // FP-026: договор — организации; организация другого клиента с контрагентом этого клиента не связывается.
+      await rejected(tx, () => tx.contract.create({ data: { tenantId: DEFAULT_TENANT, organizationId: w.b.id, counterpartyId: w.t1c.counterparty.id, number: '2' } }));
     });
   });
 

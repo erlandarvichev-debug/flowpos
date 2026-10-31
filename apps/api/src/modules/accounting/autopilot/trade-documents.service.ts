@@ -7,6 +7,7 @@ import { OrgContext } from '../access/org-context';
 import { OverrideRequest } from '../periods/periods.service';
 import { AutopilotService } from './autopilot.service';
 import { TRADE_SOURCE } from './trade-rules';
+import { contractPeriodProblem } from '../../catalog/requisites';
 
 type Tx = Prisma.TransactionClient;
 
@@ -75,6 +76,15 @@ export class TradeDocumentsService {
     if (input.counterpartyId) {
       const c = await tx.counterparty.findUnique({ where: { id: input.counterpartyId } });
       if (!c || c.tenantId !== ctx.tenantId || (c.organizationId && c.organizationId !== ctx.organizationId)) throw new AccError('REF_FOREIGN', 'Контрагент не найден в этой организации');
+    }
+    // FP-026: договор — своей организации, с контрагентом документа и действует на дату документа.
+    if (input.contractId) {
+      const k = await tx.contract.findFirst({ where: { id: input.contractId, tenantId: ctx.tenantId, organizationId: ctx.organizationId } });
+      if (!k || (input.counterpartyId && k.counterpartyId !== input.counterpartyId)) {
+        throw new AccError('REF_FOREIGN', 'Договор не найден у этой организации и этого контрагента', { fix: 'Выберите договор своей организации с контрагентом документа.' });
+      }
+      const problem = input.date ? contractPeriodProblem(k, new Date(input.date)) : null;
+      if (problem) throw new AccError('CONTRACT_NOT_EFFECTIVE', problem, { fix: 'Выберите договор, действующий на дату документа, или продлите срок договора.' });
     }
     const ids = [...new Set((input.lines || []).map((l) => l.productId))];
     if (ids.length) {

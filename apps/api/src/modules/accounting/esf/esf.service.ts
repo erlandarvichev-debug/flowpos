@@ -217,8 +217,11 @@ export class EsfService implements OnModuleInit, OnModuleDestroy {
       throw new AccError('ESF_DATA_INCOMPLETE', `ЭСФ по документу ${doc.number ?? ''} не сформирован: ${problems.length === 1 ? problems[0] : 'не хватает данных'}`, { fix: problems.map((p) => `• ${p}`).join('\n'), details: { problems } });
     }
 
-    let contract: { number: string; startDate: Date | null } | null = null;
-    if (doc.contractId) contract = await tx.contract.findUnique({ where: { id: doc.contractId }, select: { number: true, startDate: true } });
+    // FP-026: договор — своей организации; дата договора — его графа «дата», а не начало действия.
+    let contract: { number: string; date: Date | null; startDate: Date | null } | null = null;
+    if (doc.contractId) contract = await tx.contract.findFirst({ where: { id: doc.contractId, organizationId }, select: { number: true, date: true, startDate: true } });
+    // FP-026: адрес покупателя — юридический, действующий на дату оборота.
+    const customerAddress = cp ? (await tx.counterpartyAddress.findFirst({ where: { counterpartyId: cp.id, kind: 'LEGAL', validFrom: { lte: doc.date }, OR: [{ validTo: null }, { validTo: { gte: doc.date } }] }, orderBy: { validFrom: 'desc' } }))?.line : undefined;
     const paymentForm = (doc.attributes as any)?.paymentForm === 'CASH' ? 'CASH' : 'NON_CASH';
 
     const data: EsfInvoiceData = {
@@ -228,13 +231,13 @@ export class EsfService implements OnModuleInit, OnModuleDestroy {
       operatorFullname,
       relatedInvoice: extra?.related,
       turnoverDate: esfDate(doc.date),
-      customers: [{ tin: cp!.inn!, name: cp!.fullName || cp!.name, countryCode: 'KZ' }],
+      customers: [{ tin: cp!.inn!, name: cp!.fullName || cp!.name, address: customerAddress ?? undefined, countryCode: 'KZ' }],
       deliveryDocNum: doc.number ?? undefined,
       deliveryDocDate: doc.number ? esfDate(doc.date) : undefined,
       deliveryTerm: {
         hasContract: !!contract,
         contractNum: contract?.number,
-        contractDate: contract?.startDate ? esfDate(contract.startDate) : undefined,
+        contractDate: (contract?.date ?? contract?.startDate) ? esfDate((contract!.date ?? contract!.startDate)!) : undefined,
         paymentForm,
         transportTypeCode: s!.transportTypeCode!,
       },

@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { contractPeriodProblem } from '../../catalog/requisites';
 import { AccError } from '../common/acc-error';
 import { D, money } from '../common/money';
 import { DIM_COLUMNS, Dim, KZ_CHART_CODE, KZ_CHART_VERSION } from '../chart/kz-chart.data';
@@ -110,14 +111,15 @@ export class PostingService {
    * (товар, контрагент) — общий для его организаций; объекты организации (склад, счёт, касса, проект, статья,
    * подразделение, сотрудник) — только свои. Документ расчётов (SETTLEMENT_DOC) не проверяется: ссылается на документы разных видов.
    */
-  private async checkDimOwnership(tx: Prisma.TransactionClient, ctx: OrgContext, rows: Record<string, any>[]) {
+  private async checkDimOwnership(tx: Prisma.TransactionClient, ctx: OrgContext, rows: Record<string, any>[], date?: Date) {
     const ids = (col: string) => [...new Set(rows.map((r) => r[col]).filter(Boolean) as string[])];
     const org = ctx.organizationId;
     const tenantShared = { tenantId: ctx.tenantId, OR: [{ organizationId: null }, { organizationId: org }] };
     const checks: [Dim, string[], (x: string[]) => Promise<number>][] = [
       ['COUNTERPARTY', ids('counterpartyId'), (x) => tx.counterparty.count({ where: { id: { in: x }, ...tenantShared } })],
       ['PRODUCT', ids('productId'), (x) => tx.product.count({ where: { id: { in: x }, ...tenantShared } })],
-      ['CONTRACT', ids('contractId'), (x) => tx.contract.count({ where: { id: { in: x }, tenantId: ctx.tenantId, counterparty: { OR: [{ organizationId: null }, { organizationId: org }] } } })],
+      // FP-026: договор — своей организации (договор заключает организация, а не клиент).
+      ['CONTRACT', ids('contractId'), (x) => tx.contract.count({ where: { id: { in: x }, tenantId: ctx.tenantId, organizationId: org } })],
       ['STORE', ids('storeId'), (x) => tx.store.count({ where: { id: { in: x }, organizationId: org } })],
       ['DEPARTMENT', ids('departmentId'), (x) => tx.department.count({ where: { id: { in: x }, organizationId: org } })],
       ['EMPLOYEE', ids('employeeId'), (x) => tx.employee.count({ where: { id: { in: x }, organizationId: org } })],
@@ -134,6 +136,20 @@ export class PostingService {
         });
       }
     }
+    // FP-026: договор в строке — с тем же контрагентом и действует на дату записи.
+    const cids = ids('contractId');
+    if (cids.length) {
+      const cs = new Map((await tx.contract.findMany({ where: { id: { in: cids } }, select: { id: true, number: true, counterpartyId: true, startDate: true, date: true, endDate: true } })).map((c) => [c.id, c]));
+      for (const r of rows) {
+        const c = r.contractId ? cs.get(r.contractId) : undefined;
+        if (!c) continue;
+        if (r.counterpartyId && c.counterpartyId !== r.counterpartyId) {
+          throw new AccError('CONTRACT_COUNTERPARTY', `Договор № ${c.number} заключён с другим контрагентом`, { fix: 'Выберите договор этого контрагента.', details: { contractId: c.id } });
+        }
+        const problem = date ? contractPeriodProblem(c, date) : null;
+        if (problem) throw new AccError('CONTRACT_NOT_EFFECTIVE', problem, { fix: 'Выберите договор, действующий на дату документа, или продлите срок договора.', details: { contractId: c.id } });
+      }
+    }
   }
 
   /**
@@ -148,7 +164,7 @@ export class PostingService {
       return { entry: existing, reused: true };
     }
     const rows = await this.validate(tx, ctx.organizationId, input.date, input.postings, input.allowEmpty);
-    await this.checkDimOwnership(tx, ctx, rows);
+    await this.checkDimOwnership(tx, ctx, rows, input.date);
     if (existing) await this.closeEntry(tx, existing.id, 'SUPERSEDED');
     const entry = await tx.accEntry.create({
       data: {
@@ -224,3 +240,4 @@ export class PostingService {
     return entry;
   }
 }
+

@@ -63,9 +63,10 @@ export class RefsService {
     return r;
   }
 
-  contracts(counterpartyId?: string) {
+  /** FP-026: договоры только своей организации (раньше — всех организаций клиента). */
+  contracts(ctx: OrgContext, counterpartyId?: string) {
     return this.prisma.contract.findMany({
-      where: { isActive: true, ...(counterpartyId ? { counterpartyId } : {}) },
+      where: { organizationId: ctx.organizationId, isActive: true, ...(counterpartyId ? { counterpartyId } : {}) },
       orderBy: [{ startDate: 'desc' }, { number: 'asc' }], take: 200,
       select: { id: true, number: true, name: true, counterpartyId: true, currency: true, startDate: true, endDate: true },
     });

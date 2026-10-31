@@ -1123,3 +1123,31 @@ describe('FP-024: карантин входящих и контролируем�
     expect(card.history.map((h: any) => h.action)).toEqual(['ESF_QUARANTINE_ADDED']);
   });
 });
+
+describe('FP-026: реквизиты покупателя и договор в ЭСФ', () => {
+  it('адрес покупателя — юридический на дату оборота; договор — своей организации, его номер и дата; XSD', async () => {
+    const { ctx, t } = await setupOrg();
+    await esf.updateSettings(ctx, { vatRegistrationDate: '2020-01-15', transportTypeCode: '30', defaultGoodsOrigin: '5' });
+    await prisma.counterpartyAddress.createMany({ data: [
+      { counterpartyId: t.customer.id, kind: 'LEGAL', line: 'г. Астана, ул. Прежняя, 1', validFrom: new Date('2024-01-01'), validTo: new Date('2026-09-30') },
+      { counterpartyId: t.customer.id, kind: 'LEGAL', line: 'г. Алматы, пр. Новый, 2', validFrom: new Date('2026-10-01') },
+    ] });
+    // Дата договора и начало действия различаются — в ЭСФ уходит именно дата договора.
+    const k = await prisma.contract.create({ data: { organizationId: ctx.organizationId, counterpartyId: t.customer.id, number: `ДП-${Date.now()}`, date: new Date('2026-02-03'), startDate: new Date('2026-02-10') } });
+    const other = await makeOrg(prisma);
+    const foreign = await prisma.contract.create({ data: { organizationId: other.organizationId, counterpartyId: t.customer.id, number: `Ч-${Date.now()}`, date: new Date('2026-01-01') } });
+    // Бухгалтерский документ с договором другой организации — отказ.
+    await expectCode(s.trade.create(ctx, { docType: 'DEMAND', date: '2026-10-05', counterpartyId: t.customer.id, contractId: foreign.id, storeId: t.s1.id, lines: [{ productId: t.service.id, qty: '1', price: '100' }] }), 'REF_FOREIGN');
+    await expectCode(s.trade.create(ctx, { docType: 'DEMAND', date: '2026-01-05', counterpartyId: t.customer.id, contractId: k.id, storeId: t.s1.id, lines: [{ productId: t.service.id, qty: '1', price: '100' }] }), 'CONTRACT_NOT_EFFECTIVE');
+
+    await s.trade.create(ctx, { docType: 'SUPPLY', date: '2026-09-01', counterpartyId: t.supplier.id, storeId: t.s1.id, lines: [{ productId: t.goods.id, qty: '10', price: '1160' }], status: 'POSTED' });
+    // Оборот 20.09 — до смены адреса 01.10: в ЭСФ прежний адрес, хотя в карточке уже новый.
+    const sale = await s.trade.create(ctx, { docType: 'DEMAND', date: '2026-09-20', counterpartyId: t.customer.id, contractId: k.id, storeId: t.s1.id, status: 'POSTED', lines: [{ productId: t.goods.id, qty: '1', price: '2320' }] });
+    const inv = await esf.prepare(ctx, sale.id, new Date('2026-09-21T00:00:00Z'));
+    validateXsd(inv.body);
+    expect(inv.body).toContain('<address>г. Астана, ул. Прежняя, 1</address>');
+    expect(inv.body).not.toContain('Новый');
+    expect(inv.body).toContain(`<contractNum>${k.number}</contractNum>`);
+    expect(inv.body).toContain('<contractDate>03.02.2026</contractDate>');
+  });
+});

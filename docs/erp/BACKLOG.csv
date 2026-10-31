@@ -24,7 +24,7 @@ FP-022,ESF,P1,SRE/Integration,M,"FP-012,FP-017,FP-024",DONE_LOCAL,Метрики
 FP-023,ESF,P0,QA/Methodologist,L,"FP-017,FP-018,FP-019,FP-020,FP-022",PLANNED,Уполномоченный ESF sandbox pilot,Документы приняты реальным тестовым контуром; duplicate/correction/timeout доказательства; sign-off
 FP-024,ESF,P1,Backend/Support,M,"FP-012,FP-017",DONE_LOCAL,Ошибки карантин и контролируемый replay,Error taxonomy; причина исправления; audit replay; same key different hash не заметается
 FP-025,Catalog,P1,Backend,M,FP-009,DONE_LOCAL,Товары варианты единицы штрихкоды,Stable item ID; дубли и weight barcode; versions и external mappings
-FP-026,Catalog,P1,Backend/Frontend,M,"FP-025,FP-008",PLANNED,Контрагенты договоры и реквизиты,Effective dates; адреса/БИН; доступ; нет чужих ссылок
+FP-026,Catalog,P1,Backend/Frontend,M,"FP-025,FP-008",DONE_LOCAL,Контрагенты договоры и реквизиты,Effective dates; адреса/БИН; доступ; нет чужих ссылок
 FP-027,Catalog,P1,Backend,M,FP-025,PLANNED,Прайс-листы скидки и округление,Priority/interval; preview discount; immutable offline snapshot
 FP-028,Documents,P0,Backend,L,"FP-009,FP-026",PLANNED,Общие документы версии и ссылки,Expected_version; immutable posted version; source/correction graph; duplicate post conflict
 FP-029,Documents,P0,Backend/Frontend,M,"FP-028,FP-008",PLANNED,Согласования и simulate command,Hash/scope/sum/TTL bound; изменение отменяет approval; UI показывает эффект

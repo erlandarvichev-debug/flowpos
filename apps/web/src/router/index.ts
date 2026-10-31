@@ -46,6 +46,11 @@ const router = createRouter({
           component: () => import('@/views/catalog/CounterpartiesView.vue'),
           meta: { title: 'Контрагенты', icon: 'User' },
         },
+        {
+          path: 'catalog/counterparties/:id',
+          name: 'counterparty-detail',
+          component: () => import('@/views/catalog/CounterpartyDetailView.vue'),
+        },
         // Закупки
         {
           path: 'trade/purchases',

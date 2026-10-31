@@ -103,7 +103,7 @@ Catalog | P1 | Backend | M | DONE_LOCAL — см. `FP-025-CATALOG-ITEMS-BARCODES
 Зависимости: FP-009. Приёмка: Stable item ID; дубли и weight barcode; versions и external mappings.
 
 ## FP-026 · Контрагенты договоры и реквизиты
-Catalog | P1 | Backend/Frontend | M | PLANNED
+Catalog | P1 | Backend/Frontend | M | DONE_LOCAL — см. `FP-026-COUNTERPARTIES-CONTRACTS.md` (не выкладывалось)
 Зависимости: FP-025,FP-008. Приёмка: Effective dates; адреса/БИН; доступ; нет чужих ссылок.
 
 ## FP-027 · Прайс-листы скидки и округление

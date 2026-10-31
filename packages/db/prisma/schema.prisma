@@ -52,6 +52,7 @@ model Organization {
   memberships         OrgMembership[]
   products            Product[]
   counterparties      Counterparty[]
+  contracts           Contract[]
   stores              Store[]
 
   @@unique([tenantId, id])
@@ -722,10 +723,14 @@ model Stock {
 model Counterparty {
   id         String          @id @default(uuid())
   type       CounterpartyType @default(CUSTOMER)
+  /// FP-026: LEGAL — юрлицо | ENTREPRENEUR — ИП | INDIVIDUAL — физлицо | NONRESIDENT — нерезидент
+  kind       String          @default("LEGAL")
   name       String
   fullName   String?         @map("full_name")
-  inn        String?
+  inn        String?         // ИИН/БИН (для резидентов РК — 12 цифр с контрольным разрядом)
   kpp        String?
+  countryCode String         @default("KZ") @map("country_code")
+  kbe        String?         // код бенефициара: резидентство + сектор экономики
   phone      String?
   email      String?
   groupId    String?         @map("group_id")
@@ -753,6 +758,8 @@ model Counterparty {
   group      CounterpartyGroup? @relation(fields: [tenantId, groupId], references: [tenantId, id])
   contracts  Contract[]
   documents  Document[]
+  addresses    CounterpartyAddress[]
+  bankAccounts CounterpartyBankAccount[]
 
   @@unique([tenantId, onecBase, onecGuid])
   @@unique([tenantId, msAccountId, msId])
@@ -760,7 +767,50 @@ model Counterparty {
   @@index([syncStatus])
   @@unique([tenantId, id])
   @@index([tenantId])
+  @@index([tenantId, inn])
   @@map("counterparties")
+}
+
+/// FP-026: адрес контрагента с датами действия. Новый адрес того же вида закрывает прежний (история не теряется).
+/// В ЭСФ уходит юридический адрес, действующий на дату документа.
+model CounterpartyAddress {
+  id             String    @id @default(uuid())
+  tenantId       String    @default(dbgenerated("NULLIF(current_setting('flowpos.tenant_id', true), '')")) @map("tenant_id")
+  counterpartyId String    @map("counterparty_id")
+  kind           String    @default("LEGAL") // LEGAL — юридический | ACTUAL — фактический | DELIVERY — доставки
+  countryCode    String    @default("KZ") @map("country_code")
+  postalCode     String?   @map("postal_code")
+  line           String    // адрес одной строкой, как в документах
+  validFrom      DateTime  @map("valid_from") @db.Date
+  validTo        DateTime? @map("valid_to") @db.Date
+  createdBy      String?   @map("created_by")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  counterparty Counterparty @relation(fields: [tenantId, counterpartyId], references: [tenantId, id], onDelete: Cascade)
+
+  @@index([counterpartyId, kind, validFrom])
+  @@map("counterparty_addresses")
+}
+
+/// FP-026: банковский счёт контрагента с датами действия; один основной на валюту.
+model CounterpartyBankAccount {
+  id             String    @id @default(uuid())
+  tenantId       String    @default(dbgenerated("NULLIF(current_setting('flowpos.tenant_id', true), '')")) @map("tenant_id")
+  counterpartyId String    @map("counterparty_id")
+  iban           String
+  bik            String
+  bankName       String    @map("bank_name")
+  currency       String    @default("KZT")
+  isDefault      Boolean   @default(false) @map("is_default")
+  validFrom      DateTime  @map("valid_from") @db.Date
+  validTo        DateTime? @map("valid_to") @db.Date
+  createdBy      String?   @map("created_by")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  counterparty Counterparty @relation(fields: [tenantId, counterpartyId], references: [tenantId, id], onDelete: Cascade)
+
+  @@unique([counterpartyId, iban])
+  @@map("counterparty_bank_accounts")
 }
 
 enum CounterpartyType {
@@ -784,22 +834,32 @@ model CounterpartyGroup {
   @@map("counterparty_groups")
 }
 
+/// Договор с контрагентом. FP-026: договор заключает организация — он её, а не общий для клиента; документ может
+/// ссылаться только на договор своей организации с тем же контрагентом, действующий на дату документа.
 model Contract {
   id             String   @id @default(uuid())
   tenantId       String  @default(dbgenerated("NULLIF(current_setting('flowpos.tenant_id', true), '')")) @map("tenant_id")
+  organizationId String   @map("organization_id")
   counterpartyId String   @map("counterparty_id")
   number         String
+  /// Дата договора (графа ЭСФ «Дата договора»); период действия — startDate…endDate
+  date           DateTime? @db.Date
   name           String?
-  type           String?
+  type           String?   // SALE | PURCHASE | COMMISSION | OTHER
   startDate      DateTime? @map("start_date")
   endDate        DateTime? @map("end_date")
   currency       String   @default("KZT")
   isActive       Boolean  @default(true) @map("is_active")
   onecGuid       String?  @map("onec_guid")
+  createdBy      String?  @map("created_by")
   createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @default(now()) @updatedAt @map("updated_at")
 
+  organization Organization @relation(fields: [tenantId, organizationId], references: [tenantId, id])
   counterparty Counterparty @relation(fields: [tenantId, counterpartyId], references: [tenantId, id])
 
+  @@unique([organizationId, counterpartyId, number])
+  @@index([organizationId, counterpartyId])
   @@map("contracts")
 }
 
