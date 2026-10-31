@@ -9,6 +9,7 @@ import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
 import { RolesModule } from './modules/roles/roles.module';
 import { CatalogModule } from './modules/catalog/catalog.module';
+import { PricingModule } from './modules/pricing/pricing.module';
 import { TradeModule } from './modules/trade/trade.module';
 import { PosModule } from './modules/pos/pos.module';
 import { SyncModule } from './modules/sync/sync.module';
@@ -29,6 +30,7 @@ import { AccountingModule } from './modules/accounting/accounting.module';
     UsersModule,
     RolesModule,
     CatalogModule,
+    PricingModule,
     TradeModule,
     PosModule,
     SyncModule,

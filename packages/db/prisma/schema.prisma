@@ -53,6 +53,8 @@ model Organization {
   products            Product[]
   counterparties      Counterparty[]
   contracts           Contract[]
+  priceLists          PriceList[]
+  discountRules       DiscountRule[]
   stores              Store[]
 
   @@unique([tenantId, id])
@@ -642,6 +644,105 @@ model Price {
 
   @@unique([productId, priceTypeId])
   @@map("prices")
+}
+
+/// FP-027: прайс-лист организации — приоритет и интервал действия; магазины (пусто — все). Цена товара может
+/// зависеть от количества (minQty). Расчёт — apps/api/src/modules/pricing/engine.ts.
+model PriceList {
+  id             String    @id @default(uuid())
+  tenantId       String    @default(dbgenerated("NULLIF(current_setting('flowpos.tenant_id', true), '')")) @map("tenant_id")
+  organizationId String    @map("organization_id")
+  name           String
+  currency       String    @default("KZT")
+  priority       Int       @default(0)
+  validFrom      DateTime  @map("valid_from") @db.Date
+  validTo        DateTime? @map("valid_to") @db.Date
+  status         String    @default("DRAFT") // DRAFT | ACTIVE | ARCHIVED
+  storeIds       String[]  @default([]) @map("store_ids")
+  createdBy      String?   @map("created_by")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  organization Organization    @relation(fields: [tenantId, organizationId], references: [tenantId, id])
+  items        PriceListItem[]
+
+  @@unique([tenantId, id])
+  @@index([organizationId, status])
+  @@map("price_lists")
+}
+
+model PriceListItem {
+  id          String  @id @default(uuid())
+  tenantId    String  @default(dbgenerated("NULLIF(current_setting('flowpos.tenant_id', true), '')")) @map("tenant_id")
+  priceListId String  @map("price_list_id")
+  productId   String  @map("product_id")
+  price       Decimal @db.Decimal(18, 2)
+  minQty      Decimal @default(1) @map("min_qty") @db.Decimal(18, 3)
+
+  priceList PriceList @relation(fields: [tenantId, priceListId], references: [tenantId, id], onDelete: Cascade)
+
+  @@unique([priceListId, productId, minQty])
+  @@index([productId])
+  @@map("price_list_items")
+}
+
+/// FP-027: правило скидки организации. На строку чека — одна скидка (не суммируются): наибольший приоритет, при равном —
+/// выгоднее покупателю. Условия: товары/группы (пусто — все), количество в строке, сумма чека до скидок, магазины, срок.
+model DiscountRule {
+  id               String    @id @default(uuid())
+  tenantId         String    @default(dbgenerated("NULLIF(current_setting('flowpos.tenant_id', true), '')")) @map("tenant_id")
+  organizationId   String    @map("organization_id")
+  name             String
+  kind             String    // PERCENT | AMOUNT | FIXED_PRICE
+  value            Decimal   @db.Decimal(18, 4)
+  priority         Int       @default(0)
+  validFrom        DateTime  @map("valid_from") @db.Date
+  validTo          DateTime? @map("valid_to") @db.Date
+  status           String    @default("DRAFT") // DRAFT | ACTIVE | ARCHIVED
+  storeIds         String[]  @default([]) @map("store_ids")
+  productIds       String[]  @default([]) @map("product_ids")
+  groupIds         String[]  @default([]) @map("group_ids")
+  minQty           Decimal?  @map("min_qty") @db.Decimal(18, 3)
+  minReceiptAmount Decimal?  @map("min_receipt_amount") @db.Decimal(18, 2)
+  createdBy        String?   @map("created_by")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [tenantId, organizationId], references: [tenantId, id])
+
+  @@index([organizationId, status])
+  @@map("discount_rules")
+}
+
+/// FP-027: округление итога чека организации (шаг 0.01 — без округления; 1/5/10 ₸ — наличный расчёт).
+model PricingSettings {
+  organizationId String   @id @map("organization_id")
+  receiptStep    Decimal  @default(0.01) @map("receipt_step") @db.Decimal(10, 2)
+  receiptMode    String   @default("HALF_UP") @map("receipt_mode") // HALF_UP | DOWN
+  updatedBy      String?  @map("updated_by")
+  updatedAt      DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@map("pricing_settings")
+}
+
+/// FP-027: неизменяемый снимок цен и скидок для кассы (офлайн). Версия растёт в пределах организации и магазина;
+/// payload — скомпилированный набор правил на интервал [validFrom, horizonTo], hash — sha256 канонического JSON.
+model PricingSnapshot {
+  id             String   @id @default(uuid())
+  tenantId       String   @default(dbgenerated("NULLIF(current_setting('flowpos.tenant_id', true), '')")) @map("tenant_id")
+  organizationId String   @map("organization_id")
+  storeKey       String   @map("store_key") // id магазина или '*' — все магазины
+  version        Int
+  validFrom      DateTime @map("valid_from") @db.Date
+  horizonTo      DateTime @map("horizon_to") @db.Date
+  engineVersion  Int      @map("engine_version")
+  payload        Json
+  hash           String
+  createdBy      String?  @map("created_by")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@unique([organizationId, storeKey, version])
+  @@map("pricing_snapshots")
 }
 
 model Store {

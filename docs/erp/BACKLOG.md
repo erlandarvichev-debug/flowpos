@@ -107,7 +107,7 @@ Catalog | P1 | Backend/Frontend | M | DONE_LOCAL — см. `FP-026-COUNTERPARTIE
 Зависимости: FP-025,FP-008. Приёмка: Effective dates; адреса/БИН; доступ; нет чужих ссылок.
 
 ## FP-027 · Прайс-листы скидки и округление
-Catalog | P1 | Backend | M | PLANNED
+Catalog | P1 | Backend | M | DONE_LOCAL — см. `FP-027-PRICING-DISCOUNTS-ROUNDING.md` (касса rmk должна реализовать расчёт по снимку; не выкладывалось)
 Зависимости: FP-025. Приёмка: Priority/interval; preview discount; immutable offline snapshot.
 
 ## FP-028 · Общие документы версии и ссылки

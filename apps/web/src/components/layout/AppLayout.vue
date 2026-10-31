@@ -27,6 +27,7 @@
           <el-menu-item index="/catalog/items">Номенклатура</el-menu-item>
           <el-menu-item index="/catalog/warehouses">Склады</el-menu-item>
           <el-menu-item index="/catalog/counterparties">Контрагенты</el-menu-item>
+          <el-menu-item index="/catalog/pricing">Цены и скидки</el-menu-item>
         </el-sub-menu>
 
         <el-sub-menu index="trade">

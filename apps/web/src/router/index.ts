@@ -47,6 +47,12 @@ const router = createRouter({
           meta: { title: 'Контрагенты', icon: 'User' },
         },
         {
+          path: 'catalog/pricing',
+          name: 'pricing',
+          component: () => import('@/views/catalog/PricingView.vue'),
+          meta: { title: 'Цены и скидки', icon: 'PriceTag' },
+        },
+        {
           path: 'catalog/counterparties/:id',
           name: 'counterparty-detail',
           component: () => import('@/views/catalog/CounterpartyDetailView.vue'),

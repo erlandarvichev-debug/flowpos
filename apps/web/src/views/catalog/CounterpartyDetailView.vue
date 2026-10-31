@@ -138,7 +138,8 @@ const loading = ref(true)
 const busy = ref(false)
 const cp = ref<any>(null)
 const req = ref<any>(null)
-const today = new Date().toISOString().slice(0, 10)
+// Локальная дата пользователя (toISOString дал бы вчерашнюю дату после полуночи по Алматы).
+const today = new Date().toLocaleDateString('sv-SE')
 const onDate = ref(today)
 
 const KIND: Record<string, string> = { LEGAL: 'Юрлицо', ENTREPRENEUR: 'ИП', INDIVIDUAL: 'Физлицо', NONRESIDENT: 'Нерезидент' }
