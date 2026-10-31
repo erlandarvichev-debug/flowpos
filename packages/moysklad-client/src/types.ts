@@ -36,7 +36,7 @@ export interface MsProduct {
   vatEnabled?: boolean;
   uom?: { meta: MsMeta; id: string };
   productFolder?: { meta: MsMeta; id: string };
-  barcodes?: Array<{ ean13?: string; ean8?: string; code128?: string }>;
+  barcodes?: Array<{ ean13?: string; ean8?: string; code128?: string; gtin?: string; upc?: string }>;
   salePrices?: Array<{ value: number; priceType?: { meta: MsMeta; id: string; name: string } }>;
   meta: MsMeta;
 }

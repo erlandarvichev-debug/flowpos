@@ -8,6 +8,7 @@ const mockPrisma = {
   moyskladSyncCursor: { findUnique: jest.fn(), upsert: jest.fn() },
   moyskladSyncLog: { create: jest.fn() },
   product: { findFirst: jest.fn(), update: jest.fn(), create: jest.fn() },
+  productBarcode: { deleteMany: jest.fn(), createMany: jest.fn(), findMany: jest.fn().mockResolvedValue([]) },
   counterparty: { findFirst: jest.fn(), update: jest.fn(), create: jest.fn() },
   store: { findFirst: jest.fn(), update: jest.fn(), create: jest.fn() },
   productGroup: { findFirst: jest.fn(), update: jest.fn(), create: jest.fn() },
@@ -112,6 +113,28 @@ describe('MsPullService', () => {
       expect(mockPrisma.product.update).toHaveBeenCalledWith(
         expect.objectContaining({ data: expect.objectContaining({ name: 'Обновлённый товар' }) }),
       );
+    });
+
+    it('FP-025: все штрихкоды товара — в таблицу штрихкодов; убранные в МойСклад удаляются; чужой код не перехватывается', async () => {
+      const product = { ...makeProduct('ms-p1', 'Сок'), barcodes: [{ ean13: '4870000000014' }, { code128: ' AB 12 ' }, { gtin: '04870000000014' }, { ean13: '4870000000014' }] };
+      jest.spyOn(MoyskladHttpClient.prototype, 'getProducts').mockResolvedValue(mockGen([[product]]));
+      mockPrisma.product.findFirst.mockResolvedValue({ id: 'local-p1', syncStatus: 'SYNCED' });
+      mockPrisma.product.update.mockResolvedValue({});
+      mockPrisma.productBarcode.findMany.mockResolvedValue([{ barcode: 'AB12' }]);
+      const warn = jest.spyOn((service as any).logger, 'warn').mockImplementation(() => undefined);
+
+      await service.pullOperational();
+
+      expect(mockPrisma.productBarcode.deleteMany).toHaveBeenCalledWith({ where: { tenantId: 't1', productId: 'local-p1', source: 'MOYSKLAD', barcode: { notIn: ['4870000000014', 'AB12', '04870000000014'] } } });
+      expect(mockPrisma.productBarcode.createMany).toHaveBeenCalledWith({
+        data: [
+          { tenantId: 't1', productId: 'local-p1', barcode: '4870000000014', kind: 'EAN13', source: 'MOYSKLAD' },
+          { tenantId: 't1', productId: 'local-p1', barcode: 'AB12', kind: 'CODE128', source: 'MOYSKLAD' },
+          { tenantId: 't1', productId: 'local-p1', barcode: '04870000000014', kind: 'GTIN14', source: 'MOYSKLAD' },
+        ],
+        skipDuplicates: true,
+      });
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('AB12'));
     });
 
     it('помечает конфликт если товар DIRTY', async () => {

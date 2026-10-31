@@ -963,6 +963,8 @@ describe('FP-024: карантин входящих и контролируем�
     const [q] = await qOf(ctx);
     expect(q).toMatchObject({ errorCode: 'ESF_IN_HASH_CONFLICT', existingInvoiceId: before.id, existingHash: before.bodyHash, body: changed, status: 'OPEN' });
     expect((await monitor.metrics(ctx.organizationId)).quarantineConflicts).toBe(1);
+    // Карточка показывает, какие реквизиты различаются (сумма), а не только два сырых XML.
+    expect((await esf.inbound.get(ctx, q.id)).differences).toEqual([{ field: 'Сумма с НДС', before: '11600.00', after: '99999.00' }]);
     await monitor.evaluate(ctx.organizationId);
     expect(await prisma.opsAlert.findFirst({ where: { organizationId: ctx.organizationId, key: 'ESF_QUARANTINE', resolvedAt: null } })).toMatchObject({ severity: 'CRITICAL' });
     await expectCode(esf.inbound.replay(ctx, q.id, 'Исправили разбор в 2.1.5'), 'ESF_QUARANTINE_NOT_REPLAYABLE');

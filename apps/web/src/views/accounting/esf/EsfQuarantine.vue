@@ -20,7 +20,7 @@
       </el-table-column>
       <el-table-column label="Причина" min-width="260">
         <template #default="{ row }">
-          <el-tag :type="CONFLICTS.includes(row.errorCode) ? 'danger' : 'warning'" size="small" effect="plain">{{ row.errorTitle }}</el-tag>
+          <el-tag :type="CONFLICTS.includes(row.errorCode) ? 'danger' : 'warning'" size="small" effect="plain" class="reason">{{ row.errorTitle }}</el-tag>
           <div class="muted detail">{{ row.errorDetail }}</div>
         </template>
       </el-table-column>
@@ -67,9 +67,18 @@
       </div>
       <div v-else-if="card.status === 'OPEN'" class="block muted">Разбирать карантин может сотрудник с правом отправки ЭСФ.</div>
 
+      <template v-if="card.existing">
+        <div class="cap block">Что отличается</div>
+        <el-table :data="card.differences" size="small" empty-text="Ключевые реквизиты совпадают — отличие в остальном тексте документа">
+          <el-table-column prop="field" label="Реквизит" width="180" />
+          <el-table-column prop="before" label="В реестре" />
+          <el-table-column label="Получено сейчас"><template #default="{ row }"><b>{{ row.after }}</b></template></el-table-column>
+        </el-table>
+      </template>
+
       <el-row :gutter="12" class="block">
         <el-col :span="card.existing ? 12 : 24">
-          <div class="cap">Получено сейчас{{ shown(card.body) }}</div>
+          <div class="cap">{{ card.existing ? 'Получено сейчас' : 'Документ — как получен из ИС ЭСФ' }}{{ shown(card.body) }}</div>
           <pre class="xml">{{ card.body.slice(0, LIMIT) }}</pre>
         </el-col>
         <el-col v-if="card.existing" :span="12">
@@ -186,6 +195,7 @@ onMounted(load)
 .bar { margin-bottom: 10px; }
 .muted { color: var(--el-text-color-secondary); font-size: 12px; }
 .detail { word-break: break-word; }
+.reason { height: auto; white-space: normal; line-height: 1.4; padding: 2px 6px; text-align: left; }
 .block { margin-top: 12px; }
 .action { margin-top: 6px; }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; }

@@ -15,7 +15,7 @@ import { OrgContext } from '../access/org-context';
 import { redact } from '../../../common/redact';
 import { InvoiceInfoRaw } from './esf-soap.client';
 import { INBOUND_ERRORS, InboundCheck, InboundErrorCode, checkInbound } from './esf-inbound';
-import { parseEsfDate } from './invoice-xml';
+import { parseEsfDate, parseInvoice } from './invoice-xml';
 
 const sha256 = (s: string) => createHash('sha256').update(s, 'utf8').digest('hex');
 const REASON_MIN = 10;
@@ -181,7 +181,7 @@ export class EsfInboundService {
       ? await this.prisma.esfInvoice.findFirst({ where: { id: q.existingInvoiceId, organizationId: ctx.organizationId }, select: { id: true, num: true, date: true, sellerTin: true, sellerName: true, totalWithTax: true, status: true, bodyHash: true, body: true, businessDecision: true } })
       : null;
     const history = await this.prisma.auditLog.findMany({ where: { organizationId: ctx.organizationId, entity: 'esf_inbound_quarantine', entityId: id }, orderBy: { ts: 'asc' }, select: { ts: true, action: true, userId: true, reason: true, after: true, traceId: true } });
-    return { ...this.describe(q), bodyIntact: sha256(q.body) === q.bodyHash, existing, history };
+    return { ...this.describe(q), bodyIntact: sha256(q.body) === q.bodyHash, existing, differences: existing ? diffInvoices(existing.body, q.body) : [], history };
   }
 
   /**
@@ -274,4 +274,23 @@ export class EsfInboundService {
 function redactEnvelope(e: Record<string, any>) {
   const { signature: _s, certificate: _c, ...rest } = e;
   return rest;
+}
+
+/** Ключевые реквизиты двух версий ЭСФ, которые различаются (для решения по конфликту; сырое XML — рядом). */
+export function diffInvoices(before: string, after: string): { field: string; before: string; after: string }[] {
+  const flat = (xml: string): Record<string, string> => {
+    try {
+      const p = parseInvoice(xml);
+      return {
+        'Номер': p.num, 'Дата': p.date, 'Дата оборота': p.turnoverDate, 'Вид': p.invoiceType,
+        'Продавец (БИН)': String(p.seller.tin ?? ''), 'Продавец': String(p.seller.name ?? ''), 'Покупатель (БИН)': String(p.customer.tin ?? ''),
+        'Валюта': p.currencyCode, 'Сумма без НДС': p.totals.priceWithoutTax, 'НДС': p.totals.ndsAmount, 'Сумма с НДС': p.totals.priceWithTax,
+        'Строк': String(p.products.length),
+      };
+    } catch {
+      return {};
+    }
+  };
+  const a = flat(before), b = flat(after);
+  return [...new Set([...Object.keys(a), ...Object.keys(b)])].filter((k) => a[k] !== b[k]).map((k) => ({ field: k, before: a[k] ?? '—', after: b[k] ?? '—' }));
 }

@@ -2,7 +2,7 @@
   <!-- FP-022: открытые оповещения обмена с ИС ЭСФ (кто действует и где инструкция) и, по запросу, метрики. -->
   <div v-if="health">
     <el-alert v-for="a in health.alerts" :key="a.id" :type="a.severity === 'CRITICAL' ? 'error' : 'warning'" :closable="false" show-icon class="alert" :title="a.message">
-      <div>Ответственный: {{ a.owner }}</div>
+      <div>Кто действует: {{ a.owner }}</div>
       <div class="muted">Инструкция: {{ a.runbook }} · открыто {{ fmtDateTime(a.openedAt) }}</div>
     </el-alert>
     <el-card v-if="detailed" shadow="never" class="card">

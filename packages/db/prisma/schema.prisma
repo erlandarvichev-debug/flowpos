@@ -465,6 +465,7 @@ model Uom {
 
   tenant   Tenant    @relation(fields: [tenantId], references: [id])
   products Product[]
+  barcodes ProductBarcode[]
 
   @@unique([tenantId, id])
   @@map("uoms")
@@ -482,6 +483,10 @@ model Product {
   barcode    String?
   parentId   String?     @map("parent_id")
   attributes Json?
+  /// FP-025: характеристики варианта в каноническом виде («Размер=M|Цвет=Красный»); одна комбинация на родителя
+  variantKey String?     @map("variant_key")
+  /// FP-025: код весового товара (PLU) для весовых штрихкодов; уникален у клиента
+  plu        String?
   // sync fields — 1С
   onecGuid   String?     @map("onec_guid") @db.Uuid
   onecBase   String      @default("default") @map("onec_base")
@@ -513,6 +518,8 @@ model Product {
 
   @@unique([tenantId, onecBase, onecGuid])
   @@unique([tenantId, msAccountId, msId])
+  @@unique([tenantId, plu])
+  @@unique([tenantId, parentId, variantKey])
   @@index([name])
   @@index([syncStatus])
   @@unique([tenantId, id])
@@ -527,17 +534,74 @@ enum ProductKind {
   VARIANT
 }
 
+/// Штрихкод товара. FP-025: уникален в пределах клиента (раньше — во всей БД: одинаковый EAN у двух клиентов
+/// не заводился). Штрихкод упаковки — с коэффициентом к базовой единице товара (коробка = 12 шт).
 model ProductBarcode {
-  id        String @id @default(uuid())
+  id        String   @id @default(uuid())
   tenantId       String  @default(dbgenerated("NULLIF(current_setting('flowpos.tenant_id', true), '')")) @map("tenant_id")
-  productId String @map("product_id")
-  barcode   String @unique
-  kind      String @default("EAN13")
+  productId String   @map("product_id")
+  barcode   String
+  kind      String   @default("EAN13") // EAN13 | EAN8 | UPCA | GTIN14 | CODE128
+  /// Сколько базовых единиц товара в одной отсканированной (1 — штучный; 12 — коробка)
+  factor    Decimal  @default(1) @db.Decimal(18, 6)
+  uomId     String?  @map("uom_id")    // единица упаковки (для отображения)
+  source    String   @default("MANUAL") // MANUAL | MOYSKLAD | ONEC | LEGACY
+  createdAt DateTime @default(now()) @map("created_at")
 
   product Product @relation(fields: [tenantId, productId], references: [tenantId, id], onDelete: Cascade)
+  uom     Uom?    @relation(fields: [tenantId, uomId], references: [tenantId, id])
 
-  @@index([barcode])
+  @@unique([tenantId, barcode])
+  @@index([productId])
   @@map("product_barcodes")
+}
+
+/// FP-025: настройки каталога клиента — весовые штрихкоды (EAN-13: префикс + PLU + вес в граммах + контрольная).
+model CatalogSettings {
+  tenantId          String   @id @default(dbgenerated("NULLIF(current_setting('flowpos.tenant_id', true), '')")) @map("tenant_id")
+  weightPrefixes    String[] @default([]) @map("weight_prefixes")
+  weightPluLength   Int      @default(5) @map("weight_plu_length")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+  updatedBy         String?  @map("updated_by")
+
+  @@map("catalog_settings")
+}
+
+/// FP-025: версии товара — неизменяемый снимок значимых полей при каждом изменении (заполняет триггер БД, в т.ч.
+/// при записи из обмена с 1С/МойСклад). Документы и ЭСФ видят, каким товар был на дату.
+model ProductVersion {
+  id        String   @id @default(uuid())
+  tenantId  String   @map("tenant_id")
+  productId String   @map("product_id")
+  version   Int
+  snapshot  Json
+  changed   String[]
+  changedBy String?  @map("changed_by")
+  traceId   String?  @default(dbgenerated("NULLIF(current_setting('flowpos.trace_id'::text, true), ''::text)")) @map("trace_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([productId, version])
+  @@index([tenantId, productId])
+  @@map("product_versions")
+}
+
+/// FP-025: сопоставление объекта FlowPOS с идентификатором во внешней системе. Внутренний id стабилен; внешний может
+/// смениться (пересоздание в МойСклад) — прежняя связь остаётся в истории как DETACHED.
+model ExternalMapping {
+  id          String    @id @default(uuid())
+  tenantId    String    @map("tenant_id")
+  entityType  String    @map("entity_type") // product
+  entityId    String    @map("entity_id")
+  system      String    // MOYSKLAD | ONEC
+  account     String    // аккаунт МойСклад / база 1С
+  externalId  String    @map("external_id")
+  status      String    @default("ACTIVE") // ACTIVE | DETACHED
+  firstSeenAt DateTime  @default(now()) @map("first_seen_at")
+  detachedAt  DateTime? @map("detached_at")
+
+  @@unique([tenantId, entityType, system, account, externalId])
+  @@index([tenantId, entityType, entityId])
+  @@map("external_mappings")
 }
 
 model PriceType {

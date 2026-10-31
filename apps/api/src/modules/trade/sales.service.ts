@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { OutboxService } from '../../common/outbox/outbox.service';
+import { resolveBarcode } from '../catalog/barcodes.service';
 import { Scope } from '../../common/scope';
 import { assertTradeRefs, docHeader, nextNumber, orgDocs } from './trade-scope';
 
@@ -163,11 +164,17 @@ export class SalesService {
 
     return this.prisma.$transaction(async (tx) => {
       // Штрихкод ищется только в справочнике своего клиента: одинаковый код у другого клиента — не наш товар.
+      // FP-025: штрихкод упаковки — количество в базовых единицах (qty × коэффициент), цена за базовую единицу,
+      // сумма — как оплачено; весовой штрихкод — количество = вес из этикетки (цена за кг).
       const resolvedItems = await Promise.all(
         items.map(async (i: any) => {
-          if (i.productId) return i;
-          const barcode = await tx.productBarcode.findFirst({ where: { barcode: i.barcode, tenantId: s.tenantId, product: { OR: [{ organizationId: null }, { organizationId: s.organizationId }] } } });
-          return { ...i, productId: barcode?.productId };
+          if (i.productId) return { ...i, amount: Number(i.qty) * Number(i.price) };
+          const r = await resolveBarcode(tx, s, i.barcode);
+          if (!r) return { ...i, productId: undefined, amount: Number(i.qty) * Number(i.price) };
+          if (r.weightKg) return { ...i, productId: r.productId, qty: Number(r.weightKg), amount: Number(r.weightKg) * Number(i.price) };
+          const factor = Number(r.factor);
+          const amount = Number(i.qty) * Number(i.price);
+          return factor === 1 ? { ...i, productId: r.productId, amount } : { ...i, productId: r.productId, qty: Number(i.qty) * factor, price: amount / (Number(i.qty) * factor), amount };
         }),
       );
       await assertTradeRefs(tx, s, { counterpartyId: rest.counterpartyId, storeIds: [storeId], productIds: resolvedItems.map((i) => i.productId) });
@@ -180,14 +187,14 @@ export class SalesService {
           storeId,
           ...rest,
           number,
-          total: resolvedItems.reduce((sum: number, i: any) => sum + i.qty * i.price, 0),
+          total: resolvedItems.reduce((sum: number, i: any) => sum + i.amount, 0),
           lines: {
             create: resolvedItems.map((i: any, idx: number) => ({
               lineNo: idx + 1,
               productId: i.productId,
               qty: i.qty,
               price: i.price,
-              amount: i.qty * i.price,
+              amount: i.amount,
             })),
           },
         },

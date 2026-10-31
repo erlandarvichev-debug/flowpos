@@ -95,11 +95,11 @@ ESF | P0 | QA/Methodologist | L | PLANNED
 Зависимости: FP-017,FP-018,FP-019,FP-020,FP-022. Приёмка: Документы приняты реальным тестовым контуром; duplicate/correction/timeout доказательства; sign-off.
 
 ## FP-024 · Ошибки карантин и контролируемый replay
-ESF | P1 | Backend/Support | M | DONE_LOCAL — см. `FP-024-ESF-QUARANTINE-REPLAY.md` (экран визуально не проверен; не выкладывалось)
+ESF | P1 | Backend/Support | M | DONE_LOCAL — см. `FP-024-ESF-QUARANTINE-REPLAY.md` (экран проверен визуально 31.10; не выкладывалось)
 Зависимости: FP-012,FP-017. Приёмка: Error taxonomy; причина исправления; audit replay; same key different hash не заметается.
 
 ## FP-025 · Товары варианты единицы штрихкоды
-Catalog | P1 | Backend | M | PLANNED
+Catalog | P1 | Backend | M | DONE_LOCAL — см. `FP-025-CATALOG-ITEMS-BARCODES.md` (не выкладывалось; узкий экран — отдельная задача)
 Зависимости: FP-009. Приёмка: Stable item ID; дубли и weight barcode; versions и external mappings.
 
 ## FP-026 · Контрагенты договоры и реквизиты

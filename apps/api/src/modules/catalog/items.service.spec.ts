@@ -63,6 +63,9 @@ describe('ItemsService', () => {
       expect(where.AND[0].OR).toEqual([
         { name: { contains: 'dell', mode: 'insensitive' } },
         { code: { contains: 'dell', mode: 'insensitive' } },
+        { article: { contains: 'dell', mode: 'insensitive' } },
+        { barcodes: { some: { barcode: 'dell' } } },
+        { plu: 'dell' },
       ]);
     });
 
@@ -104,9 +107,19 @@ describe('ItemsService', () => {
       await expect(service.create(s, { name: 'Чужой', uomId: 'uom1', organizationId: 'org2' })).rejects.toThrow(ForbiddenException);
     });
 
-    it('создаёт штрихкоды без чужих полей', async () => {
-      await service.create(s, { name: 'Товар', uomId: 'uom1', barcodes: [{ barcode: '123', tenantId: 'чужой', productId: 'p' }] });
-      expect(mockPrisma.product.create.mock.calls[0][0].data.barcodes).toEqual({ create: [{ barcode: '123' }] });
+    it('создаёт штрихкоды без чужих полей; тип — по содержимому; неверный EAN — ошибка', async () => {
+      await service.create(s, { name: 'Товар', uomId: 'uom1', barcodes: [{ barcode: ' 4870000000012 ', tenantId: 'чужой', productId: 'p' }, { barcode: '123' }] });
+      expect(mockPrisma.product.create.mock.calls[0][0].data.barcodes).toEqual({ create: [
+        { barcode: '4870000000012', kind: 'EAN13', source: 'MANUAL' },
+        { barcode: '123', kind: 'CODE128', source: 'MANUAL' },
+      ] });
+      await expect(service.create(s, { name: 'Товар', uomId: 'uom1', barcodes: [{ barcode: '4870000000015', kind: 'EAN13' }] })).rejects.toMatchObject({ response: { code: 'BARCODE_CHECK_DIGIT' } });
+    });
+
+    it('FP-025: идентификаторы обмена, статус и архив из тела не принимаются', async () => {
+      await service.create(s, { name: 'Товар', uomId: 'uom1', msId: 'x', onecGuid: 'y', syncStatus: 'SYNCED', deleted: true, owner: 'FLOWPOS' });
+      const data = mockPrisma.product.create.mock.calls[0][0].data;
+      for (const k of ['msId', 'onecGuid', 'syncStatus', 'deleted', 'owner']) expect(data).not.toHaveProperty(k);
     });
   });
 
@@ -114,7 +127,7 @@ describe('ItemsService', () => {
     it('обновляет товар своей области без полей области', async () => {
       mockPrisma.product.findFirst.mockResolvedValue(mockItem);
       await service.update(s, 'item1', { name: 'Новое имя', tenantId: 'чужой' });
-      expect(mockPrisma.product.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'item1' }, data: { name: 'Новое имя' } }));
+      expect(mockPrisma.product.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'item1' }, data: { name: 'Новое имя', updatedBy: 'u1' } }));
     });
 
     it('товар вне области не обновляется и не архивируется', async () => {
@@ -127,7 +140,7 @@ describe('ItemsService', () => {
     it('архивирует товар', async () => {
       mockPrisma.product.findFirst.mockResolvedValue(mockItem);
       await service.archive(s, 'item1');
-      expect(mockPrisma.product.update).toHaveBeenCalledWith({ where: { id: 'item1' }, data: { deleted: true } });
+      expect(mockPrisma.product.update).toHaveBeenCalledWith({ where: { id: 'item1' }, data: { deleted: true, updatedBy: 'u1' } });
     });
   });
 

@@ -239,11 +239,34 @@ export class MsPullService {
         where: { id: existing.id },
         data: { name: item.name, code: item.code, article: item.article, barcode, groupId, uomId, deleted, msUpdated: new Date(item.updated), syncStatus: 'SYNCED', updatedAt: new Date() },
       });
+      await this.syncBarcodes(tx, sc.tenantId, existing.id, item);
     } else {
-      await tx.product.create({
+      const created = await tx.product.create({
         data: { tenantId: sc.tenantId, name: item.name, code: item.code, article: item.article, barcode, groupId, uomId: uomId || '', msId: item.id, msAccountId: accountId, msConnectionId: connectionId, msUpdated: new Date(item.updated), syncStatus: 'SYNCED', owner: 'C1', deleted },
       });
+      await this.syncBarcodes(tx, sc.tenantId, created.id, item);
     }
+  }
+
+  /**
+   * FP-025: все штрихкоды товара МойСклад — в таблицу штрихкодов, по которой касса ищет товар (раньше сохранялся только
+   * первый и только в поле товара). Код, уже занятый другим товаром клиента, не перехватывается — предупреждение в лог,
+   * дубль виден в отчёте каталога. Убранные в МойСклад коды (полученные из МойСклад) удаляются.
+   */
+  private async syncBarcodes(tx: any, tenantId: string, productId: string, item: MsProduct) {
+    const KIND: Record<string, string> = { ean13: 'EAN13', ean8: 'EAN8', code128: 'CODE128', gtin: 'GTIN14', upc: 'UPCA' };
+    const codes = new Map<string, string>();
+    for (const b of item.barcodes ?? []) {
+      for (const [k, v] of Object.entries(b ?? {})) {
+        const code = String(v ?? '').replace(/\s+/g, '');
+        if (code && !codes.has(code)) codes.set(code, KIND[k] ?? 'CODE128');
+      }
+    }
+    await tx.productBarcode.deleteMany({ where: { tenantId, productId, source: 'MOYSKLAD', barcode: { notIn: [...codes.keys()] } } });
+    if (!codes.size) return;
+    await tx.productBarcode.createMany({ data: [...codes].map(([barcode, kind]) => ({ tenantId, productId, barcode, kind, source: 'MOYSKLAD' })), skipDuplicates: true });
+    const taken = await tx.productBarcode.findMany({ where: { tenantId, barcode: { in: [...codes.keys()] }, productId: { not: productId } }, select: { barcode: true } });
+    for (const t of taken) this.logger.warn(`Штрихкод ${t.barcode} товара МойСклад ${item.id} уже у другого товара клиента — не перенесён`);
   }
 
   private async upsertCounterparty(tx: any, sc: SyncScope, item: MsCounterparty, connectionId: string, accountId: string) {
