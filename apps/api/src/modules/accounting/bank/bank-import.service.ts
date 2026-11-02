@@ -16,11 +16,12 @@ export interface StatementMapping {
   counterpartyBin?: string;
   purpose?: string;
   knp?: string;
+  reference?: string;      // FP-036: номер операции в банке (уникален на счёте) — лучший ключ строки
 }
 
 const DEFAULT_MAPPING: StatementMapping = {
   date: 'Дата', debit: 'Дебет', credit: 'Кредит', docNumber: 'Номер документа',
-  counterpartyName: 'Контрагент', counterpartyBin: 'БИН/ИИН', purpose: 'Назначение платежа', knp: 'КНП',
+  counterpartyName: 'Контрагент', counterpartyBin: 'БИН/ИИН', purpose: 'Назначение платежа', knp: 'КНП', reference: 'Референс',
 };
 
 function parseCsv(text: string): string[][] {
@@ -78,12 +79,13 @@ export class BankImportService {
     if (rows.length < 2) throw new AccError('EMPTY_STATEMENT', 'В файле нет строк выписки', { fix: 'Первая строка — заголовки колонок, далее операции.' });
     const header = rows[0].map((h) => h.toLowerCase());
     const col = (name?: string) => (name ? header.indexOf(name.toLowerCase()) : -1);
-    const ci = { date: col(map.date), amount: col(map.amount), debit: col(map.debit), credit: col(map.credit), num: col(map.docNumber), name: col(map.counterpartyName), bin: col(map.counterpartyBin), purpose: col(map.purpose), knp: col(map.knp) };
+    const ci = { date: col(map.date), amount: col(map.amount), debit: col(map.debit), credit: col(map.credit), num: col(map.docNumber), name: col(map.counterpartyName), bin: col(map.counterpartyBin), purpose: col(map.purpose), knp: col(map.knp), ref: col(map.reference) };
     if (ci.date < 0 || (ci.amount < 0 && ci.debit < 0 && ci.credit < 0)) {
       throw new AccError('MAPPING_REQUIRED', `Не найдены колонки даты и суммы. В файле: ${rows[0].join(' | ')}`, { fix: 'Укажите соответствие колонок (mapping).' });
     }
     const counterparties = await this.prisma.counterparty.findMany({ where: { inn: { not: null }, OR: [{ organizationId: null }, { organizationId: ctx.organizationId }] }, select: { id: true, name: true, inn: true } });
     const out: any[] = [];
+    const occ = new Map<string, number>(); // сколько раз такая же строка уже встретилась в этом файле
     rows.slice(1).forEach((r, i) => {
       const get = (k: number) => (k >= 0 ? r[k] ?? '' : '');
       const date = parseDate(get(ci.date));
@@ -101,15 +103,24 @@ export class BankImportService {
       if (!amount || !direction) errors.push('сумма не распознана');
       const bin = get(ci.bin).replace(/\D/g, '') || null;
       const cp = bin ? counterparties.find((c) => c.inn === bin) : undefined;
-      const fields = { date: date?.toISOString().slice(0, 10), direction, amount, docNumber: get(ci.num) || null, counterpartyName: get(ci.name) || null, counterpartyBin: bin, purpose: get(ci.purpose) || null, knp: get(ci.knp) || null };
-      const hash = createHash('sha256').update(JSON.stringify([fields.date, fields.direction, fields.amount, fields.docNumber, fields.counterpartyBin, fields.purpose])).digest('hex');
-      out.push({ row: i + 2, ...fields, hash, counterpartyId: cp?.id ?? null, counterpartyMatched: cp?.name ?? null, errors });
+      const reference = get(ci.ref) || null;
+      const fields = { date: date?.toISOString().slice(0, 10), direction, amount, docNumber: get(ci.num) || null, counterpartyName: get(ci.name) || null, counterpartyBin: bin, purpose: get(ci.purpose) || null, knp: get(ci.knp) || null, reference };
+      // FP-036: ключ строки на счёте. Есть номер операции банка — по нему. Нет — содержимое строки + какая по счёту такая
+      // же строка в файле: две одинаковые оплаты за день — разные строки, повторная загрузка того же файла — те же ключи.
+      const content = createHash('sha256').update(JSON.stringify([fields.date, fields.direction, fields.amount, fields.docNumber, fields.counterpartyBin, fields.purpose])).digest('hex');
+      const n = (occ.get(content) ?? 0) + 1;
+      occ.set(content, n);
+      const hash = reference ? createHash('sha256').update('ref:' + reference).digest('hex') : n === 1 ? content : `${content}#${n}`;
+      out.push({ row: i + 2, ...fields, hash, occurrence: reference ? 1 : n, counterpartyId: cp?.id ?? null, counterpartyMatched: cp?.name ?? null, errors });
     });
-    const existing = await this.prisma.accBankStatementLine.findMany({ where: { organizationId: ctx.organizationId, bankAccountId: bank.id, hash: { in: out.map((o) => o.hash) } }, select: { hash: true } });
-    const dup = new Set(existing.map((e) => e.hash));
+    const existing = await this.prisma.accBankStatementLine.findMany({ where: { organizationId: ctx.organizationId, bankAccountId: bank.id, hash: { in: out.map((o) => o.hash) } }, select: { hash: true, status: true, documentId: true } });
+    const dup = new Map(existing.map((e) => [e.hash, e]));
     const seen = new Set<string>();
     for (const o of out) {
-      o.duplicate = dup.has(o.hash) || seen.has(o.hash);
+      const prev = dup.get(o.hash);
+      // Строка уже загружена, но документ по ней не создан (загрузка оборвалась) — дозачислить, а не пропустить.
+      o.resume = !!prev && prev.status === 'NEW' && !prev.documentId && !seen.has(o.hash);
+      o.duplicate = (!!prev && !o.resume) || seen.has(o.hash);
       seen.add(o.hash);
       o.action = o.errors.length ? 'ERROR' : o.duplicate ? 'SKIP_DUPLICATE' : o.counterpartyId ? (o.direction === 'IN' ? 'CUSTOMER_PAYMENT' : 'SUPPLIER_PAYMENT') : 'DRAFT_OTHER';
     }
@@ -129,30 +140,45 @@ export class BankImportService {
   async commit(ctx: OrgContext, input: { bankAccountId: string; csv: string; mapping?: Partial<StatementMapping>; autoPost?: boolean }) {
     const pv = await this.preview(ctx, input);
     const batchId = randomUUID();
-    const result = { batchId, created: 0, posted: 0, drafts: 0, skipped: 0, errors: [] as { row: number; message: string }[] };
+    const result = { batchId, created: 0, posted: 0, drafts: 0, skipped: 0, resumed: 0, errors: [] as { row: number; message: string }[] };
     for (const r of pv.rows) {
       if (r.action === 'ERROR' || r.action === 'SKIP_DUPLICATE') { result.skipped++; continue; }
       // Защита от дублей на уровне БД: уникальный хэш; гонка двух загрузок — вторая пропустит строку
-      const line = await this.prisma.accBankStatementLine.create({
+      let line = await this.prisma.accBankStatementLine.create({
         data: {
           organizationId: ctx.organizationId, bankAccountId: input.bankAccountId, batchId, hash: r.hash, date: new Date(r.date), direction: r.direction,
           amount: money(r.amount), docNumber: r.docNumber, counterpartyName: r.counterpartyName, counterpartyBin: r.counterpartyBin,
-          counterpartyId: r.counterpartyId, purpose: r.purpose, knp: r.knp, raw: r,
+          counterpartyId: r.counterpartyId, purpose: r.purpose, knp: r.knp, raw: r, reference: r.reference, occurrence: r.occurrence,
         },
       }).catch((e: any) => (e?.code === 'P2002' ? null : Promise.reject(e)));
-      if (!line) { result.skipped++; continue; }
+      if (!line) {
+        // Уже есть (параллельная загрузка или прошлая): без документа — дозачисляем по той же строке, иначе пропуск.
+        const prev = await this.prisma.accBankStatementLine.findUnique({ where: { organizationId_bankAccountId_hash: { organizationId: ctx.organizationId, bankAccountId: input.bankAccountId, hash: r.hash } } });
+        if (!prev || prev.status !== 'NEW' || prev.documentId) { result.skipped++; continue; }
+        line = prev;
+        result.resumed++;
+      }
       const docType = r.direction === 'IN' ? 'BANK_IN' : 'BANK_OUT';
       const operation = r.counterpartyId ? (r.direction === 'IN' ? 'CUSTOMER' : 'SUPPLIER') : 'OTHER';
+      const externalId = `${input.bankAccountId}:${r.hash}`;
+      // Документ по строке — один (уникальный внешний номер в БД): параллельная загрузка получит уже созданный.
       const doc = await this.docs.create(ctx, {
         docType, date: r.date, comment: `Выписка: ${r.counterpartyName ?? ''} ${r.purpose ?? ''}`.trim(),
         body: { bankAccountId: input.bankAccountId, operation, counterpartyId: r.counterpartyId ?? undefined, amount: r.amount, purpose: r.purpose, knp: r.knp, statementLineId: line.id },
-        externalSource: 'BANK_STATEMENT', externalId: `${input.bankAccountId}:${r.hash}`,
+        externalSource: 'BANK_STATEMENT', externalId,
+      }).catch(async (e: any) => {
+        const dup = e?.code === 'P2002' ? await this.prisma.accDocument.findFirst({ where: { organizationId: ctx.organizationId, externalSource: 'BANK_STATEMENT', externalId } }) : null;
+        if (!dup) throw e;
+        return dup;
       });
       result.created++;
       await this.prisma.accBankStatementLine.update({ where: { id: line.id }, data: { status: 'DOCUMENT_CREATED', documentId: doc.id } });
       if (doc.status === 'POSTED') result.posted++; // документ из прошлой загрузки уже проведён
       else if (operation !== 'OTHER' && input.autoPost !== false) {
-        try { await this.docs.post(ctx, doc.id); result.posted++; } catch (e: any) { result.drafts++; result.errors.push({ row: r.row, message: e?.getResponse?.()?.message ?? e.message }); }
+        try { await this.docs.post(ctx, doc.id); result.posted++; } catch (e: any) {
+          if (e?.getResponse?.()?.code === 'DOC_ALREADY_POSTED') { result.posted++; continue; } // провела параллельная загрузка
+          result.drafts++; result.errors.push({ row: r.row, message: e?.getResponse?.()?.message ?? e.message });
+        }
       } else result.drafts++;
     }
     await this.prisma.auditLog.create({ data: { userId: ctx.userId, organizationId: ctx.organizationId, action: 'BANK_STATEMENT_IMPORT', entity: 'AccBankStatementLine', entityId: batchId, after: result as any } });

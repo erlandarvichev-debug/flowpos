@@ -10,6 +10,7 @@ import { MONEY_RULES } from '../core/rules/money-rules';
 import { DEFAULT_ACCOUNTS } from '../autopilot/accounts';
 import { accHash } from './content-hash';
 import { ApprovalsService } from '../approvals/approvals.service';
+import { syncAllocations } from '../bank/allocations';
 
 MONEY_RULES.forEach(registerRule);
 
@@ -216,15 +217,28 @@ export class DocumentsService {
       });
       await this.version(tx, ctx, updated, 'UPDATE', input.reason);
       await this.approvals.supersede(tx, ctx.organizationId, 'ACC', id); // FP-029: изменение отменяет согласования
-      if (updated.status === 'POSTED') await this.writePostings(tx, ctx, updated);
+      if (updated.status === 'POSTED') {
+        await this.writePostings(tx, ctx, updated);
+        await this.allocations(tx, ctx, id, input.reason || 'Изменение проведённого платежа');
+      }
       return updated;
     });
   }
 
+  private async accountsFor(tx: Tx, ctx: OrgContext, date: Date) {
+    const policy = await tx.accPolicy.findFirst({ where: { organizationId: ctx.organizationId, validFrom: { lte: date } }, orderBy: { validFrom: 'desc' } });
+    return { ...DEFAULT_ACCOUNTS, ...(((policy?.params as any) ?? {}).accounts ?? {}) };
+  }
+
+  /** FP-036: журнал разнесения оплаты — сверить с проводками документа (после проведения / отмены). */
+  private async allocations(tx: Tx, ctx: OrgContext, id: string, reason: string) {
+    const doc = await tx.accDocument.findUniqueOrThrow({ where: { id } });
+    await syncAllocations(tx, ctx, doc, await this.accountsFor(tx, ctx, doc.date), reason);
+  }
+
   private async writePostings(tx: Tx, ctx: OrgContext, doc: any) {
     const rule = ruleFor(doc.docType);
-    const policy = await tx.accPolicy.findFirst({ where: { organizationId: ctx.organizationId, validFrom: { lte: doc.date } }, orderBy: { validFrom: 'desc' } });
-    const accounts = { ...DEFAULT_ACCOUNTS, ...(((policy?.params as any) ?? {}).accounts ?? {}) };
+    const accounts = await this.accountsFor(tx, ctx, doc.date);
     const postings = await rule.build(doc, { tx, organizationId: ctx.organizationId, posting: this.posting, accounts });
     return this.posting.writeEntry(tx, ctx, {
       sourceType: SOURCE, sourceId: doc.id, sourceVersion: doc.version,
@@ -247,6 +261,7 @@ export class DocumentsService {
       if (doc.status !== 'POSTED') await this.approvals.consumeForPost(tx, ctx, await this.approvals.docState(tx, ctx, 'ACC', id));
       await this.writePostings(tx, ctx, doc);
       const posted = await tx.accDocument.update({ where: { id }, data: { status: 'POSTED', postedAt: new Date(), postedVersion: doc.version, updatedById: ctx.userId } });
+      await this.allocations(tx, ctx, id, 'Проведение');
       await this.version(tx, ctx, posted, 'POST');
       return this.withEntry(tx, ctx, posted);
     });
@@ -293,6 +308,7 @@ export class DocumentsService {
       await this.periods.assertOpen(tx, ctx, [doc.date], opts.override, 'отмена проведения');
       await this.posting.cancelSource(tx, ctx.organizationId, SOURCE, id);
       const d = await tx.accDocument.update({ where: { id }, data: { status: 'DRAFT', postedVersion: null, updatedById: ctx.userId } });
+      await this.allocations(tx, ctx, id, opts.reason || 'Снятие проведения');
       await this.version(tx, ctx, d, 'UNPOST', opts.reason);
       return d;
     });
@@ -309,6 +325,7 @@ export class DocumentsService {
         await this.posting.cancelSource(tx, ctx.organizationId, SOURCE, id);
       }
       const d = await tx.accDocument.update({ where: { id }, data: { status: 'CANCELLED', postedVersion: null, updatedById: ctx.userId } });
+      await this.allocations(tx, ctx, id, opts.reason || 'Пометка на удаление');
       await this.version(tx, ctx, d, 'CANCEL', opts.reason);
       return d;
     });

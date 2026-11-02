@@ -324,6 +324,12 @@ export class TradeDocumentsService {
    * не менять и не снимать, пока проведены зависимые.
    */
   private async assertNoLandedCosts(tx: Tx, doc: { id: string; docType: string; number: string | null; attributes?: any }) {
+    // FP-036: на документ разнесены оплаты — не менять и не снимать, пока оплаты не перенесены (иначе оплата повиснет).
+    const paid = await tx.paymentAllocation.findMany({ where: { settlementDocId: doc.id, status: 'ACTIVE', kind: 'DEBT' }, select: { paymentDocId: true, amount: true } });
+    if (paid.length) {
+      const docs = await tx.accDocument.findMany({ where: { id: { in: paid.map((p) => p.paymentDocId) } }, select: { number: true } });
+      throw new AccError('PAYMENTS_ALLOCATED', `На документ ${doc.number ?? ''} разнесены оплаты ${docs.map((d) => d.number).join(', ')} — сначала перенесите или снимите их`, { status: 409, fix: 'Откройте платёж, укажите разнесение на другой документ (или снимите проведение платежа), затем меняйте этот документ.' });
+    }
     if (doc.docType === 'MOVE' && doc.attributes?.twoStage) {
       const rec = await tx.document.findMany({ where: { docType: 'MOVE', status: 'POSTED', deleted: false, attributes: { path: ['baseId'], equals: doc.id } }, select: { number: true } });
       if (rec.length) throw new AccError('TRANSFER_RECEIVED_DEPENDS', `По перемещению ${doc.number ?? ''} проведены приёмки ${rec.map((d) => d.number).join(', ')}`, { status: 409, fix: 'Сначала снимите с проведения приёмки, затем меняйте отгрузку.' });

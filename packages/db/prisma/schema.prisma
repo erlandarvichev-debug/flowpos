@@ -2544,12 +2544,39 @@ model AccAutopilotCursor {
 }
 
 // Импорт банковской выписки: строки с защитой от повторной загрузки
+/// FP-036: разнесение оплаты по документам расчётов — журнал. Строка неизменна; при снятии проведения, изменении или
+/// пометке на удаление платежа прежние строки отменяются (REVERSED, кто, когда, причина), при новом проведении — новые.
+model PaymentAllocation {
+  id               String    @id @default(uuid())
+  organizationId   String    @map("organization_id")
+  paymentDocId     String    @map("payment_doc_id")
+  paymentVersion   Int       @map("payment_version")
+  counterpartyId   String    @map("counterparty_id")
+  account          String    // счёт расчётов: 1210/3310 (долг) или 3510/1710 (аванс)
+  kind             String    // DEBT | ADVANCE
+  settlementDocId  String?   @map("settlement_doc_id") // документ, долг которого погашен (null — без документа / аванс)
+  amount           Decimal   @db.Decimal(18, 2)
+  manual           Boolean   @default(false)
+  status           String    @default("ACTIVE") // ACTIVE | REVERSED
+  createdBy        String?   @map("created_by")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  reversedAt       DateTime? @map("reversed_at")
+  reversedBy       String?   @map("reversed_by")
+  reverseReason    String?   @map("reverse_reason")
+
+  @@index([organizationId, paymentDocId])
+  @@index([organizationId, settlementDocId])
+  @@map("payment_allocations")
+}
+
 model AccBankStatementLine {
   id             String    @id @default(uuid())
   organizationId String    @map("organization_id")
   bankAccountId  String    @map("bank_account_id")
   batchId        String    @map("batch_id")
-  hash           String    // дата+сумма+номер+контрагент+назначение
+  hash           String    // ключ строки на счёте: номер операции банка или содержимое + номер повтора в файле (FP-036)
+  reference      String?   // номер операции в банке (если есть в выписке)
+  occurrence     Int       @default(1) // какая по счёту одинаковая строка в файле (две одинаковые оплаты за день)
   date           DateTime  @db.Date
   direction      String    // IN | OUT
   amount         Decimal   @db.Decimal(18, 2)

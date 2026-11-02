@@ -203,6 +203,44 @@ export class PostingService {
     await tx.accStockMove.updateMany({ where: { entryId }, data: { isActive: false } });
   }
 
+  /**
+   * FP-036: открытые позиции счёта расчётов по документам (SETTLEMENT_DOC): сальдо Дт − Кт по каждому документу расчётов
+   * (null — расчёты без документа, старые проводки), дата первой проводки. Без записи текущего источника.
+   */
+  async openItems(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+    accountCode: string,
+    date: Date,
+    dims: Partial<Record<Dim, string>> = {},
+    exclude?: { sourceType: string; sourceId: string },
+  ): Promise<{ settlementDocId: string | null; balance: Prisma.Decimal; firstDate: Date }[]> {
+    const chartId = await this.chartIdFor(tx, organizationId, date);
+    const root = await tx.accAccount.findFirst({ where: { chartId, code: accountCode, OR: [{ organizationId: null }, { organizationId }] } });
+    if (!root) return [];
+    const ids = [root.id];
+    let frontier = [root.id];
+    while (frontier.length) {
+      const kids = await tx.accAccount.findMany({ where: { parentId: { in: frontier }, OR: [{ organizationId: null }, { organizationId }] }, select: { id: true } });
+      frontier = kids.map((k) => k.id);
+      ids.push(...frontier);
+    }
+    const where: Prisma.AccPostingWhereInput = { organizationId, isActive: true, ledger: 'BU', accountId: { in: ids }, date: { lte: date } };
+    for (const [dim, v] of Object.entries(dims)) if (v) (where as any)[DIM_COLUMNS[dim as Dim]] = v;
+    if (exclude) where.entry = { NOT: { sourceType: exclude.sourceType, sourceId: exclude.sourceId } };
+    const rows = await tx.accPosting.groupBy({ by: ['settlementDocId', 'side'], where, _sum: { amount: true }, _min: { date: true } });
+    const m = new Map<string, { settlementDocId: string | null; balance: Prisma.Decimal; firstDate: Date }>();
+    for (const r of rows) {
+      const k = r.settlementDocId ?? '';
+      const cur = m.get(k) ?? { settlementDocId: r.settlementDocId, balance: new D(0), firstDate: r._min.date! };
+      const amt = new D(r._sum.amount ?? 0);
+      cur.balance = r.side === 'D' ? cur.balance.plus(amt) : cur.balance.minus(amt);
+      if (r._min.date && r._min.date < cur.firstDate) cur.firstDate = r._min.date;
+      m.set(k, cur);
+    }
+    return [...m.values()].filter((x) => !x.balance.isZero());
+  }
+
   /** Сальдо счёта (со субсчетами) по аналитикам на дату включительно, без записи текущего источника. Дт − Кт. */
   async balance(
     tx: Prisma.TransactionClient,

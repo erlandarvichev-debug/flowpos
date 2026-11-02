@@ -143,7 +143,7 @@ Purchases | P1 | Backend/Frontend | L | DONE_LOCAL — см. `FP-035-PURCHASING.
 Зависимости: FP-026,FP-030,FP-029. Приёмка: Budget approval; qty expected/received; расхождения и возврат поставщику.
 
 ## FP-036 · Банк касса авансы и разнесение
-Treasury | P1 | Backend | L | PLANNED
+Treasury | P1 | Backend | L | DONE_LOCAL — см. `FP-036-TREASURY.md` (не выкладывалось)
 Зависимости: FP-028,FP-026. Приёмка: Bank key scoped by account; дубли не зачисляют дважды; allocation/reversal audited.
 
 ## FP-037 · Платёжный календарь и заявки

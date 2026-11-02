@@ -70,7 +70,7 @@ function makeMoneyRule(docType: 'BANK_IN' | 'BANK_OUT' | 'CASH_IN' | 'CASH_OUT',
         case 'SUPPLIER': {
           if (!b.counterpartyId) throw new AccError('COUNTERPARTY_REQUIRED', 'Укажите контрагента', { fix: 'Выберите покупателя или поставщика.' });
           return settlementPostings({ tx, organizationId: rc.organizationId, posting: rc.posting!, accounts: rc.accounts! }, incoming ? 'IN' : 'OUT', t.amount, m,
-            { COUNTERPARTY: b.counterpartyId, CONTRACT: b.contractId }, doc.date, { sourceType: 'ACC_DOCUMENT', sourceId: doc.id });
+            { COUNTERPARTY: b.counterpartyId, CONTRACT: b.contractId }, doc.date, { sourceType: 'ACC_DOCUMENT', sourceId: doc.id }, undefined, b.allocations);
         }
         case 'TRANSFER':
         case 'FROM_BANK': {

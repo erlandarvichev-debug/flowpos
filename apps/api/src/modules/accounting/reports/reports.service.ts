@@ -253,6 +253,33 @@ export class ReportsService {
   }
 
   /** Взаиморасчёты: долги покупателей/поставщикам и авансы по контрагентам на дату. */
+  /**
+   * FP-036: открытые позиции контрагента по документам расчётов (для ручного разнесения оплаты): покупатель — долг
+   * перед нами (1210), поставщик — наш долг (3310); документ, дата, сумма документа, остаток долга.
+   */
+  async openItems(ctx: OrgContext, q: { counterpartyId?: string; side?: string; date?: string; excludeDocId?: string }) {
+    if (!q.counterpartyId) throw new AccError('COUNTERPARTY_REQUIRED', 'Укажите контрагента');
+    const incoming = q.side !== 'OUT';
+    const account = incoming ? '1210' : '3310';
+    const date = q.date ? new Date(q.date + 'T00:00:00.000Z') : new Date('2999-12-31T00:00:00.000Z');
+    const items = await this.posting.openItems(this.prisma as any, ctx.organizationId, account, date, { COUNTERPARTY: q.counterpartyId },
+      q.excludeDocId ? { sourceType: 'ACC_DOCUMENT', sourceId: q.excludeDocId } : undefined);
+    const ids = items.map((i) => i.settlementDocId).filter(Boolean) as string[];
+    const docs = await this.prisma.document.findMany({ where: { id: { in: ids } }, select: { id: true, number: true, date: true, docType: true, total: true } });
+    return items
+      .map((i) => ({ ...i, debt: incoming ? i.balance : i.balance.neg() }))
+      .filter((i) => i.debt.gt(0))
+      .sort((x, y) => x.firstDate.getTime() - y.firstDate.getTime())
+      .map((i) => ({ settlementDocId: i.settlementDocId, debt: i.debt.toFixed(2), firstDate: i.firstDate, document: docs.find((d) => d.id === i.settlementDocId) ?? null }));
+  }
+
+  /** FP-036: журнал разнесения платежа — действующие и отменённые строки (кто, когда, причина). */
+  async allocations(ctx: OrgContext, paymentDocId: string) {
+    const rows = await this.prisma.paymentAllocation.findMany({ where: { organizationId: ctx.organizationId, paymentDocId }, orderBy: [{ createdAt: 'asc' }, { amount: 'desc' }] });
+    const docs = await this.prisma.document.findMany({ where: { id: { in: rows.map((r) => r.settlementDocId).filter(Boolean) as string[] } }, select: { id: true, number: true, date: true, docType: true } });
+    return rows.map((r) => ({ ...r, amount: r.amount.toFixed(2), document: docs.find((d) => d.id === r.settlementDocId) ?? null }));
+  }
+
   async settlements(ctx: OrgContext, q: { date?: string }) {
     const date = q.date ?? new Date().toISOString().slice(0, 10);
     const toNext = ts(new Date(new Date(date + 'T00:00:00.000Z').getTime() + 86400000));

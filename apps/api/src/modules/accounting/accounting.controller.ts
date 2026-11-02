@@ -425,6 +425,13 @@ export class AccountingController {
   @Get('document-graph/:type/:id') @RequirePermission('acc.doc.read')
   docGraph(@Org() ctx: OrgContext, @Param('type') type: string, @Param('id') id: string, @Query('depth') depth?: string) { return this.graph.graph(ctx, type, id, depth); }
 
+  // ── FP-036: открытые позиции и журнал разнесения ──
+  @Get('open-items') @RequirePermission('acc.doc.read')
+  openItems(@Org() ctx: OrgContext, @Query() q: any) { return this.reports.openItems(ctx, q); }
+
+  @Get('documents/:id/allocations') @RequirePermission('acc.doc.read')
+  docAllocations(@Org() ctx: OrgContext, @Param('id') id: string) { return this.reports.allocations(ctx, id); }
+
   @Get('documents/:id') @RequirePermission('acc.doc.read')
   get(@Org() ctx: OrgContext, @Param('id') id: string) { return this.docs.get(ctx, id); }
 

@@ -307,6 +307,14 @@ export async function buildTradeEntry(doc: TradeDoc, rc: TradeRuleCtx): Promise<
  * IN (от покупателя): Дт деньги / Кт 1210 (долг) + Кт 3510 (аванс).
  * OUT (поставщику):   Дт 3310 (долг) + Дт 1710 (аванс) / Кт деньги.
  */
+/** FP-036: ручное разнесение оплаты: документ расчётов и сумма. */
+export interface Allocation { docId: string; amount: string | number }
+
+/**
+ * Оплата с разнесением по документам расчётов (FP-036). IN — от покупателя (долг 1210 → аванс 3510), OUT — поставщику
+ * (3310 → 1710). Долг гасится по документам: заданным вручную (allocations) или автоматически — от самого старого
+ * по дате первой проводки (долг без документа — старые проводки — по своей дате). Остаток — аванс.
+ */
 export async function settlementPostings(
   rc: Pick<TradeRuleCtx, 'tx' | 'organizationId' | 'posting' | 'accounts'>,
   direction: 'IN' | 'OUT',
@@ -316,20 +324,52 @@ export async function settlementPostings(
   date: Date,
   exclude: { sourceType: string; sourceId: string },
   partyAccounts?: { debt: string; advance: string },
+  allocations?: Allocation[] | null,
 ): Promise<PostingInput[]> {
   const a = rc.accounts;
   const debtAcc = partyAccounts?.debt ?? (direction === 'IN' ? a.receivable : a.payable);
   const advAcc = partyAccounts?.advance ?? (direction === 'IN' ? a.advanceReceived : a.advancePaid);
-  const bal = await rc.posting.balance(rc.tx, rc.organizationId, debtAcc, date, { COUNTERPARTY: cp.COUNTERPARTY, CONTRACT: cp.CONTRACT }, exclude);
-  const debt = direction === 'IN' ? bal : bal.neg(); // 1210 — дебетовое сальдо; 3310 — кредитовое
-  const toDebt = D.max(new D(0), D.min(debt, amount));
+  const items = (await rc.posting.openItems(rc.tx, rc.organizationId, debtAcc, date, { COUNTERPARTY: cp.COUNTERPARTY, CONTRACT: cp.CONTRACT }, exclude))
+    .map((x) => ({ ...x, debt: direction === 'IN' ? x.balance : x.balance.neg() })) // 1210 — дебетовое сальдо; 3310 — кредитовое
+    .filter((x) => x.debt.gt(0))
+    .sort((x, y) => x.firstDate.getTime() - y.firstDate.getTime() || String(x.settlementDocId).localeCompare(String(y.settlementDocId)));
+  const plan: { docId: string | null; amount: Dec }[] = [];
+  if (allocations && allocations.length) {
+    let total = new D(0);
+    const seen = new Set<string>();
+    for (const [i, al] of allocations.entries()) {
+      let v: Dec;
+      try { v = new D(String(al.amount)).toDecimalPlaces(2); } catch { throw new AccError('ALLOC_BAD_AMOUNT', `Разнесение, строка ${i + 1}: сумма — число`); }
+      if (!v.isFinite() || v.lte(0)) throw new AccError('ALLOC_BAD_AMOUNT', `Разнесение, строка ${i + 1}: сумма больше нуля`);
+      if (seen.has(al.docId)) throw new AccError('ALLOC_DUPLICATE', `Разнесение, строка ${i + 1}: документ указан дважды`);
+      seen.add(al.docId);
+      const it = items.find((x) => x.settlementDocId === al.docId);
+      if (!it) throw new AccError('ALLOC_NOT_OPEN', `Разнесение, строка ${i + 1}: по документу нет долга этого контрагента`, { fix: 'Выберите документ из открытых позиций контрагента.' });
+      if (v.gt(it.debt)) throw new AccError('ALLOC_EXCEEDS_DEBT', `Разнесение, строка ${i + 1}: долг по документу ${it.debt.toFixed(2)}, разносится ${v.toFixed(2)}`);
+      total = total.plus(v);
+      plan.push({ docId: al.docId, amount: v });
+    }
+    if (total.gt(amount)) throw new AccError('ALLOC_EXCEEDS_PAYMENT', `Разнесено ${total.toFixed(2)} — больше суммы оплаты ${amount.toFixed(2)}`);
+  } else {
+    let left = amount;
+    for (const it of items) {
+      if (left.lte(0)) break;
+      const v = D.min(left, it.debt);
+      plan.push({ docId: it.settlementDocId, amount: v });
+      left = left.minus(v);
+    }
+  }
+  const toDebt = plan.reduce((s, x) => s.plus(x.amount), new D(0));
   const toAdv = amount.minus(toDebt);
   const P: PostingInput[] = [];
   const partyDims = { COUNTERPARTY: cp.COUNTERPARTY, CONTRACT: cp.CONTRACT };
   const moneySide = direction === 'IN' ? 'D' : 'C';
   const partySide = direction === 'IN' ? 'C' : 'D';
   P.push({ side: moneySide, account: money.account, amount: amount.toFixed(2), dims: money.dims, currency: money.currency, currencyAmount: money.currencyAmount, memo: direction === 'IN' ? 'Поступление оплаты' : 'Оплата поставщику' });
-  if (toDebt.gt(0)) P.push({ side: partySide, account: debtAcc, amount: toDebt.toFixed(2), dims: partyDims, memo: 'Погашение задолженности' });
+  for (const x of plan) {
+    if (x.amount.isZero()) continue;
+    P.push({ side: partySide, account: debtAcc, amount: x.amount.toFixed(2), dims: { ...partyDims, ...(x.docId ? { SETTLEMENT_DOC: x.docId } : {}) }, memo: 'Погашение задолженности' });
+  }
   if (toAdv.gt(0)) P.push({ side: partySide, account: advAcc, amount: toAdv.toFixed(2), dims: partyDims, memo: direction === 'IN' ? 'Аванс полученный' : 'Аванс выданный' });
   return P;
 }

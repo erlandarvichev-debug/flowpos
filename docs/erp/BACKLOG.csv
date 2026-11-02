@@ -34,7 +34,7 @@ FP-032,Inventory,P1,Backend/Frontend,M,FP-030,DONE_LOCAL,Резервы пере
 FP-033,Inventory,P1,Backend/Frontend,M,"FP-030,FP-031",DONE_LOCAL,Инвентаризация списание партии серии,Сверка с фактами; причины; lot/expiry; approved discrepancy
 FP-034,Sales,P1,Backend/Frontend,L,"FP-027,FP-028,FP-032",DONE_LOCAL,Заказ клиента отгрузка возврат,Partial fulfilment; return by basis; prices/tax snapshot; правильный склад/стоимость
 FP-035,Purchases,P1,Backend/Frontend,L,"FP-026,FP-030,FP-029",DONE_LOCAL,Потребность заказ поставщику и приёмка,Budget approval; qty expected/received; расхождения и возврат поставщику
-FP-036,Treasury,P1,Backend,L,"FP-028,FP-026",PLANNED,Банк касса авансы и разнесение,Bank key scoped by account; дубли не зачисляют дважды; allocation/reversal audited
+FP-036,Treasury,P1,Backend,L,"FP-028,FP-026",DONE_LOCAL,Банк касса авансы и разнесение,Bank key scoped by account; дубли не зачисляют дважды; allocation/reversal audited
 FP-037,Treasury,P1,Backend/Frontend,M,"FP-036,FP-029",PLANNED,Платёжный календарь и заявки,Согласование получателя/суммы; cash forecast scenarios; import не делает payout
 FP-038,Accounting,P0,Accounting engineer,L,"FP-028,FP-031,FP-036",PLANNED,Двойная запись и аналитики,Balanced entry; unique source/version; decimal rules; posting simulation accepted
 FP-039,Accounting,P0,Tax methodologist,L,FP-038,PLANNED,Rule packs и налоговые регистры,Effective period/source/approval; воспроизводимость; golden tests не меняются под код

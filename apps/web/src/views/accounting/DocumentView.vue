@@ -62,7 +62,20 @@
         </el-form-item>
         <el-form-item v-if="['CUSTOMER', 'SUPPLIER'].includes(money.operation)" :label="t('counterparty')" required>
           <div style="width: 380px;"><DimSelect dim="COUNTERPARTY" v-model="money.counterpartyId" size="default" :disabled="readonly" /></div>
-          <span class="hint">Долг закрывается автоматически, остаток уходит в аванс</span>
+        </el-form-item>
+        <el-form-item v-if="['CUSTOMER', 'SUPPLIER'].includes(money.operation) && money.counterpartyId" label="Разнесение">
+          <el-radio-group v-model="money.allocMode" :disabled="readonly" size="small" @change="loadOpenItems">
+            <el-radio-button value="AUTO">автоматически — от самого старого долга</el-radio-button>
+            <el-radio-button value="MANUAL">вручную по документам</el-radio-button>
+          </el-radio-group>
+          <div v-if="money.allocMode === 'MANUAL'" style="width: 100%; margin-top: 8px;">
+            <el-table :data="openItems" size="small" empty-text="Открытых долгов по документам нет — вся сумма уйдёт в аванс">
+              <el-table-column label="Документ" min-width="200"><template #default="{ row }">{{ row.document ? `${row.document.number} от ${fmtDate(row.document.date)}` : 'без документа (старые расчёты)' }}</template></el-table-column>
+              <el-table-column label="Долг" width="130" align="right"><template #default="{ row }">{{ fmtMoney(row.debt) }}</template></el-table-column>
+              <el-table-column label="Разнести" width="150"><template #default="{ row }"><el-input v-if="row.settlementDocId" v-model="money.allocations[row.settlementDocId]" size="small" :disabled="readonly" class="num-in" placeholder="0" /></template></el-table-column>
+            </el-table>
+            <div class="hint" style="margin-left: 0;">Разнесено {{ fmtMoney(allocTotal) }}; в аванс уйдёт {{ fmtMoney(Math.max(0, Number(normAmount(money.amount) || 0) - Number(allocTotal))) }}.</div>
+          </div>
         </el-form-item>
         <el-form-item v-if="money.operation === 'TRANSFER'" :label="t('toAccount')" required>
           <el-radio-group v-model="money.toKind" :disabled="readonly" size="small" style="margin-right: 8px;">
@@ -221,6 +234,21 @@
             <el-table-column :label="t('status')" width="140"><template #default="{ row }"><el-tag size="small" :type="STATUS_TYPES[row.status] as any">{{ t(row.status) }}</el-tag></template></el-table-column>
           </el-table>
         </el-tab-pane>
+        <el-tab-pane v-if="isMoney && ['CUSTOMER', 'SUPPLIER'].includes(money.operation)" :label="`Разнесение (${allocHistory.filter((a) => a.status === 'ACTIVE').length})`">
+          <el-table :data="allocHistory" size="small" empty-text="Разнесений нет (платёж не проведён)">
+            <el-table-column label="Куда" min-width="200"><template #default="{ row }">{{ row.kind === 'ADVANCE' ? 'аванс' : row.document ? `${row.document.number} от ${fmtDate(row.document.date)}` : 'долг без документа' }}</template></el-table-column>
+            <el-table-column label="Счёт" width="80" prop="account" />
+            <el-table-column label="Сумма" width="130" align="right"><template #default="{ row }">{{ fmtMoney(row.amount) }}</template></el-table-column>
+            <el-table-column label="Как" width="110"><template #default="{ row }">{{ row.manual ? 'вручную' : 'автоматически' }}</template></el-table-column>
+            <el-table-column label="Состояние" min-width="240">
+              <template #default="{ row }">
+                <el-tag size="small" :type="row.status === 'ACTIVE' ? 'success' : 'info'">{{ row.status === 'ACTIVE' ? 'действует' : 'отменено' }}</el-tag>
+                <span class="muted"> версия {{ row.paymentVersion }}, {{ dayjs(row.createdAt).format('DD.MM.YYYY HH:mm') }}</span>
+                <div v-if="row.status === 'REVERSED'" class="muted">отменено {{ dayjs(row.reversedAt).format('DD.MM.YYYY HH:mm') }}: {{ row.reverseReason }}</div>
+              </template>
+            </el-table-column>
+          </el-table>
+        </el-tab-pane>
         <el-tab-pane :label="t('history')">
           <el-timeline style="padding-top: 8px;">
             <el-timeline-item v-for="v in [...(doc.versions || [])].reverse()" :key="v.id" :timestamp="new Date(v.createdAt).toLocaleString('ru-RU')">
@@ -286,7 +314,24 @@ const emptyMoney = () => ({
   selfId: undefined as string | undefined, operation: '', counterpartyId: undefined as string | undefined, amount: '', currencyAmount: '',
   toKind: 'BANK', toId: undefined as string | undefined, fromBankAccountId: undefined as string | undefined, employeeId: undefined as string | undefined,
   corrAccount: '', corrDims: {} as Record<string, string>, itemId: undefined as string | undefined, purpose: '', commission: '',
+  allocMode: 'AUTO', allocations: {} as Record<string, string>,
 })
+/** FP-036: открытые позиции контрагента (ручное разнесение) и журнал разнесений платежа. */
+const openItems = ref<any[]>([])
+const allocHistory = ref<any[]>([])
+const allocTotal = computed(() => addMoney(Object.values(money.value.allocations || {}).map((v: any) => normAmount(v) || '0')))
+async function loadOpenItems() {
+  openItems.value = []
+  if (money.value.allocMode !== 'MANUAL' || !money.value.counterpartyId) return
+  try {
+    openItems.value = (await api.get('/accounting/open-items', { params: { counterpartyId: money.value.counterpartyId, side: docType.value.endsWith('_IN') ? 'IN' : 'OUT', excludeDocId: doc.value.id } })) as any
+  } catch (e) { showError(e) }
+}
+async function loadAllocHistory() {
+  allocHistory.value = []
+  if (!doc.value.id || !isMoney.value) return
+  try { allocHistory.value = (await api.get(`/accounting/documents/${doc.value.id}/allocations`)) as any } catch { /* нет доступа */ }
+}
 const money = ref<any>(emptyMoney())
 
 const isSaved = computed(() => !!doc.value.id)
@@ -334,7 +379,10 @@ function fillMoney(b: any, type: string) {
     amount: b.amount ?? '', currencyAmount: b.currencyAmount ?? '', toKind, toId: b.toCashboxId || b.toBankAccountId,
     fromBankAccountId: b.fromBankAccountId, employeeId: b.employeeId, corrAccount: b.corrAccount || '', corrDims: { ...(b.corrDims || {}) },
     itemId: b.itemId, purpose: b.purpose || '', commission: b.commission ?? '',
+    allocMode: Array.isArray(b.allocations) && b.allocations.length ? 'MANUAL' : 'AUTO',
+    allocations: Object.fromEntries((b.allocations || []).map((a: any) => [a.docId, String(a.amount)])),
   }
+  loadOpenItems()
 }
 
 function moneyBody() {
@@ -343,7 +391,13 @@ function moneyBody() {
   if (moneyIsBank.value) b.bankAccountId = m.selfId; else b.cashboxId = m.selfId
   if (moneyCurrency.value !== 'KZT') b.currencyAmount = normAmount(m.currencyAmount)
   else b.amount = normAmount(m.amount)
-  if (['CUSTOMER', 'SUPPLIER'].includes(m.operation)) b.counterpartyId = m.counterpartyId
+  if (['CUSTOMER', 'SUPPLIER'].includes(m.operation)) {
+    b.counterpartyId = m.counterpartyId
+    if (m.allocMode === 'MANUAL') {
+      const list = Object.entries(m.allocations || {}).map(([docId, v]) => ({ docId, amount: normAmount(v) })).filter((x) => Number(x.amount) > 0)
+      if (list.length) b.allocations = list
+    }
+  }
   if (m.operation === 'TRANSFER') { if (m.toKind === 'CASH') b.toCashboxId = m.toId; else b.toBankAccountId = m.toId }
   if (m.operation === 'FROM_BANK') b.fromBankAccountId = m.fromBankAccountId
   if (['ACCOUNTABLE', 'ACCOUNTABLE_RETURN'].includes(m.operation)) b.employeeId = m.employeeId
@@ -449,6 +503,7 @@ async function load() {
   try {
     doc.value = (await api.get(`/accounting/documents/${id}`)) as any
     fillForm(doc.value)
+    loadAllocHistory()
   } catch (e) { showError(e) }
   loading.value = false
 }
@@ -557,6 +612,8 @@ async function doStorno() {
   busy.value = false
 }
 
+// FP-036: сменили контрагента — открытые позиции заново.
+watch(() => money.value.counterpartyId, () => loadOpenItems())
 watch(() => route.params.id, () => { if (route.path.startsWith('/accounting/documents')) load() })
 
 onMounted(async () => {
@@ -588,4 +645,6 @@ onMounted(async () => {
 .amt :deep(input) { text-align: right; }
 .hint { color: #909399; font-size: 12px; margin-left: 10px; }
 .entry-meta { color: #909399; font-size: 12px; margin-bottom: 6px; }
+.muted { color: var(--el-text-color-secondary); font-size: 12px; }
+.num-in :deep(input) { text-align: right; }
 </style>
