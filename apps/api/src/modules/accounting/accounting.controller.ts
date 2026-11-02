@@ -268,6 +268,13 @@ export class AccountingController {
   @Post('trade-documents/:id/receive') @RequirePermission('acc.doc.post') @ApiHeader(IDEMP_HEADER)
   tradeReceive(@Org() ctx: OrgContext, @Param('id') id: string, @Body() b: any) { return this.trade.receive(ctx, id, b ?? {}); }
 
+  // ── FP-033: инвентаризация и партии ──
+  @Post('trade-documents/:id/fill-from-stock') @RequirePermission('acc.doc.write') @ApiHeader(IDEMP_HEADER)
+  tradeFillFromStock(@Org() ctx: OrgContext, @Param('id') id: string, @Body() b: any) { return this.trade.fillFromStock(ctx, id, b ?? {}); }
+
+  @Get('lots') @RequirePermission('stock.read')
+  lots(@Org() ctx: OrgContext, @Query() q: any) { return this.ledger.lots(ctx, q); }
+
   @Get('transfers-in-transit') @RequirePermission('stock.read')
   transfersInTransit(@Org() ctx: OrgContext) { return this.trade.inTransit(ctx); }
 

@@ -93,7 +93,7 @@ export const TRADE_TYPES: Record<string, { ru: string; kk: string }> = {
   INVENTORY: { ru: 'Инвентаризация', kk: 'Түгендеу' },
   RETAIL_SHIFT: { ru: 'Кассовая смена', kk: 'Кассалық ауысым' },
 }
-export const TRADE_CREATABLE = ['PURCHASE_ORDER', 'SUPPLY', 'PURCHASE_RETURN', 'CUSTOMER_ORDER', 'DEMAND', 'SALES_RETURN', 'ENTER', 'LOSS', 'MOVE', 'RETAIL_DEMAND', 'RETAIL_RETURN']
+export const TRADE_CREATABLE = ['PURCHASE_ORDER', 'SUPPLY', 'PURCHASE_RETURN', 'CUSTOMER_ORDER', 'DEMAND', 'SALES_RETURN', 'ENTER', 'LOSS', 'MOVE', 'INVENTORY', 'RETAIL_DEMAND', 'RETAIL_RETURN']
 /** Создание на основании: тип основания → допустимые новые типы. */
 export const BASE_TARGETS: Record<string, string[]> = { CUSTOMER_ORDER: ['DEMAND'], PURCHASE_ORDER: ['SUPPLY'], DEMAND: ['SALES_RETURN'], SUPPLY: ['PURCHASE_RETURN'] }
 
@@ -156,6 +156,7 @@ export const MOVE_KINDS: Record<string, string> = {
   RECEIPT: 'Поступление', SHIPMENT: 'Отгрузка', SALES_RETURN: 'Возврат покупателя', PURCHASE_RETURN: 'Возврат поставщику',
   ENTER: 'Оприходование', WRITE_OFF: 'Списание', TRANSFER_OUT: 'Перемещение (расход)', TRANSFER_IN: 'Перемещение (приход)',
   RETAIL_SALE: 'Розничная продажа', RETAIL_RETURN: 'Возврат в рознице', OPENING: 'Начальный остаток',
+  INVENTORY_SURPLUS: 'Излишек (инвентаризация)', INVENTORY_SHORTAGE: 'Недостача (инвентаризация)',
 }
 export const DISCREPANCY_REASONS: Record<string, string> = {
   SHORTAGE: 'Недостача', SURPLUS: 'Излишек', DAMAGED: 'Брак / повреждение', WRONG_ITEM: 'Пересорт', OTHER: 'Другое',
@@ -163,4 +164,12 @@ export const DISCREPANCY_REASONS: Record<string, string> = {
 export const VALUE_BASIS: Record<string, string> = {
   ACCOUNTING: 'из учёта (без НДС)', DOCUMENT: 'по документу', COST: 'себестоимость', REVERSAL: 'встречное', OPENING: 'начальный остаток',
   PRE_LEDGER: 'отмена проведения до журнала',
+}
+
+/** FP-033: причины расхождений инвентаризации и списания. */
+export const INVENTORY_REASONS: Record<string, string> = {
+  NATURAL_LOSS: 'Естественная убыль', DAMAGED: 'Порча / бой', THEFT: 'Хищение', MISCOUNT: 'Пересорт', UNRECORDED: 'Неучтённое движение', OTHER: 'Другое',
+}
+export const LOSS_REASONS: Record<string, string> = {
+  DAMAGED: 'Порча / бой', EXPIRED: 'Истёк срок годности', THEFT: 'Хищение', NATURAL_LOSS: 'Естественная убыль', OTHER: 'Другое',
 }

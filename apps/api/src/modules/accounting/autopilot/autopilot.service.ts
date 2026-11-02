@@ -132,6 +132,15 @@ export class AutopilotService implements OnModuleInit, OnModuleDestroy {
       resolveCashbox: (s) => this.resolveCashbox(tx, ctx, s),
       resolveBankAccount: (h) => this.resolveBank(tx, ctx, h),
     });
+    // Нечего отражать (инвентаризация без расхождений) — без записи; прежнюю (если была) отменить.
+    if (!postings.length && !moves.length) {
+      if (existing) {
+        await this.posting.cancelSource(tx, organizationId, TRADE_SOURCE, id);
+        await this.cost.recalcProducts(tx, ctx, oldProducts, opts.override);
+      }
+      await this.resolveIssue(tx, id);
+      return { status: existing ? 'CANCELLED' : 'SKIPPED', reason: 'нет бухгалтерских последствий' };
+    }
     const { entry } = await this.posting.writeEntry(tx, ctx, {
       sourceType: TRADE_SOURCE, sourceId: id, sourceVersion: version, ruleCode: `TRADE_${doc.docType}`, ruleVersion: TRADE_RULE_VERSION,
       date: doc.date, postings, moves, allowEmpty: moves.length > 0,

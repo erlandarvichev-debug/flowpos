@@ -14,6 +14,8 @@ const KINDS: DocKind[] = ['TRADE', 'ACC'];
 const D = Prisma.Decimal;
 const NOTE_MIN = 5;
 const TTL_MAX = 168; // неделя
+/** FP-033: встроенное правило согласования расхождений инвентаризации. */
+const BUILTIN_INVENTORY = { id: 'builtin:INVENTORY', docKind: 'TRADE', docType: 'INVENTORY', action: 'POST', minAmount: new Prisma.Decimal('0.01'), ttlHours: 72, enabled: true };
 
 /** Состояние документа, к которому привязывается согласование. */
 export interface DocState {
@@ -52,6 +54,9 @@ export class ApprovalsService {
       where: { organizationId, docKind: st.kind, action, enabled: true, docType: { in: [st.docType, '*'] }, minAmount: { lte: st.amount.abs() } },
       orderBy: [{ ttlHours: 'asc' }, { id: 'asc' }],
     });
+    // FP-033: расхождения инвентаризации согласуются всегда («четыре глаза»), даже без правил организации: встроенное
+    // правило «от 0,01, 72 ч». Правило организации на INVENTORY (порог, срок) — приоритетнее.
+    if (!rules[0] && st.kind === 'TRADE' && st.docType === 'INVENTORY' && st.amount.abs().gte(BUILTIN_INVENTORY.minAmount)) return BUILTIN_INVENTORY as any;
     return rules[0] ?? null;
   }
 

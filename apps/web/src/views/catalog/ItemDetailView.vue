@@ -21,6 +21,11 @@
             <el-descriptions-item label="Группа">{{ item.group?.name || '—' }}</el-descriptions-item>
             <el-descriptions-item label="НДС %">{{ item.vatRate ?? '—' }}</el-descriptions-item>
             <el-descriptions-item label="PLU весового">{{ item.plu || '—' }}</el-descriptions-item>
+            <el-descriptions-item label="Учёт по партиям" :span="2">
+              <el-switch :model-value="item.lotTracking" :disabled="!org.can('catalog.manage') || saving" active-text="партии" @change="(v: any) => setTracking({ lotTracking: v })" />
+              <el-switch :model-value="item.expiryTracking" :disabled="!org.can('catalog.manage') || saving" active-text="срок годности" style="margin-left: 16px;" @change="(v: any) => setTracking({ expiryTracking: v })" />
+              <div class="muted">Приход — с номером партии{{ item.expiryTracking ? ' и сроком годности' : '' }}; расход списывает партии с ближайшим сроком (FEFO); просроченное можно только списать.</div>
+            </el-descriptions-item>
             <el-descriptions-item label="Справочник">{{ item.organizationId ? 'личный (этой организации)' : 'общий для организаций клиента' }}</el-descriptions-item>
             <el-descriptions-item v-if="item.parent" label="Вариант товара" :span="2">
               <el-link type="primary" @click="go(item.parent.id)">{{ item.parent.name }}</el-link>
@@ -168,6 +173,18 @@ async function load() {
     mappings.value = m
   } catch (e) { showError(e) }
   loading.value = false
+}
+
+const saving = ref(false)
+/** FP-033: партионный учёт и срок годности (срок ведётся только вместе с партиями). */
+async function setTracking(patch: Record<string, boolean>) {
+  saving.value = true
+  try {
+    await api.put(`/catalog/items/${item.value.id}`, patch)
+    ElMessage.success('Сохранено')
+    await load()
+  } catch (e: any) { ElMessage.error(e?.message || 'Ошибка') }
+  saving.value = false
 }
 
 async function addBarcode() {

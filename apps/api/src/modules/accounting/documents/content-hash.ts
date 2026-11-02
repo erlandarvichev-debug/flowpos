@@ -17,6 +17,8 @@ export function tradeContent(doc: any) {
       discount: l.discount == null ? null : new D(l.discount).toString(), amount: l.amount == null ? null : new D(l.amount).toFixed(2), vatRate: l.vatRate == null ? null : new D(l.vatRate).toString(),
       ...receiptContent(l),
       ...(l.binId || l.binToId ? { binId: l.binId ?? null, binToId: l.binToId ?? null } : {}), // FP-032: адрес — только если задан
+      // FP-033: партия, срок, учётное инвентаризации — только если заданы
+      ...(l.lotNumber || l.expiryDate || l.bookQty != null ? { lotNumber: l.lotNumber ?? null, expiryDate: l.expiryDate ? new Date(l.expiryDate).toISOString().slice(0, 10) : null, bookQty: l.bookQty == null ? null : new D(l.bookQty).toString() } : {}),
     })),
   };
 }

@@ -23,6 +23,7 @@
             <el-dropdown-menu>
               <el-dropdown-item v-for="tt in baseTargets" :key="tt" :command="`based:${tt}`">{{ t('createBased') }}: {{ tl(tt) }}</el-dropdown-item>
               <el-dropdown-item v-if="docType === 'SUPPLY' && doc.status === 'POSTED' && org.can('acc.doc.write')" command="landed">Доп. расходы (доставка, таможня…)</el-dropdown-item>
+              <el-dropdown-item v-if="docType === 'INVENTORY' && doc.status === 'DRAFT' && org.can('acc.doc.write')" command="fill" divided>Заполнить по остаткам склада</el-dropdown-item>
               <template v-if="docType === 'CUSTOMER_ORDER' && org.can('acc.doc.write') && doc.status !== 'CANCELLED'">
                 <el-dropdown-item command="reserve" divided>Зарезервировать на складе</el-dropdown-item>
                 <el-dropdown-item v-if="activeReserves.length" command="release">Снять резерв</el-dropdown-item>
@@ -100,6 +101,12 @@
             <el-radio-button value="CARD">{{ t('cardPay') }}</el-radio-button>
           </el-radio-group>
         </el-form-item>
+        <el-form-item v-if="docType === 'LOSS'" label="Причина списания">
+          <el-select v-model="form.lossReason" clearable :disabled="readonly" placeholder="по строкам" style="width: 260px;">
+            <el-option v-for="(label, k) in LOSS_REASONS" :key="k" :label="label" :value="k" />
+          </el-select>
+          <span class="hint">Для всех строк, где своя причина не указана.</span>
+        </el-form-item>
         <el-form-item v-if="docType === 'LOSS'" :label="t('lossAccount')">
           <div style="width: 360px;"><AccountSelect v-model="form.lossAccount" :accounts="accounts" /></div>
         </el-form-item>
@@ -117,6 +124,8 @@
         <div class="card-head">
           <span>{{ t('lines') }}</span>
           <el-checkbox v-if="docType === 'SUPPLY'" v-model="receiptMode" :disabled="readonly">Приёмка с расхождениями (по документу поставщика, отказ, причина)</el-checkbox>
+          <el-checkbox v-if="lotCapable" v-model="lotMode" :disabled="readonly">Партии и сроки годности</el-checkbox>
+          <span v-if="docType === 'INVENTORY'" class="hint0">Учётное считает система на конец даты инвентаризации; при проведении оно сверяется заново. Расхождения проводятся после согласования.</span>
           <span class="totals" v-if="hasPrices">{{ t('total') }}: <b>{{ fmtMoney(total) }}</b> ₸</span>
         </div>
       </template>
@@ -124,7 +133,10 @@
         <div class="line head">
           <div class="c-no">№</div><div class="c-prod">{{ t('product') }}</div>
           <template v-if="receiptCols"><div class="c-num">По документу</div><div class="c-num">Принято</div><div class="c-pct">Отказ</div><div class="c-reason">Причина</div></template>
+          <template v-else-if="docType === 'INVENTORY'"><div class="c-num">Учётное</div><div class="c-num">Факт</div><div class="c-pct">Разница</div><div class="c-reason">Причина</div></template>
+          <template v-else-if="docType === 'LOSS'"><div class="c-num">{{ t('qty') }}</div><div class="c-reason">Причина</div></template>
           <div v-else class="c-num">{{ t('qty') }}</div>
+          <template v-if="lotMode"><div class="c-lot">Партия</div><div class="c-date">Годен до</div></template>
           <div v-if="binsFrom.length" class="c-bin">{{ docType === 'MOVE' ? 'Ячейка откуда' : 'Ячейка' }}</div>
           <div v-if="binsTo.length" class="c-bin">Ячейка куда</div>
           <template v-if="hasPrices">
@@ -151,7 +163,29 @@
               </el-select>
             </div>
           </template>
+          <template v-else-if="docType === 'INVENTORY'">
+            <div class="c-num book">{{ l.bookQty === '' ? '—' : l.bookQty }}</div>
+            <div class="c-num"><el-input v-model="l.qty" size="small" class="nav-field num-in" :disabled="readonly" placeholder="0" /></div>
+            <div class="c-pct diffcell"><b v-if="invDiff(l)" :class="invDiff(l) < 0 ? 'neg' : 'pos'">{{ invDiff(l) > 0 ? '+' : '' }}{{ invDiff(l) }}</b></div>
+            <div class="c-reason">
+              <el-select v-model="l.discrepancyReason" size="small" clearable :disabled="readonly" :placeholder="invDiff(l) ? 'укажите' : '—'" :class="{ 'need-reason': invDiff(l) && !l.discrepancyReason }">
+                <el-option v-for="(label, k) in INVENTORY_REASONS" :key="k" :label="label" :value="k" />
+              </el-select>
+            </div>
+          </template>
+          <template v-else-if="docType === 'LOSS'">
+            <div class="c-num"><el-input v-model="l.qty" size="small" class="nav-field num-in" :disabled="readonly" placeholder="0" /></div>
+            <div class="c-reason">
+              <el-select v-model="l.discrepancyReason" size="small" clearable :disabled="readonly" :placeholder="form.lossReason ? LOSS_REASONS[form.lossReason] : 'укажите'">
+                <el-option v-for="(label, k) in LOSS_REASONS" :key="k" :label="label" :value="k" />
+              </el-select>
+            </div>
+          </template>
           <div v-else class="c-num"><el-input v-model="l.qty" size="small" class="nav-field num-in" :disabled="readonly" placeholder="0" /></div>
+          <template v-if="lotMode">
+            <div class="c-lot"><el-input v-model="l.lotNumber" size="small" :disabled="readonly" :placeholder="isIncoming ? 'партия' : 'авто (FEFO)'" /></div>
+            <div class="c-date"><el-date-picker v-model="l.expiryDate" type="date" size="small" value-format="YYYY-MM-DD" format="DD.MM.YYYY" :disabled="readonly" placeholder="—" style="width: 100%;" /></div>
+          </template>
           <div v-if="binsFrom.length" class="c-bin">
             <el-select v-model="l.binId" size="small" clearable :disabled="readonly" placeholder="без ячейки"><el-option v-for="b in binsFrom" :key="b.id" :label="b.code || b.name" :value="b.id" /></el-select>
           </div>
@@ -165,6 +199,10 @@
             <div class="c-sum">{{ fmtMoney(lineTotal(l.qty, l.price, l.discount)) }}</div>
           </template>
           <div class="c-del"><el-button v-if="!readonly" link type="danger" :icon="Delete" @click="form.lines.splice(i, 1)" /></div>
+        </div>
+        <div v-if="(docType === 'INVENTORY' || docType === 'LOSS') && l.discrepancyReason === 'OTHER'" class="line sub">
+          <div class="c-no"></div>
+          <el-input v-model="l.discrepancyNote" size="small" :disabled="readonly" placeholder="Пояснение причины «Другое» (обязательно)" style="max-width: 420px;" />
         </div>
         <div v-if="receiptCols && (diffOf(l).has || l.discrepancyReason)" class="line sub">
           <div class="c-no"></div>
@@ -279,6 +317,7 @@ import PostingPreview from '@/components/accounting/PostingPreview.vue'
 import { useI18n } from '@/composables/useI18n'
 import AccountSelect from '@/components/accounting/AccountSelect.vue'
 import DimSelect from '@/components/accounting/DimSelect.vue'
+import { INVENTORY_REASONS, LOSS_REASONS } from './acc'
 import { BASE_TARGETS, DISCREPANCY_REASONS, MOVE_KINDS, STATUS_TYPES, TRADE_TYPES, VALUE_BASIS, addMoney, fmtDate, fmtMoney, idem, lineTotal, loadDimOptions, normAmount, showError } from './acc'
 
 const route = useRoute()
@@ -301,7 +340,7 @@ const PostingsTable = defineComponent({
 })
 
 const NO_PRICE = ['MOVE', 'LOSS']
-const NO_COUNTERPARTY = ['ENTER', 'LOSS', 'MOVE', 'RETAIL_DEMAND', 'RETAIL_RETURN']
+const NO_COUNTERPARTY = ['ENTER', 'LOSS', 'MOVE', 'INVENTORY', 'RETAIL_DEMAND', 'RETAIL_RETURN']
 
 const loading = ref(false)
 const busy = ref(false)
@@ -316,7 +355,7 @@ let keySeq = 0
 const emptyForm = () => ({
   date: dayjs().format('YYYY-MM-DD'), counterpartyId: undefined as string | undefined, storeId: undefined as string | undefined,
   storeToId: undefined as string | undefined, vatIncluded: true, paymentType: 'CASH', lossAccount: '7170', comment: '', reason: '',
-  allocation: 'AMOUNT', baseId: undefined as string | undefined, twoStage: false,
+  allocation: 'AMOUNT', baseId: undefined as string | undefined, twoStage: false, lossReason: undefined as string | undefined,
   lines: [] as any[],
 })
 /** FP-032: ячейки складов (по складу), приёмка перемещения в два этапа, резерв заказа. */
@@ -366,10 +405,16 @@ const costPostings = computed(() => (doc.value.costEntries || []).flatMap((e: an
 
 const tl = (k: string) => (TRADE_TYPES[k] ? TRADE_TYPES[k][lang.value] : k)
 
-function emptyLine() { return { key: ++keySeq, productId: undefined, productName: '', qty: '', price: '', discount: '', vatRate: '', expectedQty: '', rejectedQty: '', discrepancyReason: undefined, discrepancyNote: '' } }
+function emptyLine() { return { key: ++keySeq, productId: undefined, productName: '', qty: '', price: '', discount: '', vatRate: '', expectedQty: '', rejectedQty: '', discrepancyReason: undefined, discrepancyNote: '', lotNumber: '', expiryDate: undefined, bookQty: '' } }
 
 /** FP-030: приёмка с расхождениями (поступление) — включается сама, если у строк есть «по документу». */
 const receiptMode = ref(false)
+/** FP-033: колонки партии и срока; приходные документы (партия обязательна у партионного товара). */
+const lotMode = ref(false)
+const lotCapable = computed(() => ['SUPPLY', 'ENTER', 'SALES_RETURN', 'RETAIL_RETURN', 'DEMAND', 'RETAIL_DEMAND', 'LOSS', 'MOVE', 'PURCHASE_RETURN', 'INVENTORY'].includes(docType.value))
+const isIncoming = computed(() => ['SUPPLY', 'ENTER', 'SALES_RETURN', 'RETAIL_RETURN', 'INVENTORY'].includes(docType.value))
+/** Разница инвентаризации «факт − учётное» (учётное — с сервера после сохранения). */
+const invDiff = (l: any) => (l.bookQty === '' || l.bookQty == null ? 0 : Math.round((Number(normAmount(l.qty) || 0) - Number(l.bookQty)) * 1000) / 1000)
 /** Колонки приёмки — только у поступления (режим не переносится на другой тип документа при переходе). */
 const receiptCols = computed(() => receiptMode.value && docType.value === 'SUPPLY')
 const num = (v: any) => Number(normAmount(v) || 0)
@@ -405,20 +450,24 @@ function fillForm(d: any) {
     date: String(d.date).slice(0, 10), counterpartyId: d.counterpartyId || undefined, storeId: d.storeId || undefined,
     storeToId: (a.twoStage ? a.destinationStoreId : d.storeToId) || undefined, vatIncluded: a.vatIncluded !== false, paymentType: a.paymentType || 'CASH',
     lossAccount: a.lossAccount || '7170', comment: d.comment || a.comment || '', reason: '',
-    allocation: a.allocation || 'AMOUNT', baseId: a.baseId, twoStage: !!a.twoStage,
+    allocation: a.allocation || 'AMOUNT', baseId: a.baseId, twoStage: !!a.twoStage, lossReason: a.lossReason || undefined,
     lines: (d.lines || []).map((l: any) => ({
       key: ++keySeq, productId: l.productId, productName: l.product ? `${l.product.code ? l.product.code + ' ' : ''}${l.product.name}` : '',
       qty: s(l.qty), price: s(l.price), discount: s(l.discount), vatRate: s(l.vatRate),
       expectedQty: s(l.expectedQty), rejectedQty: s(l.rejectedQty), discrepancyReason: l.discrepancyReason || undefined, discrepancyNote: l.discrepancyNote || '',
       binId: l.binId || undefined, binToId: l.binToId || undefined,
+      lotNumber: l.lotNumber || '', expiryDate: l.expiryDate ? String(l.expiryDate).slice(0, 10) : undefined, bookQty: s(l.bookQty),
     })),
   }
   receiptMode.value = d.docType === 'SUPPLY' && (d.lines || []).some((l: any) => l.expectedQty != null || l.rejectedQty != null)
+  lotMode.value = (d.lines || []).some((l: any) => l.lotNumber || l.expiryDate || l.product?.lotTracking)
 }
 
 function payload() {
   const lines = form.value.lines.filter((l: any) => l.productId).map((l: any) => {
     const o: any = { productId: l.productId, qty: normAmount(l.qty), binId: l.binId || null, binToId: l.binToId || null }
+    if (lotMode.value) { o.lotNumber = (l.lotNumber || '').trim() || null; o.expiryDate = l.expiryDate || null }
+    if (docType.value === 'INVENTORY' || docType.value === 'LOSS') { o.discrepancyReason = l.discrepancyReason || null; o.discrepancyNote = (l.discrepancyNote || '').trim() || null }
     if (receiptMode.value && docType.value === 'SUPPLY') {
       o.expectedQty = normAmount(l.expectedQty) || null
       o.rejectedQty = normAmount(l.rejectedQty) || null
@@ -441,7 +490,7 @@ function payload() {
   if (isTransferReceipt.value) delete p.storeId
   if (hasPrices.value) p.vatIncluded = form.value.vatIncluded
   if (isRetail.value) p.paymentType = form.value.paymentType
-  if (docType.value === 'LOSS') p.lossAccount = form.value.lossAccount
+  if (docType.value === 'LOSS') { p.lossAccount = form.value.lossAccount; p.lossReason = form.value.lossReason || undefined }
   if (docType.value === 'LANDED_COST') { p.baseId = form.value.baseId; p.allocation = form.value.allocation; delete p.storeId }
   return p
 }
@@ -567,6 +616,16 @@ async function retry() {
 
 async function onCommand(cmd: string) {
   if (cmd === 'unpost') return action('unpost', 'Проведение отменено')
+  if (cmd === 'fill') {
+    busy.value = true
+    try {
+      doc.value = (await api.post(`/accounting/trade-documents/${doc.value.id}/fill-from-stock`, { expectedVersion: doc.value.version }, idem())) as any
+      fillForm(doc.value)
+      ElMessage.success(`Заполнено по остаткам: позиций ${doc.value.lines.length}. Введите фактическое количество.`)
+    } catch (e) { showError(e) }
+    busy.value = false
+    return
+  }
   if (cmd === 'landed') return router.push(`/accounting/trade/new?type=LANDED_COST&baseId=${doc.value.id}`)
   if (cmd === 'reserve' || cmd === 'release') {
     if (cmd === 'reserve' && !(await save(true))) return
@@ -634,6 +693,10 @@ onMounted(async () => {
 .hint0 { color: #909399; font-size: 12px; }
 .c-reason { width: 150px; }
 .c-bin { width: 130px; }
+.c-lot { width: 120px; }
+.c-date { width: 140px; }
+.book { text-align: right; color: #606266; font-variant-numeric: tabular-nums; }
+.diffcell { text-align: right; }
 .line.sub { padding-top: 0; border-bottom: 1px dashed #f0f0f0; font-size: 12px; }
 .diff { display: inline-flex; gap: 10px; min-width: 200px; }
 .neg { color: var(--el-color-danger); }

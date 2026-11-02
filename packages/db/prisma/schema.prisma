@@ -490,6 +490,10 @@ model Product {
   variantKey String?     @map("variant_key")
   /// FP-025: код весового товара (PLU) для весовых штрихкодов; уникален у клиента
   plu        String?
+  /// FP-033: партионный учёт — номер партии обязателен на приходе, расход списывает партии (по умолчанию FEFO);
+  /// срок годности — обязателен на приходе, просроченную партию нельзя продать или переместить
+  lotTracking    Boolean @default(false) @map("lot_tracking")
+  expiryTracking Boolean @default(false) @map("expiry_tracking")
   // sync fields — 1С
   onecGuid   String?     @map("onec_guid") @db.Uuid
   onecBase   String      @default("default") @map("onec_base")
@@ -869,6 +873,8 @@ model StockMovement {
   productId      String   @map("product_id")
   storeId        String   @map("store_id")
   binId          String?  @map("bin_id")
+  lotNumber      String?  @map("lot_number")   // FP-033: партия
+  expiryDate     DateTime? @map("expiry_date") @db.Date
   qty            Decimal  @db.Decimal(18,3) // + приход, − расход
   value          Decimal? @db.Decimal(18,2) // стоимость со знаком, если известна при движении; расход — по себестоимости (отчёт)
   valueBasis     String?  @map("value_basis") // ACCOUNTING | DOCUMENT | REVERSAL | OPENING | PRE_LEDGER (отмена документа, проведённого до журнала)
@@ -887,6 +893,7 @@ model StockMovement {
   store   Store   @relation(fields: [organizationId, storeId], references: [organizationId, id])
 
   @@index([organizationId, productId, storeId, occurredAt])
+  @@index([organizationId, productId, storeId, lotNumber])
   @@index([sourceType, sourceId])
   @@map("stock_movements")
 }
@@ -1240,6 +1247,10 @@ model DocumentLine {
   /// FP-032: адрес хранения — ячейка склада документа (для перемещения — откуда) и ячейка склада-получателя
   binId             String?  @map("bin_id")
   binToId           String?  @map("bin_to_id")
+  /// FP-033: партия и срок годности; инвентаризация — учётное количество на дату (qty — фактическое)
+  lotNumber         String?  @map("lot_number")
+  expiryDate        DateTime? @map("expiry_date") @db.Date
+  bookQty           Decimal? @map("book_qty") @db.Decimal(18,3)
 
   document Document @relation(fields: [tenantId, documentId], references: [tenantId, id], onDelete: Cascade)
   bin      Bin?     @relation("LineBin", fields: [tenantId, binId], references: [tenantId, id])

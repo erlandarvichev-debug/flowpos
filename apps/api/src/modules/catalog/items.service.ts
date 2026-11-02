@@ -6,7 +6,7 @@ import { normalizeBarcode, validateBarcode, validatePlu } from './barcode';
 import { catalogError, weightSettings } from './barcodes.service';
 
 /** Поля товара, которые задаёт пользователь. Идентификаторы обмена (1С/МойСклад), статус обмена, архив — нет (FP-025). */
-const EDITABLE = ['kind', 'code', 'article', 'name', 'groupId', 'uomId', 'vatRate', 'parentId', 'attributes', 'plu'] as const;
+const EDITABLE = ['kind', 'code', 'article', 'name', 'groupId', 'uomId', 'vatRate', 'parentId', 'attributes', 'plu', 'lotTracking', 'expiryTracking'] as const;
 const KINDS = ['PRODUCT', 'SERVICE', 'BUNDLE', 'VARIANT'];
 
 /** Характеристики варианта в каноническом виде: ключи по алфавиту, пробелы и регистр ключа нормализованы. */
@@ -84,6 +84,11 @@ export class ItemsService {
       const v = Number(out.vatRate);
       if (!Number.isFinite(v) || v < 0 || v > 100) throw new BadRequestException({ code: 'VAT_RATE', message: 'Ставка НДС — от 0 до 100' });
     }
+
+    // FP-033: партионный учёт; срок годности ведётся только по партиям.
+    for (const k of ['lotTracking', 'expiryTracking'] as const) if (k in out) out[k] = out[k] === true || out[k] === 'true';
+    if (out.expiryTracking) out.lotTracking = true;
+    if (out.lotTracking === false && current) out.expiryTracking = false;
 
     if ('plu' in out && out.plu !== null) {
       const { pluLength } = await weightSettings(this.prisma, s.tenantId);

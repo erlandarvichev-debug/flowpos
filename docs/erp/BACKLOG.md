@@ -131,7 +131,7 @@ Inventory | P1 | Backend/Frontend | M | DONE_LOCAL — см. `FP-032-RESERVES-TR
 Зависимости: FP-030. Приёмка: Available=fact-reserved; нет двойного резерва при конкуренции; two-stage transfer.
 
 ## FP-033 · Инвентаризация списание партии серии
-Inventory | P1 | Backend/Frontend | M | PLANNED
+Inventory | P1 | Backend/Frontend | M | DONE_LOCAL — см. `FP-033-INVENTORY-LOTS.md` (не выкладывалось)
 Зависимости: FP-030,FP-031. Приёмка: Сверка с фактами; причины; lot/expiry; approved discrepancy.
 
 ## FP-034 · Заказ клиента отгрузка возврат

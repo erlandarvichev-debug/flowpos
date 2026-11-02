@@ -6,9 +6,20 @@
       <el-tab-pane label="Журнал движений" name="MOVES" />
       <el-tab-pane label="Расхождения приёмки" name="DISCREPANCIES" />
       <el-tab-pane label="В пути" name="TRANSIT" />
+      <el-tab-pane label="Партии и сроки" name="LOTS" />
     </el-tabs>
 
-    <div v-if="tab !== 'TRANSIT'" class="filters">
+    <div v-if="tab === 'LOTS'" class="filters">
+      <el-select v-model="storeId" clearable placeholder="Склад" style="width: 200px;" @change="reload">
+        <el-option v-for="s in stores" :key="s.id" :label="s.name" :value="s.id" />
+      </el-select>
+      <el-select v-model="expiring" clearable placeholder="Все партии" style="width: 240px;" @change="reload">
+        <el-option label="Просроченные и истекающие за 7 дней" value="7" />
+        <el-option label="… за 30 дней" value="30" />
+        <el-option label="Только просроченные" value="-1" />
+      </el-select>
+    </div>
+    <div v-else-if="tab !== 'TRANSIT'" class="filters">
       <el-date-picker v-model="period" type="daterange" value-format="YYYY-MM-DD" format="DD.MM.YYYY" start-placeholder="С" end-placeholder="По" :clearable="true" style="width: 260px;" @change="reload" />
       <template v-if="tab === 'MOVES'">
         <div style="width: 300px;"><DimSelect dim="PRODUCT" v-model="productId" size="default" @update:model-value="reload" /></div>
@@ -58,6 +69,24 @@
         <el-table-column label="Причина" min-width="140" show-overflow-tooltip><template #default="{ row }">{{ row.reason ?? '' }}</template></el-table-column>
       </el-table>
       <el-pagination v-if="data.total > limit" style="margin-top: 10px;" layout="prev, pager, next, total" :total="data.total" :page-size="limit" v-model:current-page="page" @current-change="load" />
+    </template>
+
+    <template v-else-if="tab === 'LOTS'">
+      <el-table v-loading="loading" :data="lots" size="small" empty-text="Партий нет (учёт по партиям включается в карточке товара)">
+        <el-table-column label="Товар" min-width="220" show-overflow-tooltip><template #default="{ row }">{{ row.product?.name }}</template></el-table-column>
+        <el-table-column label="Склад" width="160"><template #default="{ row }">{{ row.store?.name }}</template></el-table-column>
+        <el-table-column label="Партия" width="140" prop="lotNumber" />
+        <el-table-column label="Годен до" width="120"><template #default="{ row }">{{ row.expiryDate ? fmtDate(row.expiryDate) : '—' }}</template></el-table-column>
+        <el-table-column label="Остаток" width="100" align="right"><template #default="{ row }"><b>{{ Number(row.qty) }}</b></template></el-table-column>
+        <el-table-column label="Срок" width="170">
+          <template #default="{ row }">
+            <el-tag v-if="row.expired" type="danger" size="small">просрочена {{ -row.daysLeft }} дн.</el-tag>
+            <el-tag v-else-if="row.daysLeft !== null && row.daysLeft <= 30" type="warning" size="small">осталось {{ row.daysLeft }} дн.</el-tag>
+            <span v-else-if="row.daysLeft !== null" class="muted">{{ row.daysLeft }} дн.</span>
+          </template>
+        </el-table-column>
+      </el-table>
+      <div class="muted" style="margin-top: 6px;">Расход без указанной партии списывает партии с ближайшим сроком (FEFO). Просроченную партию продать или переместить нельзя — только списать.</div>
     </template>
 
     <template v-else-if="tab === 'TRANSIT'">
@@ -122,6 +151,8 @@ const stores = ref<any[]>([])
 const data = ref<any>({ items: [], total: 0 })
 const disc = ref<any>({ items: [] })
 const transit = ref<any[]>([])
+const lots = ref<any[]>([])
+const expiring = ref<string | undefined>()
 const storeName = (id: string) => stores.value.find((s) => s.id === id)?.name ?? id
 const checkResult = ref<any>(null)
 const discRows = computed(() => (disc.value.items || []).flatMap((d: any) => d.lines.map((l: any) => ({ ...l, doc: d }))))
@@ -134,6 +165,9 @@ async function load() {
   try {
     if (tab.value === 'MOVES') {
       data.value = (await api.get('/accounting/stock-movements', { params: { from, to, productId: productId.value, storeId: storeId.value, kind: kind.value, page: page.value, limit } })) as any
+    } else if (tab.value === 'LOTS') {
+      const r = (await api.get('/accounting/lots', { params: { storeId: storeId.value, expiringInDays: expiring.value } })) as any
+      lots.value = r.items
     } else if (tab.value === 'TRANSIT') {
       transit.value = (await api.get('/accounting/transfers-in-transit')) as any
     } else {

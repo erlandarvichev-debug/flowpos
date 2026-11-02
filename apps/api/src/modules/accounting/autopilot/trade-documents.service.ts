@@ -11,6 +11,8 @@ import { contractPeriodProblem } from '../../catalog/requisites';
 import { tradeContent, tradeHash } from '../documents/content-hash';
 import { ApprovalsService } from '../approvals/approvals.service';
 import { plannedMoves, recordDocumentMoves, reverseDocumentMoves, serviceIds } from '../../inventory/stock-ledger';
+import { LotError, checkLotLine } from '../../inventory/lots';
+import { CountError, bookQty, checkInventoryLine, checkLossLine, inventoryValue, stockPositions } from '../../inventory/count';
 import { ReserveError, activeReservations, assertReservesCovered, consumeForShipment, releaseReservations, reserveOrder } from '../../inventory/reservations';
 import { ReceiptError, checkReceiptLine, receiptSummary } from '../../inventory/receipt';
 
@@ -18,7 +20,7 @@ type Tx = Prisma.TransactionClient;
 
 const PREFIX: Record<string, string> = {
   PURCHASE_ORDER: 'ЗП', SUPPLY: 'ПТ', PURCHASE_RETURN: 'ВП', LANDED_COST: 'ДР', CUSTOMER_ORDER: 'ЗК', DEMAND: 'РТ', SALES_RETURN: 'ВК',
-  ENTER: 'ОПР', LOSS: 'СП', MOVE: 'ПМ', PAYMENT_IN: 'ПВ', PAYMENT_OUT: 'ИП', RETAIL_DEMAND: 'ЧЕК', RETAIL_RETURN: 'ВЧ',
+  ENTER: 'ОПР', LOSS: 'СП', MOVE: 'ПМ', INVENTORY: 'ИНВ', PAYMENT_IN: 'ПВ', PAYMENT_OUT: 'ИП', RETAIL_DEMAND: 'ЧЕК', RETAIL_RETURN: 'ВЧ',
 };
 const EDITABLE = Object.keys(PREFIX);
 const BASE_TARGETS: Record<string, string[]> = { CUSTOMER_ORDER: ['DEMAND'], PURCHASE_ORDER: ['SUPPLY'], DEMAND: ['SALES_RETURN'], SUPPLY: ['PURCHASE_RETURN'] };
@@ -29,6 +31,8 @@ export interface TradeLineInput {
   expectedQty?: string | number | null; rejectedQty?: string | number | null; discrepancyReason?: string | null; discrepancyNote?: string | null;
   /** FP-032: ячейка склада документа (для перемещения — откуда) и ячейка склада-получателя. */
   binId?: string | null; binToId?: string | null;
+  /** FP-033: партия и срок годности; инвентаризация — учётное (считает сервер, из запроса не принимается). */
+  lotNumber?: string | null; expiryDate?: string | null; bookQty?: string | number | null;
 }
 export interface TradeDocInput {
   docType: string;
@@ -48,6 +52,8 @@ export interface TradeDocInput {
   allocation?: 'AMOUNT' | 'QTY';
   /** FP-032, перемещение: в два этапа — отгрузка на «В пути», затем приёмка на склад-получатель (storeToId). */
   twoStage?: boolean;
+  /** FP-033, списание: причина по умолчанию для строк без своей причины. */
+  lossReason?: string;
   baseId?: string;
   lines?: TradeLineInput[];
   status?: 'DRAFT' | 'POSTED';
@@ -160,7 +166,25 @@ export class TradeDocumentsService {
         if (e instanceof ReceiptError) throw new AccError(e.code, e.message, e.fix ? { fix: e.fix } : undefined);
         throw e;
       }
-      const price = l.price !== undefined && l.price !== '' ? money(l.price, 2, `цена (строка ${i + 1})`) : null;
+      const price = l.price !== undefined && l.price !== '' && l.price !== null ? money(l.price, 2, `цена (строка ${i + 1})`) : null;
+      // FP-033: партия, срок, учётное (инвентаризация), причина списания/расхождения.
+      const lotNumber = (l.lotNumber ?? '').trim() || null;
+      let expiryDate: Date | null = null;
+      if (l.expiryDate) {
+        expiryDate = new Date(String(l.expiryDate).slice(0, 10) + 'T00:00:00.000Z');
+        if (isNaN(expiryDate.getTime())) throw new AccError('BAD_DATE', `Строка ${i + 1}: некорректный срок годности`);
+      }
+      const bookQ = input.docType === 'INVENTORY' && l.bookQty != null ? new D(String(l.bookQty)) : null;
+      try {
+        if (input.docType === 'INVENTORY') checkInventoryLine(i + 1, { qty, bookQty: bookQ, price, discrepancyReason: receipt.discrepancyReason, discrepancyNote: receipt.discrepancyNote });
+        if (input.docType === 'LOSS') {
+          if (!receipt.discrepancyReason && input.lossReason) receipt.discrepancyReason = input.lossReason;
+          checkLossLine(i + 1, receipt.discrepancyReason, receipt.discrepancyNote);
+        }
+      } catch (e) {
+        if (e instanceof CountError) throw new AccError(e.code, e.message, e.fix ? { fix: e.fix } : undefined);
+        throw e;
+      }
       const discount = l.discount !== undefined && l.discount !== '' ? money(l.discount, 2, 'скидка %') : null;
       const gross = price ? price.times(qty) : new D(0);
       const amount = round(discount ? gross.minus(gross.times(discount).div(100)) : gross);
@@ -169,6 +193,7 @@ export class TradeDocumentsService {
         vatRate: l.vatRate !== undefined && l.vatRate !== null && l.vatRate !== '' ? new D(String(l.vatRate)) : null,
         ...receipt,
         binId: l.binId || null, binToId: l.binToId || null,
+        lotNumber, expiryDate, bookQty: bookQ,
       };
     });
     if (input.docType === 'SUPPLY' && lines.length && lines.every((l) => l.qty.isZero())) {
@@ -182,8 +207,53 @@ export class TradeDocumentsService {
     return {
       lineNo: l.lineNo, productId: l.productId, qty: l.qty, price: l.price, discount: l.discount, amount: l.amount, vatRate: l.vatRate,
       expectedQty: l.expectedQty, rejectedQty: l.rejectedQty, discrepancyReason: l.discrepancyReason, discrepancyNote: l.discrepancyNote,
-      binId: l.binId, binToId: l.binToId,
+      binId: l.binId, binToId: l.binToId, lotNumber: l.lotNumber, expiryDate: l.expiryDate, bookQty: l.bookQty,
     };
+  }
+
+  /** Итог документа: сумма строк; инвентаризации — сумма расхождений (для согласования); платежа — сумма платежа. */
+  private totalOf(docType: string, lines: ReturnType<TradeDocumentsService['buildLines']>, amount?: unknown) {
+    if (docType.startsWith('PAYMENT_')) return money(amount as any, 2, 'сумма платежа');
+    if (docType === 'INVENTORY') return inventoryValue(lines);
+    return lines.reduce((a, l) => a.plus(l.amount), new D(0));
+  }
+
+  /**
+   * FP-033: подготовка строк перед сохранением — учётное количество инвентаризации (сервер, на конец даты документа,
+   * без его собственных движений) и обязательность партии/срока для партионного прихода.
+   */
+  private async prepareLines(tx: Tx, input: TradeDocInput, docId?: string) {
+    const lines = input.lines || [];
+    if (input.docType === 'INVENTORY') {
+      if (!input.storeId) throw new AccError('STORE_REQUIRED', 'Укажите склад инвентаризации');
+      for (const l of lines) {
+        const lotNumber = (l.lotNumber ?? '').trim() || null;
+        l.bookQty = (await bookQty(tx, { productId: l.productId, storeId: input.storeId, binId: l.binId || null, lotNumber, on: new Date(input.date), excludeSourceId: docId })).toString();
+      }
+    }
+    const incoming = ['SUPPLY', 'ENTER', 'SALES_RETURN', 'RETAIL_RETURN', 'INVENTORY'].includes(input.docType);
+    const ids = [...new Set(lines.map((l) => l.productId))];
+    const ps = ids.length ? await tx.product.findMany({ where: { id: { in: ids } }, select: { id: true, name: true, lotTracking: true, expiryTracking: true } }) : [];
+    for (const [i, l] of lines.entries()) {
+      const p = ps.find((x) => x.id === l.productId);
+      if (!p) continue;
+      // Инвентаризация: остаток без партии (накоплен до включения партионного учёта) пересчитывается как есть;
+      // партия обязательна только у новой находки (учётного без партии нет).
+      const legacyUnlotted = input.docType === 'INVENTORY' && !(l.lotNumber ?? '').trim() && !new D(String(l.bookQty ?? 0)).isZero();
+      try {
+        checkLotLine(i + 1, incoming && !legacyUnlotted, p, { lotNumber: (l.lotNumber ?? '').trim() || null, expiryDate: l.expiryDate ? new Date(l.expiryDate) : null });
+      } catch (e) { this.lotErr(e); }
+    }
+  }
+
+  /** Встречные движения; партия, которой уже нет (продана), — понятная ошибка. */
+  private async reverse(tx: Tx, doc: any, opts: { userId?: string | null; reason?: string }) {
+    try { return await reverseDocumentMoves(tx, doc, opts); } catch (e) { this.lotErr(e); }
+  }
+
+  private lotErr(e: unknown): never {
+    if (e instanceof LotError) throw new AccError(e.code, e.message, e.fix ? { fix: e.fix } : undefined);
+    throw e;
   }
 
   /** FP-032: служебный склад «В пути» организации (создаётся при первом двухэтапном перемещении). */
@@ -203,16 +273,33 @@ export class TradeDocumentsService {
    * проверка, что расход не забрал чужой резерв.
    */
   private async moveStock(tx: Tx, ctx: OrgContext, doc: any, reason?: string) {
-    await recordDocumentMoves(tx, doc, { userId: ctx.userId, reason });
+    try {
+      await recordDocumentMoves(tx, doc, { userId: ctx.userId, reason });
+    } catch (e) { this.lotErr(e); }
+    // Инвентаризация фиксирует факт — резервы её не останавливают (нехватку под резерв покажет «свободно» < 0).
+    if (doc.docType === 'INVENTORY') return;
     try {
       await consumeForShipment(tx, doc);
       await assertReservesCovered(tx, plannedMoves(doc, await serviceIds(tx, doc)));
     } catch (e) { this.reserveErr(e); }
   }
 
+  /** FP-033: учёт изменился после подсчёта (задним числом провели движение) — проводить по старому учётному нельзя. */
+  private async assertBookCurrent(tx: Tx, doc: { id: string; docType: string; date: Date; storeId: string | null; lines: any[] }) {
+    if (doc.docType !== 'INVENTORY' || !doc.storeId) return;
+    const changed: any[] = [];
+    for (const l of doc.lines) {
+      const now = await bookQty(tx, { productId: l.productId, storeId: doc.storeId, binId: l.binId ?? null, lotNumber: l.lotNumber ?? null, on: doc.date, excludeSourceId: doc.id });
+      if (l.bookQty == null || !now.eq(l.bookQty)) changed.push({ lineNo: l.lineNo, productId: l.productId, counted: l.bookQty?.toString() ?? null, now: now.toString() });
+    }
+    if (changed.length) {
+      throw new AccError('INVENTORY_BOOK_CHANGED', `Учётные количества изменились после подсчёта (строк: ${changed.length}) — обновите их`, { status: 409, fix: 'Сохраните инвентаризацию — учётные пересчитаются; расхождения и согласование — заново.', details: changed });
+    }
+  }
+
   private attrs(input: TradeDocInput, prev: any = {}) {
     const a: any = { ...prev };
-    for (const k of ['vatIncluded', 'paymentType', 'bankAccountId', 'departmentId', 'lossAccount', 'baseId', 'comment', 'allocation', 'twoStage', 'destinationStoreId', 'transferStage'] as const) if ((input as any)[k] !== undefined) a[k] = (input as any)[k];
+    for (const k of ['vatIncluded', 'paymentType', 'bankAccountId', 'departmentId', 'lossAccount', 'baseId', 'comment', 'allocation', 'twoStage', 'destinationStoreId', 'transferStage', 'lossReason'] as const) if ((input as any)[k] !== undefined) a[k] = (input as any)[k];
     return a;
   }
 
@@ -261,7 +348,8 @@ export class TradeDocumentsService {
     const date = new Date(input.date);
     if (!input.date || isNaN(date.getTime())) throw new AccError('BAD_DATE', 'Укажите дату документа');
     const isPayment = input.docType.startsWith('PAYMENT_');
-    if (!isPayment && !(input.lines || []).length) throw new AccError('NO_LINES', 'Добавьте хотя бы одну строку');
+    // Инвентаризация создаётся пустой и заполняется по остаткам склада (FP-033).
+    if (!isPayment && input.docType !== 'INVENTORY' && !(input.lines || []).length) throw new AccError('NO_LINES', 'Добавьте хотя бы одну строку');
     return this.prisma.$transaction(async (tx) => {
       // FP-032: перемещение в два этапа — склад-получатель запоминается, отгрузка идёт на «В пути».
       if (input.docType === 'MOVE' && input.twoStage && !internal) {
@@ -273,8 +361,9 @@ export class TradeDocumentsService {
         throw new AccError('BAD_TWO_STAGE', 'В два этапа оформляется только перемещение');
       }
       await this.validateRefs(tx, ctx, input, internal);
+      await this.prepareLines(tx, input);
       const lines = this.buildLines(input);
-      const total = isPayment ? money(input.amount, 2, 'сумма платежа') : lines.reduce((a, l) => a.plus(l.amount), new D(0));
+      const total = this.totalOf(input.docType, lines, input.amount);
       const number = await this.number(tx, ctx, input.docType, date);
       const doc = await tx.document.create({
         data: {
@@ -310,11 +399,12 @@ export class TradeDocumentsService {
         lines: input.lines ?? doc.lines.map((l) => ({
           productId: l.productId, qty: l.qty.toString(), price: l.price?.toString(), discount: l.discount?.toString(), vatRate: l.vatRate?.toString() ?? null,
           expectedQty: l.expectedQty?.toString() ?? null, rejectedQty: l.rejectedQty?.toString() ?? null, discrepancyReason: l.discrepancyReason, discrepancyNote: l.discrepancyNote,
-          binId: l.binId, binToId: l.binToId,
+          binId: l.binId, binToId: l.binToId, lotNumber: l.lotNumber, expiryDate: l.expiryDate ? l.expiryDate.toISOString().slice(0, 10) : null,
         })),
         amount: input.amount ?? doc.total?.toString(),
       } as TradeDocInput;
-      for (const k of ['comment', 'vatIncluded', 'paymentType', 'bankAccountId', 'departmentId', 'lossAccount', 'allocation'] as const) if ((input as any)[k] !== undefined) (merged as any)[k] = (input as any)[k];
+      for (const k of ['comment', 'vatIncluded', 'paymentType', 'bankAccountId', 'departmentId', 'lossAccount', 'allocation', 'lossReason'] as const) if ((input as any)[k] !== undefined) (merged as any)[k] = (input as any)[k];
+      if (merged.lossReason === undefined && (doc.attributes as any)?.lossReason) merged.lossReason = (doc.attributes as any).lossReason;
       if (doc.docType === 'LANDED_COST') merged.baseId = (doc.attributes as any)?.baseId;
       // FP-032: отгрузка в два этапа — склад «В пути» не меняется; новый склад-получатель — в реквизитах; приёмка с
       // «В пути» — служебная (склады те же).
@@ -330,10 +420,11 @@ export class TradeDocumentsService {
       }
       if (da.transferStage === 'RECEIPT') { merged.storeId = doc.storeId ?? undefined; merged.storeToId = doc.storeToId ?? undefined; }
       await this.validateRefs(tx, ctx, merged, internal);
+      await this.prepareLines(tx, merged, id);
       // FP-029: сохранение без изменения содержимого — не новая версия (иначе «Провести» на экране, которое сначала
       // сохраняет, отменяло бы согласование этой же версии).
       const lines0 = this.buildLines(merged);
-      const total0 = doc.docType.startsWith('PAYMENT_') ? money(merged.amount, 2, 'сумма платежа') : lines0.reduce((a, l) => a.plus(l.amount), new D(0));
+      const total0 = this.totalOf(doc.docType, lines0, merged.amount);
       const candidate = {
         ...doc, date: new Date(merged.date), counterpartyId: merged.counterpartyId ?? null, contractId: merged.contractId ?? null, storeId: merged.storeId ?? null,
         storeToId: merged.storeToId ?? null, total: total0, comment: merged.comment ?? doc.comment, attributes: this.attrs(input as TradeDocInput, doc.attributes ?? {}), lines: lines0,
@@ -343,12 +434,11 @@ export class TradeDocumentsService {
       if (wasPosted) await this.assertNoLandedCosts(tx, doc);
       // Проведённая версия неизменяема: снимаем проведение, меняем, проводим новую версию (всё в одной транзакции).
       if (wasPosted) {
-        await reverseDocumentMoves(tx, doc, { userId: ctx.userId, reason: input.reason });
+        await this.reverse(tx, doc, { userId: ctx.userId, reason: input.reason });
         await tx.document.update({ where: { id }, data: { status: 'DRAFT' } });
       }
       const lines = this.buildLines(merged);
-      const isPayment = doc.docType.startsWith('PAYMENT_');
-      const total = isPayment ? money(merged.amount, 2, 'сумма платежа') : lines.reduce((a, l) => a.plus(l.amount), new D(0));
+      const total = this.totalOf(doc.docType, lines, merged.amount);
       await tx.documentLine.deleteMany({ where: { documentId: id } });
       await tx.document.update({
         where: { id },
@@ -389,6 +479,7 @@ export class TradeDocumentsService {
     if (doc.status === 'POSTED') {
       throw new AccError('DOC_ALREADY_POSTED', `Документ ${doc.number ?? ''} уже проведён (версия ${doc.postedVersion ?? doc.version})`, { status: 409, details: { postedVersion: doc.postedVersion ?? doc.version } });
     }
+    await this.assertBookCurrent(tx, doc);
     // FP-029: если правило требует согласования — нужно действующее согласование этой версии (расходуется).
     await this.approvals.consumeForPost(tx, ctx, await this.approvals.docState(tx, ctx, 'TRADE', id));
     await tx.document.update({ where: { id }, data: { status: 'POSTED', postedVersion: doc.version, updatedBy: ctx.userId } });
@@ -461,7 +552,7 @@ export class TradeDocumentsService {
       if (doc.status !== 'POSTED') return this.view(tx, id);
       await this.assertNoLandedCosts(tx, doc);
       await tx.document.update({ where: { id }, data: { status: 'DRAFT', postedVersion: null, updatedBy: ctx.userId } });
-      await reverseDocumentMoves(tx, doc, { userId: ctx.userId, reason: 'Снятие проведения' });
+      await this.reverse(tx, doc, { userId: ctx.userId, reason: 'Снятие проведения' });
       await this.autopilot.syncTradeDocument(tx, id, { userId: ctx.userId, override, organizationId: ctx.organizationId });
       await this.writeVersion(tx, ctx, id, 'UNPOST');
       return this.view(tx, id);
@@ -474,7 +565,7 @@ export class TradeDocumentsService {
       this.checkVersion(doc, expectedVersion);
       if (doc.deleted && doc.status === 'CANCELLED') return this.view(tx, id);
       if (doc.status === 'POSTED') await this.assertNoLandedCosts(tx, doc);
-      if (doc.status === 'POSTED') await reverseDocumentMoves(tx, doc, { userId: ctx.userId, reason: 'Пометка на удаление' });
+      if (doc.status === 'POSTED') await this.reverse(tx, doc, { userId: ctx.userId, reason: 'Пометка на удаление' });
       if (doc.docType === 'CUSTOMER_ORDER') await releaseReservations(tx, id, 'ORDER_CANCELLED');
       await tx.document.update({ where: { id }, data: { status: 'CANCELLED', deleted: true, postedVersion: null, updatedBy: ctx.userId } });
       await this.autopilot.syncTradeDocument(tx, id, { userId: ctx.userId, override, organizationId: ctx.organizationId });
@@ -548,6 +639,33 @@ export class TradeDocumentsService {
       await tx.auditLog.create({ data: { userId: ctx.userId, organizationId: ctx.organizationId, action: 'STOCK_RESERVE_RELEASE', entity: 'document', entityId: id, after: { released: n } } });
       return this.view(tx, id);
     });
+  }
+
+  // ── FP-033: инвентаризация ──
+
+  /**
+   * Заполнить инвентаризацию по остаткам склада (ячейки, партии) на её дату: факт = учётное (подсчётчики правят факт),
+   * цена — последняя известная стоимость прихода (для оценки расхождений). Новая версия документа.
+   */
+  async fillFromStock(ctx: OrgContext, id: string, b: { binId?: string | null; expectedVersion?: number } = {}) {
+    const lines = await this.prisma.$transaction(async (tx) => {
+      const doc = await this.scoped(tx, ctx, id);
+      if (doc.docType !== 'INVENTORY') throw new AccError('NOT_INVENTORY', 'Заполнить по остаткам можно только инвентаризацию');
+      if (doc.status !== 'DRAFT') throw new AccError('BAD_STATUS', 'Заполнять можно только черновик инвентаризации');
+      if (!doc.storeId) throw new AccError('STORE_REQUIRED', 'Укажите склад инвентаризации');
+      const pos = await stockPositions(tx, doc.storeId, doc.date, b.binId ?? null, id);
+      const out: TradeLineInput[] = [];
+      for (const p of pos) {
+        const [last] = await tx.$queryRaw<{ v: string | null }[]>`
+          SELECT round(value / qty, 2)::text AS v FROM stock_movements
+          WHERE organization_id = ${ctx.organizationId} AND product_id = ${p.productId} AND qty > 0 AND value > 0 AND reverses_id IS NULL
+          ORDER BY (lot_number IS NOT DISTINCT FROM ${p.lotNumber}) DESC, occurred_at DESC, created_at DESC, source_line DESC LIMIT 1`; // своя партия — первой; порядок однозначен
+        out.push({ productId: p.productId, qty: p.bookQty.toString(), price: last?.v ?? undefined, binId: p.binId, lotNumber: p.lotNumber, expiryDate: p.expiryDate ? p.expiryDate.toISOString().slice(0, 10) : null });
+      }
+      if (!out.length) throw new AccError('NOTHING_TO_COUNT', 'На складе нет учётных остатков на дату инвентаризации');
+      return out;
+    });
+    return this.update(ctx, id, { expectedVersion: b.expectedVersion, lines: lines as any });
   }
 
   // ── FP-032: перемещение в два этапа ──
@@ -645,7 +763,7 @@ export class TradeDocumentsService {
   private async view(tx: Tx, id: string) {
     const doc = await tx.document.findUnique({
       where: { id },
-      include: { counterparty: { select: { id: true, name: true, inn: true } }, lines: { include: { product: { select: { id: true, name: true, kind: true, code: true, article: true } }, bin: { select: { id: true, name: true, code: true } }, binTo: { select: { id: true, name: true, code: true } } }, orderBy: { lineNo: 'asc' } } },
+      include: { counterparty: { select: { id: true, name: true, inn: true } }, lines: { include: { product: { select: { id: true, name: true, kind: true, code: true, article: true, lotTracking: true, expiryTracking: true } }, bin: { select: { id: true, name: true, code: true } }, binTo: { select: { id: true, name: true, code: true } } }, orderBy: { lineNo: 'asc' } } },
     });
     const org = doc!.organizationId;
     const entry = org ? await tx.accEntry.findFirst({

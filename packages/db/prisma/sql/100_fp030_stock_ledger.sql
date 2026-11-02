@@ -59,7 +59,8 @@ BEGIN
   IF NEW.reverses_id IS NOT NULL THEN
     SELECT * INTO o FROM stock_movements WHERE id = NEW.reverses_id;
     IF NOT FOUND OR o.reverses_id IS NOT NULL OR o.qty <> -NEW.qty OR o.product_id <> NEW.product_id OR o.store_id <> NEW.store_id
-       OR o.bin_id IS DISTINCT FROM NEW.bin_id OR o.organization_id <> NEW.organization_id THEN
+       OR o.bin_id IS DISTINCT FROM NEW.bin_id OR o.organization_id <> NEW.organization_id
+       OR o.lot_number IS DISTINCT FROM NEW.lot_number OR o.expiry_date IS DISTINCT FROM NEW.expiry_date THEN
       RAISE EXCEPTION 'STOCK_MOVE_REVERSAL: встречное движение не совпадает с исходным %', NEW.reverses_id USING ERRCODE = 'P0001';
     END IF;
   END IF;

@@ -43,9 +43,9 @@ export interface RuleResult {
   moves: StockMoveInput[];
 }
 
-const SUPPORTED = ['SUPPLY', 'LANDED_COST', 'DEMAND', 'SALES_RETURN', 'PURCHASE_RETURN', 'ENTER', 'LOSS', 'MOVE', 'RETAIL_DEMAND', 'RETAIL_RETURN', 'PAYMENT_IN', 'PAYMENT_OUT'];
+const SUPPORTED = ['SUPPLY', 'LANDED_COST', 'INVENTORY', 'DEMAND', 'SALES_RETURN', 'PURCHASE_RETURN', 'ENTER', 'LOSS', 'MOVE', 'RETAIL_DEMAND', 'RETAIL_RETURN', 'PAYMENT_IN', 'PAYMENT_OUT'];
 /** Документы без бухгалтерских последствий (заказы, счета, инвентаризация, смена). */
-export const NO_ACCOUNTING = ['PURCHASE_ORDER', 'CUSTOMER_ORDER', 'INVOICE_IN', 'INVOICE_OUT', 'INVENTORY', 'RETAIL_SHIFT'];
+export const NO_ACCOUNTING = ['PURCHASE_ORDER', 'CUSTOMER_ORDER', 'INVOICE_IN', 'INVOICE_OUT', 'RETAIL_SHIFT'];
 
 export function isSupported(docType: string) {
   return SUPPORTED.includes(docType);
@@ -90,7 +90,8 @@ async function availableAdvance(rc: TradeRuleCtx, doc: TradeDoc, account: string
 
 export async function buildTradeEntry(doc: TradeDoc, rc: TradeRuleCtx): Promise<RuleResult> {
   // FP-030: строка поступления, где ничего не принято (не пришло или всё в отказе), — без проводок и движений.
-  doc = { ...doc, lines: doc.lines.filter((l) => !new D(l.qty).isZero()) };
+  // Инвентаризация (FP-033) — наоборот: факт 0 — это недостача.
+  if (doc.docType !== 'INVENTORY') doc = { ...doc, lines: doc.lines.filter((l) => !new D(l.qty).isZero()) };
   const a = rc.accounts;
   const P: PostingInput[] = [];
   const M: StockMoveInput[] = [];
@@ -211,6 +212,28 @@ export async function buildTradeEntry(doc: TradeDoc, rc: TradeRuleCtx): Promise<
         M.push({ lineNo: l.lineNo, productId: l.productId, storeId: st, account: a.inventory, direction: 'IN', kind: 'LANDED_COST', quantity: '0.000', knownCost: amount.toFixed(2), pairKey: `${base.id}:${l.lineNo}`, costAccount: a.cogs });
       }
       P.push({ side: 'C', account: a.payable, amount: total.toFixed(2), dims: cp(), memo: 'Задолженность за доп. расходы' });
+      break;
+    }
+    case 'INVENTORY': {
+      // FP-033: результат инвентаризации — разница «факт − учётное»: излишек оприходуется по цене строки (Дт 1330 /
+      // Кт 6190), недостача списывается по себестоимости на счёт списания (по умолчанию 7170). Строки без учётного
+      // количества (старые документы) — без последствий.
+      const st = store(doc.storeId);
+      const lossAccount = doc.attributes?.lossAccount || a.otherExpense;
+      for (const l of doc.lines as (TradeDoc['lines'][number] & { bookQty?: Dec | null; binId?: string | null })[]) {
+        if (isService(l) || l.bookQty == null) continue;
+        const diff = new D(l.qty).minus(l.bookQty);
+        if (diff.isZero()) continue;
+        if (diff.gt(0)) {
+          const amount = round(diff.times(l.price ?? 0));
+          if (amount.isZero()) throw new AccError('PRICE_REQUIRED', `Инвентаризация ${doc.number ?? ''}, строка ${l.lineNo}: укажите цену излишка «${l.product.name}»`);
+          P.push({ side: 'D', account: a.inventory, amount: amount.toFixed(2), quantity: diff.toFixed(3), dims: inv(l.productId, st), memo: `Излишек по инвентаризации: ${l.product.name}` });
+          P.push({ side: 'C', account: a.otherIncome, amount: amount.toFixed(2), memo: 'Излишки по инвентаризации' });
+          M.push({ lineNo: l.lineNo, productId: l.productId, storeId: st, account: a.inventory, direction: 'IN', kind: 'INVENTORY_SURPLUS', quantity: diff.toFixed(3), knownCost: amount.toFixed(2) });
+        } else {
+          M.push({ lineNo: l.lineNo, productId: l.productId, storeId: st, account: a.inventory, direction: 'OUT', kind: 'INVENTORY_SHORTAGE', quantity: diff.neg().toFixed(3), costAccount: lossAccount, meta: dept ? { departmentId: dept } : undefined });
+        }
+      }
       break;
     }
     case 'PURCHASE_RETURN': {

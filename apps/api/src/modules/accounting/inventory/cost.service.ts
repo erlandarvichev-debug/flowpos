@@ -154,7 +154,7 @@ export class CostService {
           cost = q.gt(0) ? round(c.div(q).times(m.quantity)) : new D(m.meta?.fallbackCost ?? 0);
           if (!cost.isZero()) push(m, [inv(m, 'D', cost, m.quantity, m.storeId), { side: 'C', account: m.costAccount ?? '7010', amount: cost.toFixed(2), dims: { PRODUCT: productId }, memo: 'Возврат себестоимости' }]);
         }
-        addLot(m.storeId, m.quantity, cost, m.kind === 'PURCHASE' || m.kind === 'ENTER' || m.kind === 'OPENING' ? `${m.sourceId}:${m.lineNo}` : null);
+        addLot(m.storeId, m.quantity, cost, ['PURCHASE', 'ENTER', 'OPENING', 'INVENTORY_SURPLUS'].includes(m.kind) ? `${m.sourceId}:${m.lineNo}` : null);
         continue;
       }
       const { cost, pieces } = await consume(m, m.storeId);

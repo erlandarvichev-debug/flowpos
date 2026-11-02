@@ -36,7 +36,12 @@ export function discrepancyOf(l: { qty: Dec | string | number; expectedQty?: Dec
 export function checkReceiptLine(docType: string, n: number, l: ReceiptLineIn) {
   const any = l.expectedQty != null || l.rejectedQty != null || !!l.discrepancyReason || !!l.discrepancyNote;
   if (docType !== 'SUPPLY') {
-    if (any) throw new ReceiptError('RECEIPT_FIELDS', `Строка ${n}: ожидаемое количество, отказ и причина расхождения указываются только в поступлении`);
+    // FP-033: у списания и инвентаризации — своя причина (проверяется отдельно); ожидаемое и отказ — только у поступления.
+    const reasonOnly = docType === 'LOSS' || docType === 'INVENTORY';
+    if (l.expectedQty != null || l.rejectedQty != null || (!reasonOnly && (l.discrepancyReason || l.discrepancyNote))) {
+      throw new ReceiptError('RECEIPT_FIELDS', `Строка ${n}: ожидаемое количество, отказ и причина расхождения указываются только в поступлении`);
+    }
+    if (docType === 'INVENTORY') return; // факт может быть 0 — проверка в checkInventoryLine
     if (l.qty.lte(0)) throw new ReceiptError('BAD_QTY', `Строка ${n}: количество должно быть больше нуля`);
     return;
   }

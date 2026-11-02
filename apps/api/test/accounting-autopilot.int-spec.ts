@@ -131,7 +131,7 @@ describe('Себестоимость', () => {
     const t = await makeTrade(prisma, ctx, { vatPayer: false });
     await s.trade.create(ctx, { docType: 'SUPPLY', date: '2026-10-01', counterpartyId: t.supplier.id, storeId: t.s1.id, lines: [{ productId: t.goods.id, qty: '10', price: '100' }], status: 'POSTED' });
     await s.trade.create(ctx, { docType: 'MOVE', date: '2026-10-02', storeId: t.s1.id, storeToId: t.s2.id, lines: [{ productId: t.goods.id, qty: '4' }], status: 'POSTED' });
-    await s.trade.create(ctx, { docType: 'LOSS', date: '2026-10-03', storeId: t.s2.id, lines: [{ productId: t.goods.id, qty: '1' }], status: 'POSTED' });
+    await s.trade.create(ctx, { docType: 'LOSS', lossReason: 'DAMAGED', date: '2026-10-03', storeId: t.s2.id, lines: [{ productId: t.goods.id, qty: '1' }], status: 'POSTED' });
     const stock = await s.reports.stock(ctx, {});
     const byStore = Object.fromEntries(stock.lines.map((l: any) => [l.storeId, `${l.quantity}/${l.amount}`]));
     expect(byStore[t.s1.id]).toBe('6.000/600.00');

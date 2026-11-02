@@ -109,6 +109,33 @@ export class StockLedgerService {
     return out;
   }
 
+  /**
+   * FP-033: остатки партий (товар, склад, партия, срок): сколько дней до конца срока, просрочена ли. Фильтры: товар,
+   * склад, «истекает в ближайшие N дней» (включая просроченные).
+   */
+  async lots(ctx: OrgContext, q: { productId?: string; storeId?: string; expiringInDays?: string; on?: string }) {
+    const on = day(q.on, 'on') ?? new Date(new Date().toISOString().slice(0, 10) + 'T00:00:00.000Z');
+    const rows = await this.prisma.$queryRaw<{ product_id: string; store_id: string; lot: string; expiry: Date | null; qty: string }[]>`
+      SELECT product_id, store_id, lot_number AS lot, max(expiry_date) AS expiry, sum(qty)::text AS qty FROM stock_movements
+      WHERE organization_id = ${ctx.organizationId} AND lot_number IS NOT NULL
+        AND (${q.productId ?? null}::text IS NULL OR product_id = ${q.productId ?? null})
+        AND (${q.storeId ?? null}::text IS NULL OR store_id = ${q.storeId ?? null})
+      GROUP BY product_id, store_id, lot_number HAVING sum(qty) > 0
+      ORDER BY max(expiry_date) NULLS LAST, lot_number`;
+    const limit = q.expiringInDays !== undefined && q.expiringInDays !== '' ? Number(q.expiringInDays) : null;
+    const items = rows
+      .map((r) => {
+        const daysLeft = r.expiry ? Math.round((r.expiry.getTime() - on.getTime()) / 86_400_000) : null;
+        return { productId: r.product_id, storeId: r.store_id, lotNumber: r.lot, expiryDate: r.expiry, qty: new D(r.qty).toString(), daysLeft, expired: daysLeft !== null && daysLeft < 0 };
+      })
+      .filter((x) => limit === null || (x.daysLeft !== null && x.daysLeft <= limit));
+    const [products, stores] = await Promise.all([
+      this.prisma.product.findMany({ where: { id: { in: [...new Set(items.map((i) => i.productId))] } }, select: { id: true, name: true, code: true } }),
+      this.prisma.store.findMany({ where: { id: { in: [...new Set(items.map((i) => i.storeId))] } }, select: { id: true, name: true } }),
+    ]);
+    return { on: on.toISOString().slice(0, 10), items: items.map((i) => ({ ...i, product: products.find((p) => p.id === i.productId) ?? null, store: stores.find((s) => s.id === i.storeId) ?? null })) };
+  }
+
   /** Сверка: остаток каждой строки stock равен сумме движений журнала. Расхождений быть не должно. */
   async check(ctx: OrgContext) {
     const rows = await this.prisma.$queryRaw<{ product_id: string; store_id: string; bin_id: string | null; stock_qty: string; ledger_qty: string }[]>`

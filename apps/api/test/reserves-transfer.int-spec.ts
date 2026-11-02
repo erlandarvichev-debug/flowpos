@@ -104,7 +104,7 @@ describe('FP-032: резервы', () => {
     const o = await order('6');
     await s.trade.reserve(ctx, o.id);
     expect(await code(demand('5'))).toBe('RESERVED_STOCK');
-    expect(await code(s.trade.create(ctx, { docType: 'LOSS', date: '2026-10-03', storeId: t.s1.id, status: 'POSTED', lines: [{ productId: t.goods.id, qty: '5' }] }))).toBe('RESERVED_STOCK');
+    expect(await code(s.trade.create(ctx, { docType: 'LOSS', lossReason: 'DAMAGED', date: '2026-10-03', storeId: t.s1.id, status: 'POSTED', lines: [{ productId: t.goods.id, qty: '5' }] }))).toBe('RESERVED_STOCK');
     expect(await code(s.trade.create(ctx, { docType: 'MOVE', date: '2026-10-03', storeId: t.s1.id, storeToId: t.s2.id, status: 'POSTED', lines: [{ productId: t.goods.id, qty: '5' }] }))).toBe('RESERVED_STOCK');
     expect(await stockOf(t.goods.id, t.s1.id)).toBe('10'); // отклонённое ничего не списало
     expect((await demand('4')).status).toBe('POSTED'); // свободные 4 — можно
@@ -180,7 +180,7 @@ describe('FP-032: перемещение в два этапа', () => {
     expect(await code(s.trade.create(ctx, { docType: 'DEMAND', date: '2026-10-03', counterpartyId: t.customer.id, storeId: transit.id, lines: [{ productId: t.goods.id, qty: '1', price: '1' }] }))).toBe('STORE_TRANSIT');
     expect(await code(s.trade.create(ctx, { docType: 'MOVE', date: '2026-10-03', storeId: t.s1.id, storeToId: transit.id, lines: [{ productId: t.goods.id, qty: '1' }] }))).toBe('STORE_TRANSIT');
     expect(await code(s.trade.create(ctx, { docType: 'SUPPLY', date: '2026-10-03', counterpartyId: t.supplier.id, storeId: t.s1.id, twoStage: true, lines: [{ productId: t.goods.id, qty: '1', price: '1' }] }))).toBe('BAD_TWO_STAGE');
-    const loss = await s.trade.create(ctx, { docType: 'LOSS', date: '2026-10-04', storeId: transit.id, status: 'POSTED', lines: [{ productId: t.goods.id, qty: '1' }] });
+    const loss = await s.trade.create(ctx, { docType: 'LOSS', lossReason: 'DAMAGED', date: '2026-10-04', storeId: transit.id, status: 'POSTED', lines: [{ productId: t.goods.id, qty: '1' }] });
     expect(loss.status).toBe('POSTED');
     expect(await stockOf(t.goods.id, transit.id)).toBe('2');
     // Флаг «В пути» из запроса не принимается — ни при изменении, ни при создании склада.
