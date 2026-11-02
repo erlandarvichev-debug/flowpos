@@ -1,6 +1,5 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { createHash } from 'crypto';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { AccError } from '../common/acc-error';
 import { OrgContext } from '../access/org-context';
@@ -9,6 +8,8 @@ import { PostingService } from '../core/posting.service';
 import { ruleFor, RULES, registerRule } from '../core/rules/rules';
 import { MONEY_RULES } from '../core/rules/money-rules';
 import { DEFAULT_ACCOUNTS } from '../autopilot/accounts';
+import { accHash } from './content-hash';
+import { ApprovalsService } from '../approvals/approvals.service';
 
 MONEY_RULES.forEach(registerRule);
 
@@ -48,6 +49,7 @@ export class DocumentsService {
     private prisma: PrismaService,
     private periods: PeriodsService,
     private posting: PostingService,
+    private approvals: ApprovalsService,
   ) {}
 
   docTypes() {
@@ -86,15 +88,9 @@ export class DocumentsService {
     return doc;
   }
 
-  /** FP-028: хэш содержимого версии (без статуса) — одинаковое содержимое даёт одинаковый хэш. */
-  private contentHash(doc: any) {
-    const { status: _s, version: _v, ...content } = this.snapshot(doc);
-    return createHash('sha256').update(JSON.stringify({ ...content, date: new Date(content.date).toISOString(), amount: new Prisma.Decimal(content.amount ?? 0).toFixed(2) })).digest('hex');
-  }
-
   private async version(tx: Tx, ctx: OrgContext, doc: any, action: string, reason?: string) {
     await tx.accDocumentVersion.create({
-      data: { documentId: doc.id, version: doc.version, action, snapshot: this.snapshot(doc) as any, hash: this.contentHash(doc), changedById: ctx.userId, reason },
+      data: { documentId: doc.id, version: doc.version, action, snapshot: this.snapshot(doc) as any, hash: accHash(doc), changedById: ctx.userId, reason },
     });
   }
 
@@ -201,6 +197,8 @@ export class DocumentsService {
       const newDate = input.date ? this.parseDate(input.date) : doc.date;
       const body = input.body ?? doc.body;
       if (input.body) await this.checkRefs(tx, ctx, body);
+      // FP-029: сохранение без изменения содержимого — не новая версия (согласование этой версии остаётся в силе).
+      if (accHash({ ...doc, date: newDate, comment: input.comment ?? doc.comment, body, amount: ruleFor(doc.docType).amount(body) }) === accHash(doc)) return doc;
       if (doc.status === 'POSTED') {
         if (!input.reason) throw new AccError('REASON_REQUIRED', 'Изменение проведённого документа требует указать причину', { fix: 'Заполните поле «Причина изменения».' });
         if (!ctx.can('acc.doc.post')) throw new AccError('FORBIDDEN', 'Нет права перепроводить документы', { status: 403 });
@@ -217,6 +215,7 @@ export class DocumentsService {
         },
       });
       await this.version(tx, ctx, updated, 'UPDATE', input.reason);
+      await this.approvals.supersede(tx, ctx.organizationId, 'ACC', id); // FP-029: изменение отменяет согласования
       if (updated.status === 'POSTED') await this.writePostings(tx, ctx, updated);
       return updated;
     });
@@ -244,11 +243,45 @@ export class DocumentsService {
         throw new AccError('DOC_ALREADY_POSTED', `Документ ${doc.number} уже проведён (версия ${doc.postedVersion ?? doc.version})`, { status: 409, details: { postedVersion: doc.postedVersion ?? doc.version } });
       }
       await this.periods.assertOpen(tx, ctx, [doc.date], opts.override, 'проведение');
+      // FP-029: если правило требует согласования — нужно действующее согласование этой версии (расходуется).
+      if (doc.status !== 'POSTED') await this.approvals.consumeForPost(tx, ctx, await this.approvals.docState(tx, ctx, 'ACC', id));
       await this.writePostings(tx, ctx, doc);
       const posted = await tx.accDocument.update({ where: { id }, data: { status: 'POSTED', postedAt: new Date(), postedVersion: doc.version, updatedById: ctx.userId } });
       await this.version(tx, ctx, posted, 'POST');
       return this.withEntry(tx, ctx, posted);
     });
+  }
+
+  /** FP-029: пробное проведение — проводки, проверка периода и согласования; транзакция откатывается. */
+  async simulate(ctx: OrgContext, id: string, override?: OverrideRequest) {
+    const ROLLBACK = Symbol('simulate');
+    let result: any;
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        const doc = await this.lockDoc(tx, ctx, id);
+        const approval = await this.approvals.requirement(tx, ctx, await this.approvals.docState(tx, ctx, 'ACC', id));
+        let error: any = null;
+        let entry: any = null;
+        if (doc.status === 'POSTED') {
+          error = { code: 'DOC_ALREADY_POSTED', message: 'Документ уже проведён — показаны его проводки' };
+          entry = await this.posting.activePostings(tx, ctx.organizationId, SOURCE, id);
+        } else if (doc.status === 'CANCELLED') error = { code: 'DOC_CANCELLED', message: 'Документ помечен на удаление' };
+        else {
+          try {
+            await this.periods.assertOpen(tx, ctx, [doc.date], override, 'проведение');
+            await this.writePostings(tx, ctx, doc);
+            entry = await this.posting.activePostings(tx, ctx.organizationId, SOURCE, id);
+          } catch (e: any) {
+            error = { code: e?.getResponse?.()?.code ?? 'ERROR', message: e?.getResponse?.()?.message ?? e?.message, fix: e?.getResponse?.()?.fix };
+          }
+        }
+        result = { document: { id, number: doc.number, docType: doc.docType, version: doc.version, status: doc.status, amount: doc.amount.toFixed(2) }, entry, error, approval };
+        throw ROLLBACK;
+      });
+    } catch (e) {
+      if (e !== ROLLBACK) throw e;
+    }
+    return result;
   }
 
   async unpost(ctx: OrgContext, id: string, opts: { override?: OverrideRequest; reason?: string; expectedVersion?: number } = {}) {

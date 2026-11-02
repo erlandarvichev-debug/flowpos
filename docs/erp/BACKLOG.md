@@ -115,7 +115,7 @@ Documents | P0 | Backend | L | DONE_LOCAL — см. `FP-028-DOCUMENTS-VERSIONS-L
 Зависимости: FP-009,FP-026. Приёмка: Expected_version; immutable posted version; source/correction graph; duplicate post conflict.
 
 ## FP-029 · Согласования и simulate command
-Documents | P0 | Backend/Frontend | M | PLANNED
+Documents | P0 | Backend/Frontend | M | DONE_LOCAL — см. `FP-029-APPROVALS-SIMULATE.md` (не выкладывалось)
 Зависимости: FP-028,FP-008. Приёмка: Hash/scope/sum/TTL bound; изменение отменяет approval; UI показывает эффект.
 
 ## FP-030 · Поступление и складские движения

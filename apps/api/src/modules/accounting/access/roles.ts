@@ -11,6 +11,7 @@ export const PERMISSIONS = [
   'acc.esf.read', 'acc.esf.send',
   'acc.tax.manage', // FP-019: распределение входного НДС (к зачёту / не к зачёту, сторно)
   'acc.esf.approve', // FP-018: утверждение решений по ЭСФ (отзыв, отклонение, подтверждение, основание)
+  'acc.doc.approve', // FP-029: согласование проведения документов (по правилам согласования организации)
   'hr.read', 'hr.manage', 'payroll.approve',
   'org.members.manage',
   // FP-008: старые модули и обмен

@@ -151,6 +151,7 @@ const router = createRouter({
         { path: 'accounting/bank-import', name: 'acc-bank-import', component: () => import('@/views/accounting/BankImportView.vue'), meta: { title: 'Импорт выписки' } },
         { path: 'accounting/closing', name: 'acc-closing', component: () => import('@/views/accounting/ClosingView.vue'), meta: { title: 'Закрытие месяца' } },
         { path: 'accounting/statements', name: 'acc-statements', component: () => import('@/views/accounting/StatementsView.vue'), meta: { title: 'Финансовая отчётность' } },
+        { path: 'accounting/approvals', name: 'acc-approvals', component: () => import('@/views/accounting/ApprovalsView.vue'), meta: { title: 'Согласования' } },
         { path: 'accounting/esf', name: 'acc-esf', component: () => import('@/views/accounting/EsfView.vue'), meta: { title: 'ЭСФ' } },
         { path: 'accounting/autopilot', name: 'acc-autopilot', component: () => import('@/views/accounting/AutopilotView.vue'), meta: { title: 'Автопилот' } },
         { path: 'accounting/reports/stock', name: 'acc-stock', component: () => import('@/views/accounting/StockReportView.vue'), meta: { title: 'Остатки и себестоимость' } },

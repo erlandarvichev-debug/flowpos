@@ -1013,6 +1013,60 @@ model Document {
   @@map("documents")
 }
 
+/// FP-029: правило «проведение требует согласования» организации: вид документа (TRADE/ACC, docType или «*»),
+/// сумма от, срок действия согласования. Правил нет — согласование не требуется.
+model ApprovalPolicy {
+  id             String   @id @default(uuid())
+  organizationId String   @map("organization_id")
+  docKind        String   @map("doc_kind")  // TRADE | ACC
+  docType        String   @default("*") @map("doc_type")
+  action         String   @default("POST")
+  minAmount      Decimal  @default(0) @map("min_amount") @db.Decimal(18, 2)
+  ttlHours       Int      @default(24) @map("ttl_hours")
+  enabled        Boolean  @default(true)
+  createdBy      String?  @map("created_by")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@index([organizationId, docKind, enabled])
+  @@map("approval_policies")
+}
+
+/// FP-029: согласование действия над конкретной версией документа. Привязано к организации и действию (scope), версии и
+/// хэшу содержимого, сумме и сроку (TTL); одноразовое. Изменение документа отменяет его (SUPERSEDED); при проведении
+/// всё сверяется заново.
+model Approval {
+  id             String    @id @default(uuid())
+  organizationId String    @map("organization_id")
+  docKind        String    @map("doc_kind")   // TRADE | ACC
+  docId          String    @map("doc_id")
+  docType        String    @map("doc_type")
+  docNumber      String?   @map("doc_number")
+  action         String    @default("POST")
+  docVersion     Int       @map("doc_version")
+  contentHash    String    @map("content_hash")
+  amount         Decimal   @db.Decimal(18, 2)
+  currency       String    @default("KZT")
+  status         String    @default("PENDING") // PENDING | APPROVED | REJECTED | SUPERSEDED | CONSUMED
+  requestedBy    String    @map("requested_by")
+  requestNote    String?   @map("request_note")
+  decidedBy      String?   @map("decided_by")
+  decisionNote   String?   @map("decision_note")
+  decidedAt      DateTime? @map("decided_at")
+  expiresAt      DateTime? @map("expires_at")
+  ttlHours       Int       @map("ttl_hours")
+  consumedAt     DateTime? @map("consumed_at")
+  supersededAt   DateTime? @map("superseded_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  /// = docKind:docId:action, пока согласование действующее (PENDING/APPROVED); null после — одно открытое на документ
+  openKey        String?   @map("open_key")
+
+  @@unique([organizationId, openKey])
+  @@index([organizationId, status])
+  @@index([docKind, docId])
+  @@map("approvals")
+}
+
 /// FP-028: неизменяемая история версий торгового документа (шапка и строки), с хэшем содержимого.
 model DocumentVersion {
   id             String   @id @default(uuid())

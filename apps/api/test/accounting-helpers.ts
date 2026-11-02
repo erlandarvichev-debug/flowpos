@@ -14,19 +14,22 @@ import { TradeDocumentsService } from '../src/modules/accounting/autopilot/trade
 import { BankImportService } from '../src/modules/accounting/bank/bank-import.service';
 import { StatementsService } from '../src/modules/accounting/statements/statements.service';
 import { ClosingService } from '../src/modules/accounting/closing/closing.service';
+import { ApprovalsService } from '../src/modules/accounting/approvals/approvals.service';
 
 export function makeServices(prisma: PrismaService) {
   const posting = new PostingService(prisma);
   const periods = new PeriodsService(prisma);
   const cost = new CostService(posting, periods);
   const autopilot = new AutopilotService(prisma, posting, periods, cost);
-  const docs = new DocumentsService(prisma, periods, posting);
+  const approvals = new ApprovalsService(prisma);
+  const docs = new DocumentsService(prisma, periods, posting, approvals);
   const statements = new StatementsService(prisma);
   return {
     statements,
     closing: new ClosingService(prisma, posting, periods, cost, statements),
     posting, periods, cost, autopilot,
-    trade: new TradeDocumentsService(prisma, autopilot),
+    trade: new TradeDocumentsService(prisma, autopilot, approvals),
+    approvals,
     bank: new BankImportService(prisma, docs),
     docs,
     reports: new ReportsService(prisma, posting),

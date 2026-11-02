@@ -1,6 +1,5 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { createHash } from 'crypto';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { AccError } from '../common/acc-error';
 import { D, money, round } from '../common/money';
@@ -9,6 +8,8 @@ import { OverrideRequest } from '../periods/periods.service';
 import { AutopilotService } from './autopilot.service';
 import { TRADE_SOURCE } from './trade-rules';
 import { contractPeriodProblem } from '../../catalog/requisites';
+import { tradeContent, tradeHash } from '../documents/content-hash';
+import { ApprovalsService } from '../approvals/approvals.service';
 
 type Tx = Prisma.TransactionClient;
 
@@ -47,7 +48,7 @@ export interface TradeDocInput {
  */
 @Injectable()
 export class TradeDocumentsService {
-  constructor(private prisma: PrismaService, private autopilot: AutopilotService) {}
+  constructor(private prisma: PrismaService, private autopilot: AutopilotService, private approvals: ApprovalsService) {}
 
   private async number(tx: Tx, ctx: OrgContext, docType: string, date: Date) {
     const year = date.getUTCFullYear();
@@ -142,24 +143,11 @@ export class TradeDocumentsService {
 
   // ── FP-028: версии ──
 
-  /** Содержимое версии (без статуса): шапка и строки в фиксированном порядке — для хэша и истории. */
-  private content(doc: any) {
-    return {
-      docType: doc.docType, number: doc.number, date: new Date(doc.date).toISOString(), counterpartyId: doc.counterpartyId ?? null,
-      contractId: doc.contractId ?? null, storeId: doc.storeId ?? null, storeToId: doc.storeToId ?? null,
-      total: doc.total == null ? null : new D(doc.total).toFixed(2), comment: doc.comment ?? null, attributes: doc.attributes ?? null,
-      lines: [...(doc.lines ?? [])].sort((a: any, b: any) => a.lineNo - b.lineNo).map((l: any) => ({
-        lineNo: l.lineNo, productId: l.productId, qty: new D(l.qty).toString(), price: l.price == null ? null : new D(l.price).toFixed(2),
-        discount: l.discount == null ? null : new D(l.discount).toString(), amount: l.amount == null ? null : new D(l.amount).toFixed(2), vatRate: l.vatRate == null ? null : new D(l.vatRate).toString(),
-      })),
-    };
-  }
-
   /** Неизменяемая запись истории: версия, действие, снимок, хэш содержимого. */
   private async writeVersion(tx: Tx, ctx: OrgContext, id: string, action: string, reason?: string) {
     const doc = await tx.document.findUniqueOrThrow({ where: { id }, include: { lines: true } });
-    const snapshot = this.content(doc);
-    const hash = createHash('sha256').update(JSON.stringify(snapshot)).digest('hex');
+    const snapshot = tradeContent(doc);
+    const hash = tradeHash(doc);
     await tx.documentVersion.create({ data: { tenantId: doc.tenantId, organizationId: ctx.organizationId, documentId: id, version: doc.version, action, snapshot: { ...snapshot, status: doc.status } as any, hash, changedBy: ctx.userId, reason } });
   }
 
@@ -223,6 +211,15 @@ export class TradeDocumentsService {
       } as TradeDocInput;
       for (const k of ['comment', 'vatIncluded', 'paymentType', 'bankAccountId', 'departmentId', 'lossAccount'] as const) if ((input as any)[k] !== undefined) (merged as any)[k] = (input as any)[k];
       await this.validateRefs(tx, ctx, merged);
+      // FP-029: сохранение без изменения содержимого — не новая версия (иначе «Провести» на экране, которое сначала
+      // сохраняет, отменяло бы согласование этой же версии).
+      const lines0 = this.buildLines(merged);
+      const total0 = doc.docType.startsWith('PAYMENT_') ? money(merged.amount, 2, 'сумма платежа') : lines0.reduce((a, l) => a.plus(l.amount), new D(0));
+      const candidate = {
+        ...doc, date: new Date(merged.date), counterpartyId: merged.counterpartyId ?? null, contractId: merged.contractId ?? null, storeId: merged.storeId ?? null,
+        storeToId: merged.storeToId ?? null, total: total0, comment: merged.comment ?? doc.comment, attributes: this.attrs(input as TradeDocInput, doc.attributes ?? {}), lines: lines0,
+      };
+      if (tradeHash(candidate) === tradeHash(doc)) return this.view(tx, id);
       const wasPosted = doc.status === 'POSTED';
       // Проведённая версия неизменяема: снимаем проведение, меняем, проводим новую версию (всё в одной транзакции).
       if (wasPosted) {
@@ -243,6 +240,8 @@ export class TradeDocumentsService {
       });
       await tx.auditLog.create({ data: { userId: ctx.userId, organizationId: ctx.organizationId, action: 'TRADE_DOC_UPDATE', entity: 'document', entityId: id, reason: input.reason, before: { total: doc.total, date: doc.date } as any, after: { total: total.toFixed(2), date: merged.date } } });
       await this.writeVersion(tx, ctx, id, 'UPDATE', input.reason);
+      // FP-029: изменение отменяет согласования прежней версии.
+      await this.approvals.supersede(tx, ctx.organizationId, 'TRADE', id);
       if (wasPosted) {
         const fresh = await tx.document.findUnique({ where: { id }, include: { lines: true } });
         await tx.document.update({ where: { id }, data: { status: 'POSTED', postedVersion: fresh!.version } });
@@ -266,11 +265,64 @@ export class TradeDocumentsService {
     if (doc.status === 'POSTED') {
       throw new AccError('DOC_ALREADY_POSTED', `Документ ${doc.number ?? ''} уже проведён (версия ${doc.postedVersion ?? doc.version})`, { status: 409, details: { postedVersion: doc.postedVersion ?? doc.version } });
     }
+    // FP-029: если правило требует согласования — нужно действующее согласование этой версии (расходуется).
+    await this.approvals.consumeForPost(tx, ctx, await this.approvals.docState(tx, ctx, 'TRADE', id));
     await tx.document.update({ where: { id }, data: { status: 'POSTED', postedVersion: doc.version, updatedBy: ctx.userId } });
     await this.applyStock(tx, doc, 1);
     await this.autopilot.syncTradeDocument(tx, id, { userId: ctx.userId, override, organizationId: ctx.organizationId });
     await this.writeVersion(tx, ctx, id, 'POST');
     return this.view(tx, id);
+  }
+
+  /**
+   * FP-029: пробное проведение — те же шаги (склад, проводки автопилота), но транзакция откатывается: ничего не
+   * записывается. Показывает проводки, движение остатков, проблемы и что нужно для проведения (согласование).
+   */
+  async simulate(ctx: OrgContext, id: string) {
+    const ROLLBACK = Symbol('simulate');
+    let result: any;
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        const doc = await this.scoped(tx, ctx, id);
+        const st = await this.approvals.docState(tx, ctx, 'TRADE', id);
+        const approval = await this.approvals.requirement(tx, ctx, st);
+        const stockKeys = doc.storeId ? doc.lines.map((l) => ({ storeId: doc.storeId!, productId: l.productId })) : [];
+        if (doc.storeToId) for (const l of doc.lines) stockKeys.push({ storeId: doc.storeToId, productId: l.productId });
+        const qty = async () => new Map((await tx.stock.findMany({ where: { OR: stockKeys.length ? stockKeys : [{ id: '' }] } })).map((x) => [`${x.storeId}:${x.productId}`, x.qty]));
+        const before = await qty();
+        let error: any = null;
+        if (doc.status === 'POSTED') error = { code: 'DOC_ALREADY_POSTED', message: 'Документ уже проведён — показаны его проводки' };
+        else if (doc.deleted) error = { code: 'DOC_CANCELLED', message: 'Документ помечен на удаление' };
+        else {
+          try {
+            await tx.document.update({ where: { id }, data: { status: 'POSTED', postedVersion: doc.version } });
+            await this.applyStock(tx, doc, 1);
+            await this.autopilot.syncTradeDocument(tx, id, { userId: ctx.userId, organizationId: ctx.organizationId });
+          } catch (e: any) {
+            error = { code: e?.getResponse?.()?.code ?? 'ERROR', message: e?.getResponse?.()?.message ?? e?.message };
+          }
+        }
+        const after = await qty();
+        const view = await this.view(tx, id);
+        const issue = await tx.accAutopilotIssue.findFirst({ where: { sourceType: TRADE_SOURCE, sourceId: id, resolvedAt: null }, orderBy: { createdAt: 'desc' } });
+        result = {
+          document: { id, number: doc.number, docType: doc.docType, version: doc.version, status: doc.status, amount: doc.total?.toFixed(2) ?? null },
+          entry: view.entry, costEntries: (view as any).costEntries ?? [],
+          stock: stockKeys.filter((k, i, a) => a.findIndex((x) => x.storeId === k.storeId && x.productId === k.productId) === i).map((k) => {
+            const key = `${k.storeId}:${k.productId}`;
+            const b = new D(before.get(key) ?? 0), a = new D(after.get(key) ?? 0);
+            return { ...k, before: b.toString(), after: a.toString(), change: a.minus(b).toString() };
+          }),
+          issue: issue && doc.status !== 'POSTED' ? { code: issue.code, message: issue.message } : null,
+          error,
+          approval,
+        };
+        throw ROLLBACK;
+      }, { timeout: 60000 });
+    } catch (e) {
+      if (e !== ROLLBACK) throw e;
+    }
+    return result;
   }
 
   post(ctx: OrgContext, id: string, override?: OverrideRequest, expectedVersion?: unknown) {

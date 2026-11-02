@@ -7,6 +7,7 @@ import { Org, OrgContext, OrgGuard, RequirePermission, RequireMfa } from './acce
 import { IdempotencyInterceptor } from './common/idempotency.interceptor';
 import { DocumentsService } from './documents/documents.service';
 import { DocumentGraphService } from './documents/graph.service';
+import { ApprovalsService } from './approvals/approvals.service';
 import { ReportsService } from './reports/reports.service';
 import { ChartService } from './chart/chart.service';
 import { RefsService } from './refs/refs.service';
@@ -38,6 +39,7 @@ export class AccountingController {
   constructor(
     private docs: DocumentsService,
     private graph: DocumentGraphService,
+    private approvals: ApprovalsService,
     private reports: ReportsService,
     private chart: ChartService,
     private refs: RefsService,
@@ -329,6 +331,31 @@ export class AccountingController {
 
   @Get('documents') @RequirePermission('acc.doc.read')
   list(@Org() ctx: OrgContext, @Query() q: any) { return this.docs.list(ctx, q); }
+
+  // ── FP-029: пробное проведение и согласования ──
+  @Post('trade-documents/:id/simulate') @RequirePermission('acc.doc.read')
+  tradeSimulate(@Org() ctx: OrgContext, @Param('id') id: string) { return this.trade.simulate(ctx, id); }
+
+  @Post('documents/:id/simulate') @RequirePermission('acc.doc.read')
+  docSimulate(@Org() ctx: OrgContext, @Param('id') id: string) { return this.docs.simulate(ctx, id); }
+
+  @Get('approvals') @RequirePermission('acc.doc.read')
+  approvalsList(@Org() ctx: OrgContext, @Query() q: any) { return this.approvals.list(ctx, q); }
+
+  @Post('approvals') @RequirePermission('acc.doc.write') @ApiHeader(IDEMP_HEADER)
+  approvalRequest(@Org() ctx: OrgContext, @Body() b: any) { return this.approvals.request(ctx, b ?? {}); }
+
+  @Post('approvals/:id/decide') @RequirePermission('acc.doc.approve') @ApiHeader(IDEMP_HEADER)
+  approvalDecide(@Org() ctx: OrgContext, @Param('id') id: string, @Body() b: any) { return this.approvals.decide(ctx, id, b ?? {}); }
+
+  @Get('approval-policies') @RequirePermission('acc.doc.read')
+  approvalPolicies(@Org() ctx: OrgContext) { return this.approvals.policies(ctx); }
+
+  @Post('approval-policies') @RequirePermission('acc.policy.manage') @RequireMfa()
+  approvalPolicyCreate(@Org() ctx: OrgContext, @Body() b: any) { return this.approvals.createPolicy(ctx, b); }
+
+  @Put('approval-policies/:id') @RequirePermission('acc.policy.manage') @RequireMfa()
+  approvalPolicyUpdate(@Org() ctx: OrgContext, @Param('id') id: string, @Body() b: any) { return this.approvals.updatePolicy(ctx, id, b); }
 
   /** FP-028: граф документов (основания, сторно, ЭСФ, исправления) от документа — TRADE | ACC | ESF. */
   @Get('document-graph/:type/:id') @RequirePermission('acc.doc.read')

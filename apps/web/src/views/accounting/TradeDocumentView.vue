@@ -13,6 +13,7 @@
         <el-button @click="router.push('/accounting/trade')">{{ t('toList') }}</el-button>
         <template v-if="!readonly">
           <el-button type="primary" plain :loading="busy" @click="save()" v-if="org.can('acc.doc.write')">{{ t('save') }}</el-button>
+          <PostingPreview v-if="doc?.id && doc.status !== 'POSTED'" kind="TRADE" :id="doc.id" :version="doc.version" @changed="load" />
           <el-button type="success" :loading="busy" @click="post" v-if="org.can('acc.doc.post') && doc.status !== 'POSTED'">{{ t('post') }}</el-button>
         </template>
         <el-dropdown v-if="isSaved" @command="onCommand" trigger="click">
@@ -151,6 +152,7 @@ import { ElMessage, ElMessageBox, ElTable, ElTableColumn } from 'element-plus'
 import dayjs from 'dayjs'
 import api from '@/api/client'
 import { useOrgStore } from '@/stores/org'
+import PostingPreview from '@/components/accounting/PostingPreview.vue'
 import { useI18n } from '@/composables/useI18n'
 import AccountSelect from '@/components/accounting/AccountSelect.vue'
 import DimSelect from '@/components/accounting/DimSelect.vue'

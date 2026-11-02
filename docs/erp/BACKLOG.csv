@@ -27,7 +27,7 @@ FP-025,Catalog,P1,Backend,M,FP-009,DONE_LOCAL,Товары варианты ед
 FP-026,Catalog,P1,Backend/Frontend,M,"FP-025,FP-008",DONE_LOCAL,Контрагенты договоры и реквизиты,Effective dates; адреса/БИН; доступ; нет чужих ссылок
 FP-027,Catalog,P1,Backend,M,FP-025,DONE_LOCAL,Прайс-листы скидки и округление,Priority/interval; preview discount; immutable offline snapshot
 FP-028,Documents,P0,Backend,L,"FP-009,FP-026",DONE_LOCAL,Общие документы версии и ссылки,Expected_version; immutable posted version; source/correction graph; duplicate post conflict
-FP-029,Documents,P0,Backend/Frontend,M,"FP-028,FP-008",PLANNED,Согласования и simulate command,Hash/scope/sum/TTL bound; изменение отменяет approval; UI показывает эффект
+FP-029,Documents,P0,Backend/Frontend,M,"FP-028,FP-008",DONE_LOCAL,Согласования и simulate command,Hash/scope/sum/TTL bound; изменение отменяет approval; UI показывает эффект
 FP-030,Inventory,P1,Backend,L,"FP-025,FP-028",PLANNED,Поступление и складские движения,Частичная приёмка/расхождения; qty и value; источник каждого movement
 FP-031,Inventory,P1,Accounting engineer,L,FP-030,PLANNED,Себестоимость и дополнительные расходы,Fixture COGS2200 profit800 stock8800; остаток округления детерминирован; метод периода
 FP-032,Inventory,P1,Backend/Frontend,M,FP-030,PLANNED,Резервы перемещения и адреса,Available=fact-reserved; нет двойного резерва при конкуренции; two-stage transfer

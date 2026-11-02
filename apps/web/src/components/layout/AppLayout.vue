@@ -71,6 +71,7 @@
           <el-menu-item index="/accounting/trade">{{ t('trade') }}</el-menu-item>
           <el-menu-item index="/accounting/documents">{{ t('documents') }}</el-menu-item>
           <el-menu-item index="/accounting/bank-import">{{ t('bankImport') }}</el-menu-item>
+          <el-menu-item v-if="org.can('acc.doc.read')" index="/accounting/approvals">Согласования</el-menu-item>
           <el-menu-item v-if="org.can('acc.esf.read')" index="/accounting/esf">{{ t('esf') }}</el-menu-item>
           <el-menu-item index="/accounting/autopilot">
             {{ t('autopilot') }}

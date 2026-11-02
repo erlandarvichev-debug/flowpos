@@ -10,6 +10,9 @@ let prisma: PrismaService;
 let t2: string;
 type Who = { orgId: string; token: string; userId: string };
 let A: Who, B: Who;
+let trade: any;
+/** Торговая обвязка организации A (склад, товары, контрагенты) — одна на файл. */
+const tradeA = async () => (trade ??= await runAsTenant(DEFAULT_TENANT, () => makeTrade(prisma, ctxFor(A.orgId, A.userId, 'owner'), { vatPayer: false })));
 
 async function who(tenantId: string, name: string): Promise<Who> {
   const org = await prisma.organization.create({ data: { tenantId, name: `${name} ${uid()}` } });
@@ -44,7 +47,7 @@ afterAll(async () => {
 
 describe('FP-028 документы через HTTP', () => {
   it('повторное проведение — 409, повтор с тем же ключом — прежний ответ; версии и граф чужого клиента — 404; RLS', async () => {
-    const t = await runAsTenant(DEFAULT_TENANT, () => makeTrade(prisma, ctxFor(A.orgId, A.userId, 'owner'), { vatPayer: false }));
+    const t = await tradeA();
     const created = await call(h, 'POST', '/accounting/trade-documents', { token: A.token, body: { docType: 'SUPPLY', date: '2026-10-01', counterpartyId: t.supplier.id, storeId: t.s1.id, lines: [{ productId: t.goods.id, qty: '2', price: '10' }] } });
     expect(created.status).toBe(201);
     const id = created.body.id;
@@ -67,5 +70,31 @@ describe('FP-028 документы через HTTP', () => {
     const runtime = h.app.get(PrismaService); // flowpos_app — без обхода RLS
     expect(await runAsTenant(t2, () => runtime.documentVersion.count({ where: { documentId: id } }))).toBe(0);
     expect(await runAsTenant(DEFAULT_TENANT, () => runtime.documentVersion.count({ where: { documentId: id } }))).toBe(2);
+  });
+
+  it('FP-029: бухгалтер запрашивает согласование, но не согласует (403); главбух согласует; чужой клиент — 404', async () => {
+    const t = await tradeA();
+    const acc = await makeUser(h, DEFAULT_TENANT, A.orgId, { role: 'accountant', name: 'DocAcc' });
+    const chief = await makeUser(h, DEFAULT_TENANT, A.orgId, { role: 'chief_accountant', name: 'DocChief' });
+    const accTok = (await login(h, acc.email)).token, chiefTok = (await login(h, chief.email)).token;
+    expect((await call(h, 'POST', '/accounting/approval-policies', { token: accTok, body: { docKind: 'TRADE', minAmount: '0' } })).status).toBe(403);
+    expect((await call(h, 'POST', '/accounting/approval-policies', { token: A.token, body: { docKind: 'TRADE', minAmount: '0', ttlHours: 4 } })).status).toBe(201);
+    const d = await call(h, 'POST', '/accounting/trade-documents', { token: accTok, body: { docType: 'SUPPLY', date: '2026-10-01', counterpartyId: t.supplier.id, storeId: t.s1.id, lines: [{ productId: t.goods.id, qty: '1', price: '10' }] } });
+    const sim = await call(h, 'POST', `/accounting/trade-documents/${d.body.id}/simulate`, { token: accTok });
+    expect(sim.body.approval).toMatchObject({ required: true, satisfied: false });
+    const req = await call(h, 'POST', '/accounting/approvals', { token: accTok, body: { docKind: 'TRADE', docId: d.body.id, expectedVersion: 1 } });
+    expect(req.status).toBe(201);
+    expect((await call(h, 'POST', `/accounting/approvals/${req.body.id}/decide`, { token: accTok, body: { decision: 'APPROVE' } })).status).toBe(403);
+    // Другой бухгалтер (не автор запроса) — тоже нет: нет права согласования, а не только «четыре глаза».
+    const acc2 = await makeUser(h, DEFAULT_TENANT, A.orgId, { role: 'accountant', name: 'DocAcc2' });
+    const acc2Decide = await call(h, 'POST', `/accounting/approvals/${req.body.id}/decide`, { token: (await login(h, acc2.email)).token, body: { decision: 'APPROVE' } });
+    expect(acc2Decide.status).toBe(403);
+    expect((await call(h, 'POST', `/accounting/approvals/${req.body.id}/decide`, { token: B.token, body: { decision: 'APPROVE' } })).status).toBe(404);
+    expect((await call(h, 'POST', `/accounting/approvals/${req.body.id}/decide`, { token: chiefTok, body: { decision: 'APPROVE' } })).body.status).toBe('APPROVED');
+    expect((await call(h, 'POST', `/accounting/trade-documents/${d.body.id}/post`, { token: accTok, body: { expectedVersion: 1 } })).body.status).toBe('POSTED');
+    expect((await call(h, 'GET', '/accounting/approvals', { token: B.token })).body.find((x: any) => x.id === req.body.id)).toBeUndefined();
+    const runtime = h.app.get(PrismaService);
+    expect(await runAsTenant(t2, () => runtime.approval.count({ where: { id: req.body.id } }))).toBe(0);
+    await prisma.approvalPolicy.deleteMany({ where: { organizationId: A.orgId } });
   });
 });
