@@ -804,7 +804,7 @@ export class TradeDocumentsService {
     const stores = (await this.prisma.store.findMany({ where: { organizationId: ctx.organizationId }, select: { id: true } })).map((s) => s.id);
     const where: Prisma.DocumentWhereInput = { OR: [{ organizationId: ctx.organizationId }, { organizationId: null, storeId: { in: stores } }] };
     const and: Prisma.DocumentWhereInput[] = [];
-    if (q.docType) and.push({ docType: q.docType as any });
+    if (q.docType) and.push({ docType: q.docType.includes(',') ? { in: q.docType.split(',') as any } : (q.docType as any) }); // журнал раздела: несколько типов
     if (q.status) and.push({ status: q.status as any });
     if (q.from || q.to) and.push({ date: { ...(q.from ? { gte: new Date(q.from) } : {}), ...(q.to ? { lte: new Date(q.to + 'T23:59:59.999Z') } : {}) } });
     if (q.search) and.push({ OR: [{ number: { contains: q.search, mode: 'insensitive' } }, { counterparty: { name: { contains: q.search, mode: 'insensitive' } } }] });

@@ -2,16 +2,17 @@
   <div>
     <div class="page-header">
       <h1>
-        {{ t('trade') }}
+        {{ journal ? String(route.meta.title) : t('trade') }}
         <el-badge v-if="issuesCount" :value="issuesCount" type="danger" style="margin-left: 10px;">
           <el-button size="small" type="danger" plain @click="router.push('/accounting/autopilot')">{{ t('issues') }}</el-button>
         </el-badge>
       </h1>
-      <el-dropdown v-if="org.can('acc.doc.write')" @command="(c: string) => router.push({ path: '/accounting/trade/new', query: { type: c } })">
+      <el-button v-if="org.can('acc.doc.write') && creatable.length === 1" type="primary" :icon="Plus" @click="router.push({ path: '/accounting/trade/new', query: { type: creatable[0] } })">{{ t('create') }}</el-button>
+      <el-dropdown v-else-if="org.can('acc.doc.write') && creatable.length" @command="(c: string) => router.push({ path: '/accounting/trade/new', query: { type: c } })">
         <el-button type="primary" :icon="Plus">{{ t('create') }}</el-button>
         <template #dropdown>
           <el-dropdown-menu>
-            <el-dropdown-item v-for="k in TRADE_CREATABLE" :key="k" :command="k" :divided="k === 'CUSTOMER_ORDER' || k === 'ENTER' || k === 'RETAIL_DEMAND'">{{ tl(k) }}</el-dropdown-item>
+            <el-dropdown-item v-for="k in creatable" :key="k" :command="k" :divided="!journal && (k === 'CUSTOMER_ORDER' || k === 'ENTER' || k === 'RETAIL_DEMAND')">{{ tl(k) }}</el-dropdown-item>
           </el-dropdown-menu>
         </template>
       </el-dropdown>
@@ -19,8 +20,8 @@
 
     <el-card>
       <div class="filters">
-        <el-select v-model="f.docType" :placeholder="t('type')" clearable @change="reload" style="width: 220px;">
-          <el-option v-for="(v, k) in TRADE_TYPES" :key="k" :label="lang === 'kk' ? v.kk : v.ru" :value="k" />
+        <el-select v-if="!journal || journal.length > 1" v-model="f.docType" :placeholder="t('type')" clearable @change="reload" style="width: 220px;">
+          <el-option v-for="k in typeOptions" :key="k" :label="tl(k)" :value="k" />
         </el-select>
         <el-select v-model="f.status" :placeholder="t('status')" clearable @change="reload" style="width: 180px;">
           <el-option v-for="s in ['DRAFT', 'POSTED', 'CANCELLED']" :key="s" :label="t(s)" :value="s" />
@@ -58,8 +59,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, computed, onMounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { Plus } from '@element-plus/icons-vue'
 import api from '@/api/client'
 import { useOrgStore } from '@/stores/org'
@@ -67,6 +68,11 @@ import { useI18n } from '@/composables/useI18n'
 import { STATUS_TYPES, TRADE_CREATABLE, TRADE_TYPES, fmtDate, fmtMoney, showError } from './acc'
 
 const router = useRouter()
+const route = useRoute()
+/** Журнал раздела (Продажи → Реализации и т. п.): только эти виды документов. */
+const journal = computed(() => (route.meta.docTypes as string[] | undefined) ?? null)
+const typeOptions = computed(() => journal.value ?? Object.keys(TRADE_TYPES))
+const creatable = computed(() => (journal.value ? TRADE_CREATABLE.filter((k) => journal.value!.includes(k)) : TRADE_CREATABLE))
 const org = useOrgStore()
 const { t, lang } = useI18n()
 const loading = ref(false)
@@ -84,7 +90,7 @@ async function load() {
   try {
     const res = (await api.get('/accounting/trade-documents', {
       params: {
-        docType: f.value.docType || undefined, status: f.value.status || undefined,
+        docType: f.value.docType || journal.value?.join(',') || undefined, status: f.value.status || undefined,
         from: f.value.range?.[0], to: f.value.range?.[1], search: f.value.search || undefined, page: page.value, limit,
       },
     })) as any

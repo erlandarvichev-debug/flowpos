@@ -8,6 +8,7 @@
       <el-menu
         :default-active="activeMenu"
         router
+        unique-opened
         :collapse="collapsed"
         class="sidebar-menu"
         background-color="#001529"
@@ -16,38 +17,60 @@
       >
         <el-menu-item index="/dashboard">
           <el-icon><Odometer /></el-icon>
-          <template #title>Дашборд</template>
+          <template #title>Главное</template>
         </el-menu-item>
 
-        <el-sub-menu index="catalog">
+        <el-sub-menu index="sales">
           <template #title>
-            <el-icon><Box /></el-icon>
-            <span>Каталог</span>
+            <el-icon><Sell /></el-icon>
+            <span>Продажи</span>
           </template>
-          <el-menu-item index="/catalog/items">Номенклатура</el-menu-item>
-          <el-menu-item index="/catalog/warehouses">Склады</el-menu-item>
-          <el-menu-item index="/catalog/counterparties">Контрагенты</el-menu-item>
+          <el-menu-item index="/sales/orders">Заказы покупателей</el-menu-item>
+          <el-menu-item index="/sales/shipments">Реализации</el-menu-item>
+          <el-menu-item index="/sales/returns">Возвраты от покупателей</el-menu-item>
+          <el-menu-item index="/sales/retail">Розничные продажи</el-menu-item>
+          <el-menu-item v-if="org.can('acc.esf.read')" index="/accounting/esf">ЭСФ</el-menu-item>
           <el-menu-item index="/catalog/pricing">Цены и скидки</el-menu-item>
         </el-sub-menu>
 
-        <el-sub-menu index="trade">
+        <el-sub-menu index="purchases">
           <template #title>
-            <el-icon><ShoppingBag /></el-icon>
-            <span>Торговля</span>
+            <el-icon><ShoppingCart /></el-icon>
+            <span>Покупки</span>
           </template>
-          <el-menu-item index="/trade/purchases">Закупки</el-menu-item>
-          <el-menu-item v-if="org.can('stock.read')" index="/accounting/purchase-needs">Потребность и закупки</el-menu-item>
-          <el-menu-item index="/trade/sales">Продажи</el-menu-item>
+          <el-menu-item index="/purchases/orders">Заказы поставщикам</el-menu-item>
+          <el-menu-item v-if="org.can('stock.read')" index="/accounting/purchase-needs">Потребность в закупках</el-menu-item>
+          <el-menu-item index="/purchases/receipts">Поступления товаров</el-menu-item>
+          <el-menu-item index="/purchases/landed-costs">Доп. расходы</el-menu-item>
+          <el-menu-item index="/purchases/returns">Возвраты поставщикам</el-menu-item>
+        </el-sub-menu>
+
+        <el-sub-menu index="bank">
+          <template #title>
+            <el-icon><Wallet /></el-icon>
+            <span>Банк и касса</span>
+          </template>
+          <el-menu-item index="/bank/statements">Банковские выписки</el-menu-item>
+          <el-menu-item index="/accounting/bank-import">Загрузка выписки</el-menu-item>
+          <el-menu-item index="/bank/cash">Кассовые документы</el-menu-item>
+        </el-sub-menu>
+
+        <el-sub-menu index="warehouse">
+          <template #title>
+            <el-icon><Box /></el-icon>
+            <span>Склад</span>
+          </template>
           <el-menu-item index="/trade/stocks">Остатки</el-menu-item>
           <el-menu-item v-if="org.can('stock.read')" index="/accounting/stock-movements">Движения товаров</el-menu-item>
-          <el-menu-item index="/trade/transfers">Перемещения</el-menu-item>
-          <el-menu-item index="/trade/inventories">Инвентаризации</el-menu-item>
+          <el-menu-item index="/warehouse/moves">Перемещения</el-menu-item>
+          <el-menu-item index="/warehouse/entries">Оприходования и списания</el-menu-item>
+          <el-menu-item index="/warehouse/inventories">Инвентаризации</el-menu-item>
         </el-sub-menu>
 
         <el-sub-menu index="pos">
           <template #title>
             <el-icon><Monitor /></el-icon>
-            <span>FlowPOS</span>
+            <span>Розница (FlowPOS)</span>
           </template>
           <el-menu-item index="/pos/terminals">Кассы</el-menu-item>
           <el-menu-item index="/pos/shifts">Смены</el-menu-item>
@@ -57,50 +80,62 @@
         <el-sub-menu index="hr">
           <template #title>
             <el-icon><UserFilled /></el-icon>
-            <span>Персонал</span>
+            <span>Зарплата и кадры</span>
           </template>
           <el-menu-item index="/hr/employees">Сотрудники</el-menu-item>
           <el-menu-item index="/hr/schedule">График смен</el-menu-item>
           <el-menu-item index="/hr/timesheet">Табель</el-menu-item>
-          <el-menu-item index="/hr/payrolls">Зарплата</el-menu-item>
+          <el-menu-item index="/hr/payrolls">Начисление зарплаты</el-menu-item>
         </el-sub-menu>
 
-        <el-sub-menu index="accounting">
+        <el-sub-menu index="operations">
           <template #title>
-            <el-icon><Notebook /></el-icon>
-            <span>{{ t('accounting') }}</span>
+            <el-icon><Operation /></el-icon>
+            <span>Операции</span>
           </template>
-          <el-menu-item index="/accounting/trade">{{ t('trade') }}</el-menu-item>
-          <el-menu-item index="/accounting/documents">{{ t('documents') }}</el-menu-item>
-          <el-menu-item index="/accounting/bank-import">{{ t('bankImport') }}</el-menu-item>
-          <el-menu-item v-if="org.can('acc.doc.read')" index="/accounting/approvals">Согласования</el-menu-item>
-          <el-menu-item v-if="org.can('acc.esf.read')" index="/accounting/esf">{{ t('esf') }}</el-menu-item>
+          <el-menu-item index="/operations/manual">Операции вручную</el-menu-item>
           <el-menu-item index="/accounting/autopilot">
-            {{ t('autopilot') }}
+            Автопилот
             <el-badge v-if="autopilotIssues" :value="autopilotIssues" type="danger" style="margin-left: 8px; line-height: 1;" />
           </el-menu-item>
-          <el-menu-item index="/accounting/closing">{{ t('monthClosing') }}</el-menu-item>
-          <el-menu-item index="/accounting/statements">{{ t('statements') }}</el-menu-item>
-          <el-menu-item index="/accounting/reports/stock">{{ t('stockReport') }}</el-menu-item>
-          <el-menu-item index="/accounting/reports/settlements">{{ t('settlements') }}</el-menu-item>
-          <el-menu-item index="/accounting/reports/trial-balance">ОСВ</el-menu-item>
-          <el-menu-item index="/accounting/reports/account-card">{{ t('accountCard') }}</el-menu-item>
-          <el-menu-item index="/accounting/reports/journal">{{ t('journal') }}</el-menu-item>
-          <el-menu-item index="/accounting/chart">{{ t('chart') }}</el-menu-item>
-          <el-menu-item index="/accounting/refs">{{ t('refs') }}</el-menu-item>
-          <el-menu-item index="/accounting/settings">{{ t('settings') }}</el-menu-item>
+          <el-menu-item v-if="org.can('acc.doc.read')" index="/accounting/approvals">Согласования</el-menu-item>
+          <el-menu-item index="/accounting/closing">Закрытие месяца</el-menu-item>
+          <el-menu-item index="/accounting/trade">Все торговые документы</el-menu-item>
+          <el-menu-item index="/accounting/documents">Все документы учёта</el-menu-item>
         </el-sub-menu>
 
-        <el-menu-item index="/analytics">
-          <el-icon><TrendCharts /></el-icon>
-          <template #title>Аналитика</template>
-        </el-menu-item>
+        <el-sub-menu index="reports">
+          <template #title>
+            <el-icon><DataAnalysis /></el-icon>
+            <span>Отчёты</span>
+          </template>
+          <el-menu-item index="/accounting/reports/trial-balance">Оборотно-сальдовая ведомость</el-menu-item>
+          <el-menu-item index="/accounting/reports/account-card">Карточка счёта</el-menu-item>
+          <el-menu-item index="/accounting/reports/journal">Журнал проводок</el-menu-item>
+          <el-menu-item index="/accounting/reports/settlements">Взаиморасчёты</el-menu-item>
+          <el-menu-item index="/accounting/reports/stock">Остатки и себестоимость</el-menu-item>
+          <el-menu-item index="/accounting/statements">Финансовая отчётность</el-menu-item>
+          <el-menu-item index="/analytics">Аналитика продаж</el-menu-item>
+        </el-sub-menu>
 
-        <el-sub-menu index="settings">
+        <el-sub-menu index="refs">
+          <template #title>
+            <el-icon><Notebook /></el-icon>
+            <span>Справочники</span>
+          </template>
+          <el-menu-item index="/catalog/items">Номенклатура</el-menu-item>
+          <el-menu-item index="/catalog/counterparties">Контрагенты</el-menu-item>
+          <el-menu-item index="/catalog/warehouses">Склады</el-menu-item>
+          <el-menu-item index="/accounting/chart">План счетов</el-menu-item>
+          <el-menu-item index="/accounting/refs">Справочники учёта</el-menu-item>
+        </el-sub-menu>
+
+        <el-sub-menu index="admin">
           <template #title>
             <el-icon><Setting /></el-icon>
-            <span>Настройки</span>
+            <span>Администрирование</span>
           </template>
+          <el-menu-item index="/accounting/settings">Учётная политика и периоды</el-menu-item>
           <el-menu-item index="/settings/users">Пользователи</el-menu-item>
         </el-sub-menu>
       </el-menu>
@@ -156,7 +191,7 @@
       </el-header>
 
       <el-main class="app-main">
-        <RouterView :key="org.currentId || 'org'" />
+        <RouterView :key="`${org.currentId || 'org'}:${route.path}`" />
       </el-main>
     </el-container>
   </el-container>

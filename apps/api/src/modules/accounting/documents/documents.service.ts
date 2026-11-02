@@ -132,7 +132,7 @@ export class DocumentsService {
     const page = Math.max(1, Number(q.page) || 1);
     const limit = Math.min(200, Number(q.limit) || 50);
     const where: Prisma.AccDocumentWhereInput = { organizationId: ctx.organizationId };
-    if (q.docType) where.docType = q.docType;
+    if (q.docType) where.docType = q.docType.includes(',') ? { in: q.docType.split(',') } : q.docType; // журнал раздела: несколько типов
     if (q.status) where.status = q.status;
     if (q.from || q.to) where.date = { ...(q.from ? { gte: new Date(q.from) } : {}), ...(q.to ? { lte: new Date(q.to + 'T23:59:59.999Z') } : {}) };
     if (q.search) where.OR = [{ number: { contains: q.search, mode: 'insensitive' } }, { comment: { contains: q.search, mode: 'insensitive' } }];

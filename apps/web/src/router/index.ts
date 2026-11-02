@@ -158,6 +158,21 @@ const router = createRouter({
         { path: 'accounting/stock-movements', name: 'acc-stock-movements', component: () => import('@/views/accounting/StockMovementsView.vue'), meta: { title: 'Движения товаров' } },
         { path: 'accounting/reports/stock', name: 'acc-stock', component: () => import('@/views/accounting/StockReportView.vue'), meta: { title: 'Остатки и себестоимость' } },
         { path: 'accounting/reports/settlements', name: 'acc-settlements', component: () => import('@/views/accounting/SettlementsView.vue'), meta: { title: 'Взаиморасчёты' } },
+        // Журналы разделов: тот же список документов, только нужные виды (meta.docTypes)
+        { path: 'sales/orders', name: 'j-sales-orders', component: () => import('@/views/accounting/TradeDocumentsView.vue'), meta: { title: 'Заказы покупателей', docTypes: ['CUSTOMER_ORDER'] } },
+        { path: 'sales/shipments', name: 'j-sales-shipments', component: () => import('@/views/accounting/TradeDocumentsView.vue'), meta: { title: 'Реализации', docTypes: ['DEMAND'] } },
+        { path: 'sales/returns', name: 'j-sales-returns', component: () => import('@/views/accounting/TradeDocumentsView.vue'), meta: { title: 'Возвраты от покупателей', docTypes: ['SALES_RETURN'] } },
+        { path: 'sales/retail', name: 'j-sales-retail', component: () => import('@/views/accounting/TradeDocumentsView.vue'), meta: { title: 'Розничные продажи', docTypes: ['RETAIL_DEMAND', 'RETAIL_RETURN'] } },
+        { path: 'purchases/orders', name: 'j-purchases-orders', component: () => import('@/views/accounting/TradeDocumentsView.vue'), meta: { title: 'Заказы поставщикам', docTypes: ['PURCHASE_ORDER'] } },
+        { path: 'purchases/receipts', name: 'j-purchases-receipts', component: () => import('@/views/accounting/TradeDocumentsView.vue'), meta: { title: 'Поступления товаров', docTypes: ['SUPPLY'] } },
+        { path: 'purchases/landed-costs', name: 'j-purchases-landed-costs', component: () => import('@/views/accounting/TradeDocumentsView.vue'), meta: { title: 'Доп. расходы на поступление', docTypes: ['LANDED_COST'] } },
+        { path: 'purchases/returns', name: 'j-purchases-returns', component: () => import('@/views/accounting/TradeDocumentsView.vue'), meta: { title: 'Возвраты поставщикам', docTypes: ['PURCHASE_RETURN'] } },
+        { path: 'warehouse/entries', name: 'j-warehouse-entries', component: () => import('@/views/accounting/TradeDocumentsView.vue'), meta: { title: 'Оприходования и списания', docTypes: ['ENTER', 'LOSS'] } },
+        { path: 'warehouse/moves', name: 'j-warehouse-moves', component: () => import('@/views/accounting/TradeDocumentsView.vue'), meta: { title: 'Перемещения', docTypes: ['MOVE'] } },
+        { path: 'warehouse/inventories', name: 'j-warehouse-inventories', component: () => import('@/views/accounting/TradeDocumentsView.vue'), meta: { title: 'Инвентаризации', docTypes: ['INVENTORY'] } },
+        { path: 'bank/statements', name: 'j-bank-statements', component: () => import('@/views/accounting/DocumentsView.vue'), meta: { title: 'Банковские выписки', docTypes: ['BANK_IN', 'BANK_OUT'] } },
+        { path: 'bank/cash', name: 'j-bank-cash', component: () => import('@/views/accounting/DocumentsView.vue'), meta: { title: 'Кассовые документы', docTypes: ['CASH_IN', 'CASH_OUT'] } },
+        { path: 'operations/manual', name: 'j-operations-manual', component: () => import('@/views/accounting/DocumentsView.vue'), meta: { title: 'Операции вручную', docTypes: ['MANUAL_OPERATION', 'OPENING_BALANCE', 'STORNO'] } },
         // Аналитика
         {
           path: 'analytics',
