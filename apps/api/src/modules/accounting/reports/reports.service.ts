@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { reconciliation } from './reconciliation';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { AccError } from '../common/acc-error';
@@ -279,6 +280,9 @@ export class ReportsService {
     const docs = await this.prisma.document.findMany({ where: { id: { in: rows.map((r) => r.settlementDocId).filter(Boolean) as string[] } }, select: { id: true, number: true, date: true, docType: true } });
     return rows.map((r) => ({ ...r, amount: r.amount.toFixed(2), document: docs.find((d) => d.id === r.settlementDocId) ?? null }));
   }
+
+  /** Акт сверки (см. reconciliation.ts). */
+  reconciliation(ctx: OrgContext, q: any) { return reconciliation(this.prisma, ctx, q); }
 
   async settlements(ctx: OrgContext, q: { date?: string }) {
     const date = q.date ?? new Date().toISOString().slice(0, 10);

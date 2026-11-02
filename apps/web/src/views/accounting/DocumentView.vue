@@ -14,6 +14,7 @@
           <PostingPreview v-if="doc?.id && doc.status !== 'POSTED'" kind="ACC" :id="doc.id" :version="doc.version" @changed="load" />
           <el-button type="success" :loading="busy" @click="post" v-if="org.can('acc.doc.post') && doc.status !== 'POSTED'">{{ t('post') }}</el-button>
         </template>
+        <PrintButton v-if="isSaved" source="ACC" :doc-type="docType" :id="doc.id" />
         <el-dropdown v-if="isSaved" @command="onCommand" trigger="click">
           <el-button>Ещё <el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
           <template #dropdown>
@@ -284,6 +285,7 @@ import dayjs from 'dayjs'
 import api from '@/api/client'
 import { useOrgStore } from '@/stores/org'
 import PostingPreview from '@/components/accounting/PostingPreview.vue'
+import PrintButton from '@/components/print/PrintButton.vue'
 import { useI18n } from '@/composables/useI18n'
 import AccountSelect from '@/components/accounting/AccountSelect.vue'
 import DimSelect from '@/components/accounting/DimSelect.vue'

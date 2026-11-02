@@ -2856,6 +2856,42 @@ model TaxDeclaration {
   @@map("tax_declarations")
 }
 
+/// Печатные формы: шаблон организации (встроенные — в коде). Каждое сохранение — новая версия (текст версии
+/// неизменен, sql/160); по умолчанию для вида — одна действующая версия.
+model PrintTemplate {
+  id             String   @id @default(uuid())
+  organizationId String   @map("organization_id")
+  kind           String   // INVOICE | Z2 | R1 | KO1 | KO2 | RECON
+  name           String
+  html           String
+  version        Int
+  family         String   // общий идентификатор версий одного шаблона
+  basedOn        String?  @map("based_on") // встроенный шаблон-основа
+  isDefault      Boolean  @default(false) @map("is_default")
+  status         String   @default("ACTIVE") // ACTIVE | ARCHIVED
+  createdBy      String   @map("created_by")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@unique([organizationId, family, version])
+  @@index([organizationId, kind])
+  @@map("print_templates")
+}
+
+/// Реквизиты для печати: подписи и сведения, которых нет в карточке организации.
+model PrintSettings {
+  organizationId String   @id @map("organization_id")
+  address        String?
+  phone          String?
+  director       String?
+  accountant     String?
+  cashier        String?
+  kbe            String?
+  updatedBy      String?  @map("updated_by")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@map("print_settings")
+}
+
 model VatCreditAllocation {
   id             String    @id @default(uuid())
   organizationId String    @map("organization_id")

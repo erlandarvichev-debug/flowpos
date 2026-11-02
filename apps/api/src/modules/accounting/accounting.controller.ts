@@ -16,6 +16,7 @@ import { RefsService } from './refs/refs.service';
 import { OrgEcpService } from './refs/org-ecp';
 import { TaxService } from './tax/tax.service';
 import { DeclarationsService } from './tax/declarations.service';
+import { PrintService } from './print/print.service';
 import { declarationFileName, declarationPdf, declarationXlsx } from './tax/declaration-export';
 import { PeriodsService } from './periods/periods.service';
 import { AutopilotService } from './autopilot/autopilot.service';
@@ -46,6 +47,7 @@ export class AccountingController {
     private orgEcp: OrgEcpService,
     private tax: TaxService,
     private decl: DeclarationsService,
+    private print: PrintService,
     private docs: DocumentsService,
     private graph: DocumentGraphService,
     private approvals: ApprovalsService,
@@ -377,6 +379,10 @@ export class AccountingController {
   @Get('reports/stock') @RequirePermission('acc.reports.read')
   stock(@Org() ctx: OrgContext, @Query() q: any) { return this.reports.stock(ctx, q); }
 
+  /** Акт сверки взаиморасчётов с контрагентом за период. */
+  @Get('reports/reconciliation') @RequirePermission('acc.reports.read')
+  reconciliation(@Org() ctx: OrgContext, @Query() q: any) { return this.reports.reconciliation(ctx, q); }
+
   @Get('reports/settlements') @RequirePermission('acc.reports.read')
   settlements(@Org() ctx: OrgContext, @Query() q: any) { return this.reports.settlements(ctx, q); }
 
@@ -566,6 +572,35 @@ export class AccountingController {
 
   @Post('tax/declarations/:id/mark') @RequirePermission('acc.period.lock') @RequireMfa()
   taxMark(@Org() ctx: OrgContext, @Param('id') id: string, @Body() b: any) { return this.decl.mark(ctx, id, b ?? {}); }
+
+  // ── Печатные формы и конструктор ──
+  @Get('print/kinds') @RequirePermission('acc.doc.read')
+  printKinds() { return this.print.kinds(); }
+
+  @Get('print/templates') @RequirePermission('acc.doc.read')
+  printTemplates(@Org() ctx: OrgContext, @Query() q: any) { return this.print.templates(ctx, q?.kind); }
+
+  @Get('print/templates/:id') @RequirePermission('acc.doc.read')
+  printTemplate(@Org() ctx: OrgContext, @Param('id') id: string) { return this.print.template(ctx, id); }
+
+  @Post('print/templates') @RequirePermission('acc.refs.manage')
+  printSave(@Org() ctx: OrgContext, @Body() b: any) { return this.print.save(ctx, b ?? {}); }
+
+  @Post('print/templates/:id/default') @RequirePermission('acc.refs.manage')
+  printDefault(@Org() ctx: OrgContext, @Param('id') id: string) { return this.print.setDefault(ctx, id); }
+
+  @Post('print/families/:family/archive') @RequirePermission('acc.refs.manage')
+  printArchive(@Org() ctx: OrgContext, @Param('family') family: string) { return this.print.archive(ctx, family); }
+
+  @Get('print/settings') @RequirePermission('acc.doc.read')
+  printSettings(@Org() ctx: OrgContext) { return this.print.settings(ctx); }
+
+  @Put('print/settings') @RequirePermission('acc.refs.manage')
+  printSaveSettings(@Org() ctx: OrgContext, @Body() b: any) { return this.print.saveSettings(ctx, b); }
+
+  /** Данные документа для печатной формы (kind — вид формы; для акта сверки id = «-», параметры в запросе). */
+  @Get('print/data/:kind/:id') @RequirePermission('acc.doc.read')
+  printData(@Org() ctx: OrgContext, @Param('kind') kind: string, @Param('id') id: string, @Query() q: any) { return this.print.data(ctx, kind, id, q); }
 
   // ── Учётная политика ──
   @Get('policy') @RequirePermission('acc.refs.read')

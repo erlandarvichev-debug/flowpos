@@ -125,6 +125,7 @@
           <el-menu-item index="/accounting/reports/account-card">Карточка счёта</el-menu-item>
           <el-menu-item index="/accounting/reports/journal">Журнал проводок</el-menu-item>
           <el-menu-item index="/accounting/reports/settlements">Взаиморасчёты</el-menu-item>
+          <el-menu-item index="/reports/reconciliation">Акт сверки</el-menu-item>
           <el-menu-item index="/accounting/reports/stock">Остатки и себестоимость</el-menu-item>
           <el-menu-item index="/accounting/statements">Финансовая отчётность</el-menu-item>
           <el-menu-item index="/analytics">Аналитика продаж</el-menu-item>
@@ -148,6 +149,7 @@
             <span>Администрирование</span>
           </template>
           <el-menu-item index="/accounting/settings">Учётная политика и периоды</el-menu-item>
+          <el-menu-item index="/settings/print">Печатные формы</el-menu-item>
           <el-menu-item index="/settings/users">Пользователи</el-menu-item>
         </el-sub-menu>
       </el-menu>

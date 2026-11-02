@@ -14,6 +14,8 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
+      // Движок печатных форм — общий с API (без зависимостей).
+      '@print-engine': fileURLToPath(new URL('../api/src/modules/accounting/print/engine.ts', import.meta.url)),
     },
   },
   server: {

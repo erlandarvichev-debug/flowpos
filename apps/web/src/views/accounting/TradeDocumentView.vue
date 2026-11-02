@@ -17,6 +17,7 @@
           <el-button type="success" :loading="busy" @click="post" v-if="org.can('acc.doc.post') && doc.status !== 'POSTED'">{{ t('post') }}</el-button>
         </template>
         <el-button v-if="doc.transit && doc.transit.state !== 'RECEIVED' && doc.transit.state !== 'NOT_SHIPPED' && org.can('acc.doc.post')" type="success" :loading="busy" @click="openReceive">Принять на склад</el-button>
+        <PrintButton v-if="isSaved" source="TRADE" :doc-type="docType" :id="doc.id" />
         <el-dropdown v-if="isSaved" @command="onCommand" trigger="click">
           <el-button>Ещё <el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
           <template #dropdown>
@@ -341,6 +342,7 @@ import { ElMessage, ElMessageBox, ElTable, ElTableColumn } from 'element-plus'
 import dayjs from 'dayjs'
 import api from '@/api/client'
 import { useOrgStore } from '@/stores/org'
+import PrintButton from '@/components/print/PrintButton.vue'
 import PostingPreview from '@/components/accounting/PostingPreview.vue'
 import { useI18n } from '@/composables/useI18n'
 import AccountSelect from '@/components/accounting/AccountSelect.vue'
