@@ -31,6 +31,9 @@ if ! command -v psql >/dev/null; then
   fi
 fi
 systemctl enable --now postgresql redis-server nginx
+# Сервер без графики: udisks2 раз в 10 минут опрашивает SMART диска; на части дешёвых SATA SSD это подвешивает диск
+# почти на минуту (сброс SATA-канала) — база перестаёт отвечать. На сервере она не нужна.
+systemctl disable --now udisks2 2>/dev/null && systemctl mask udisks2 2>/dev/null || true
 echo "   node $(node -v), $(psql --version)"
 
 echo "== Пользователь и каталоги"
