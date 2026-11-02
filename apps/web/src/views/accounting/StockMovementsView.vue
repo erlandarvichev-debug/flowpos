@@ -5,9 +5,10 @@
     <el-tabs v-model="tab" @tab-change="load">
       <el-tab-pane label="Журнал движений" name="MOVES" />
       <el-tab-pane label="Расхождения приёмки" name="DISCREPANCIES" />
+      <el-tab-pane label="В пути" name="TRANSIT" />
     </el-tabs>
 
-    <div class="filters">
+    <div v-if="tab !== 'TRANSIT'" class="filters">
       <el-date-picker v-model="period" type="daterange" value-format="YYYY-MM-DD" format="DD.MM.YYYY" start-placeholder="С" end-placeholder="По" :clearable="true" style="width: 260px;" @change="reload" />
       <template v-if="tab === 'MOVES'">
         <div style="width: 300px;"><DimSelect dim="PRODUCT" v-model="productId" size="default" @update:model-value="reload" /></div>
@@ -46,7 +47,7 @@
           </template>
         </el-table-column>
         <el-table-column label="Товар" min-width="200" show-overflow-tooltip><template #default="{ row }">{{ row.product?.name ?? row.productId }}</template></el-table-column>
-        <el-table-column label="Склад" width="150" show-overflow-tooltip><template #default="{ row }">{{ row.store?.name ?? row.storeId }}</template></el-table-column>
+        <el-table-column label="Склад" width="150" show-overflow-tooltip><template #default="{ row }">{{ row.store?.name ?? row.storeId }}<div v-if="row.bin" class="muted">ячейка {{ row.bin.code || row.bin.name }}</div></template></el-table-column>
         <el-table-column label="Количество" width="110" align="right"><template #default="{ row }"><b :class="Number(row.qty) < 0 ? 'neg' : 'pos'">{{ Number(row.qty) > 0 ? '+' : '' }}{{ row.qty }}</b></template></el-table-column>
         <el-table-column v-if="withValue" label="Стоимость, ₸" width="170" align="right">
           <template #default="{ row }">
@@ -57,6 +58,17 @@
         <el-table-column label="Причина" min-width="140" show-overflow-tooltip><template #default="{ row }">{{ row.reason ?? '' }}</template></el-table-column>
       </el-table>
       <el-pagination v-if="data.total > limit" style="margin-top: 10px;" layout="prev, pager, next, total" :total="data.total" :page-size="limit" v-model:current-page="page" @current-change="load" />
+    </template>
+
+    <template v-else-if="tab === 'TRANSIT'">
+      <el-table v-loading="loading" :data="transit" size="small" empty-text="В пути ничего нет">
+        <el-table-column label="Перемещение" min-width="170">
+          <template #default="{ row }"><el-link type="primary" @click="router.push(`/accounting/trade/${row.id}`)">{{ row.number }}</el-link><div class="muted">{{ fmtDate(row.date) }}</div></template>
+        </el-table-column>
+        <el-table-column label="Откуда → куда" min-width="220"><template #default="{ row }">{{ storeName(row.storeId) }} → {{ storeName(row.destinationStoreId) }}</template></el-table-column>
+        <el-table-column label="Состояние" width="150"><template #default="{ row }">{{ row.state === 'PARTIAL' ? 'принято частично' : 'в пути' }}</template></el-table-column>
+        <el-table-column label="В пути (позиций / единиц)" width="200" align="right"><template #default="{ row }">{{ row.lines.filter((l: any) => Number(l.inTransit) > 0).length }} / {{ row.lines.reduce((a: number, l: any) => a + Number(l.inTransit), 0) }}</template></el-table-column>
+      </el-table>
     </template>
 
     <template v-else>
@@ -109,6 +121,8 @@ const limit = 100
 const stores = ref<any[]>([])
 const data = ref<any>({ items: [], total: 0 })
 const disc = ref<any>({ items: [] })
+const transit = ref<any[]>([])
+const storeName = (id: string) => stores.value.find((s) => s.id === id)?.name ?? id
 const checkResult = ref<any>(null)
 const discRows = computed(() => (disc.value.items || []).flatMap((d: any) => d.lines.map((l: any) => ({ ...l, doc: d }))))
 
@@ -120,6 +134,8 @@ async function load() {
   try {
     if (tab.value === 'MOVES') {
       data.value = (await api.get('/accounting/stock-movements', { params: { from, to, productId: productId.value, storeId: storeId.value, kind: kind.value, page: page.value, limit } })) as any
+    } else if (tab.value === 'TRANSIT') {
+      transit.value = (await api.get('/accounting/transfers-in-transit')) as any
     } else {
       disc.value = (await api.get('/accounting/receipt-discrepancies', { params: { from, to } })) as any
     }

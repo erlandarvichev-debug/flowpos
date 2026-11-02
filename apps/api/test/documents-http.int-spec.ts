@@ -122,4 +122,21 @@ describe('FP-028 документы через HTTP', () => {
     expect(await runAsTenant(t2, () => runtime.stockMovement.count({ where: { sourceId: d.body.id } }))).toBe(0);
     expect(await runAsTenant(DEFAULT_TENANT, () => runtime.stockMovement.count({ where: { sourceId: d.body.id } }))).toBe(1);
   });
+
+  it('FP-032: резерв — с правом записи документов, чужой клиент — 404; «в пути» — кладовщику; RLS резервов', async () => {
+    const t = await tradeA();
+    await call(h, 'POST', '/accounting/trade-documents', { token: A.token, body: { docType: 'SUPPLY', date: '2026-10-01', counterpartyId: t.supplier.id, storeId: t.s1.id, status: 'POSTED', lines: [{ productId: t.goods.id, qty: '5', price: '10' }] } });
+    const o = await call(h, 'POST', '/accounting/trade-documents', { token: A.token, body: { docType: 'CUSTOMER_ORDER', date: '2026-10-02', counterpartyId: t.customer.id, storeId: t.s1.id, lines: [{ productId: t.goods.id, qty: '2', price: '20' }] } });
+    const keeper = await makeUser(h, DEFAULT_TENANT, A.orgId, { role: 'storekeeper', name: 'ResKeeper' });
+    const keeperTok = (await login(h, keeper.email)).token;
+    expect((await call(h, 'POST', `/accounting/trade-documents/${o.body.id}/reserve`, { token: keeperTok })).status).toBe(403);
+    expect((await call(h, 'POST', `/accounting/trade-documents/${o.body.id}/reserve`, { token: B.token })).status).toBe(404);
+    const r = await call(h, 'POST', `/accounting/trade-documents/${o.body.id}/reserve`, { token: A.token });
+    expect([r.status, r.body.lines[0].reserved]).toEqual([201, '2']);
+    expect((await call(h, 'GET', '/accounting/transfers-in-transit', { token: keeperTok })).status).toBe(200);
+    const runtime = h.app.get(PrismaService);
+    expect(await runAsTenant(t2, () => runtime.stockReservation.count({ where: { sourceId: o.body.id } }))).toBe(0);
+    expect(await runAsTenant(DEFAULT_TENANT, () => runtime.stockReservation.count({ where: { sourceId: o.body.id } }))).toBe(1);
+    await call(h, 'POST', `/accounting/trade-documents/${o.body.id}/release-reserve`, { token: A.token });
+  });
 });

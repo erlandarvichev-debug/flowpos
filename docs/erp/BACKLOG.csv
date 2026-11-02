@@ -30,7 +30,7 @@ FP-028,Documents,P0,Backend,L,"FP-009,FP-026",DONE_LOCAL,Общие докуме
 FP-029,Documents,P0,Backend/Frontend,M,"FP-028,FP-008",DONE_LOCAL,Согласования и simulate command,Hash/scope/sum/TTL bound; изменение отменяет approval; UI показывает эффект
 FP-030,Inventory,P1,Backend,L,"FP-025,FP-028",DONE_LOCAL,Поступление и складские движения,Частичная приёмка/расхождения; qty и value; источник каждого movement
 FP-031,Inventory,P1,Accounting engineer,L,FP-030,DONE_LOCAL,Себестоимость и дополнительные расходы,Fixture COGS2200 profit800 stock8800; остаток округления детерминирован; метод периода
-FP-032,Inventory,P1,Backend/Frontend,M,FP-030,PLANNED,Резервы перемещения и адреса,Available=fact-reserved; нет двойного резерва при конкуренции; two-stage transfer
+FP-032,Inventory,P1,Backend/Frontend,M,FP-030,DONE_LOCAL,Резервы перемещения и адреса,Available=fact-reserved; нет двойного резерва при конкуренции; two-stage transfer
 FP-033,Inventory,P1,Backend/Frontend,M,"FP-030,FP-031",PLANNED,Инвентаризация списание партии серии,Сверка с фактами; причины; lot/expiry; approved discrepancy
 FP-034,Sales,P1,Backend/Frontend,L,"FP-027,FP-028,FP-032",PLANNED,Заказ клиента отгрузка возврат,Partial fulfilment; return by basis; prices/tax snapshot; правильный склад/стоимость
 FP-035,Purchases,P1,Backend/Frontend,L,"FP-026,FP-030,FP-029",PLANNED,Потребность заказ поставщику и приёмка,Budget approval; qty expected/received; расхождения и возврат поставщику

@@ -10,7 +10,8 @@ import { TRADE_SOURCE } from './trade-rules';
 import { contractPeriodProblem } from '../../catalog/requisites';
 import { tradeContent, tradeHash } from '../documents/content-hash';
 import { ApprovalsService } from '../approvals/approvals.service';
-import { recordDocumentMoves, reverseDocumentMoves } from '../../inventory/stock-ledger';
+import { plannedMoves, recordDocumentMoves, reverseDocumentMoves, serviceIds } from '../../inventory/stock-ledger';
+import { ReserveError, activeReservations, assertReservesCovered, consumeForShipment, releaseReservations, reserveOrder } from '../../inventory/reservations';
 import { ReceiptError, checkReceiptLine, receiptSummary } from '../../inventory/receipt';
 
 type Tx = Prisma.TransactionClient;
@@ -26,6 +27,8 @@ export interface TradeLineInput {
   productId: string; qty: string | number; price?: string | number; discount?: string | number; vatRate?: string | number | null;
   /** FP-030, поступление: по документу поставщика (заказу), отказ при приёмке, причина и пояснение расхождения. */
   expectedQty?: string | number | null; rejectedQty?: string | number | null; discrepancyReason?: string | null; discrepancyNote?: string | null;
+  /** FP-032: ячейка склада документа (для перемещения — откуда) и ячейка склада-получателя. */
+  binId?: string | null; binToId?: string | null;
 }
 export interface TradeDocInput {
   docType: string;
@@ -43,6 +46,8 @@ export interface TradeDocInput {
   amount?: string | number; // для платежей
   /** FP-031, доп. расходы: база распределения — сумма строк поступления (AMOUNT) или количество (QTY). */
   allocation?: 'AMOUNT' | 'QTY';
+  /** FP-032, перемещение: в два этапа — отгрузка на «В пути», затем приёмка на склад-получатель (storeToId). */
+  twoStage?: boolean;
   baseId?: string;
   lines?: TradeLineInput[];
   status?: 'DRAFT' | 'POSTED';
@@ -74,12 +79,34 @@ export class TradeDocumentsService {
     return doc;
   }
 
-  private async validateRefs(tx: Tx, ctx: OrgContext, input: TradeDocInput) {
+  private async validateRefs(tx: Tx, ctx: OrgContext, input: TradeDocInput, internal = false) {
+    const st: Record<string, { isTransit: boolean } | null> = {};
     for (const [field, label] of [['storeId', 'склад'], ['storeToId', 'склад-получатель']] as const) {
       const id = input[field];
-      if (id && !(await tx.store.findFirst({ where: { id, organizationId: ctx.organizationId } }))) {
+      const store = id ? await tx.store.findFirst({ where: { id, organizationId: ctx.organizationId } }) : null;
+      if (id && !store) {
         throw new AccError('REF_FOREIGN', `Указан ${label}, которого нет в этой организации`, { fix: `Выберите ${label} текущей организации.` });
       }
+      st[field] = store;
+    }
+    // FP-032: «В пути» — служебный склад двухэтапного перемещения. Вручную с него можно только списать недостачу.
+    if (!internal && (st.storeToId?.isTransit || (st.storeId?.isTransit && input.docType !== 'LOSS'))) {
+      throw new AccError('STORE_TRANSIT', 'Склад «В пути» используется только для перемещения в два этапа', { fix: 'Выберите обычный склад; для перемещения через «В пути» включите «в два этапа».' });
+    }
+    // FP-032: ячейки — своего склада (откуда — склада документа, куда — склада-получателя); внутри склада — только между ячейками.
+    for (const [i, l] of (input.lines || []).entries()) {
+      for (const [bf, sf, label] of [['binId', 'storeId', 'ячейка'], ['binToId', 'storeToId', 'ячейка-получатель']] as const) {
+        const binId = l[bf];
+        if (!binId) continue;
+        const storeId = sf === 'storeToId' && input.docType !== 'MOVE' ? null : input[sf];
+        if (!storeId || !(await tx.bin.findFirst({ where: { id: binId, storeId, isActive: true } }))) {
+          throw new AccError('BIN_FOREIGN', `Строка ${i + 1}: ${label} не относится к ${sf === 'storeId' ? 'складу документа' : 'складу-получателю'}`, { fix: 'Выберите ячейку этого склада.' });
+        }
+      }
+    }
+    if (input.docType === 'MOVE' && input.storeId && input.storeId === input.storeToId) {
+      const ok = (input.lines || []).every((l) => l.binId && l.binToId && l.binId !== l.binToId);
+      if (!ok) throw new AccError('MOVE_SAME_STORE', 'Склад-отправитель и склад-получатель совпадают', { fix: 'Для перемещения внутри склада укажите в каждой строке разные ячейки «откуда» и «куда».' });
     }
     if (input.counterpartyId) {
       const c = await tx.counterparty.findUnique({ where: { id: input.counterpartyId } });
@@ -141,6 +168,7 @@ export class TradeDocumentsService {
         lineNo: i + 1, productId: l.productId, qty, price, discount, amount,
         vatRate: l.vatRate !== undefined && l.vatRate !== null && l.vatRate !== '' ? new D(String(l.vatRate)) : null,
         ...receipt,
+        binId: l.binId || null, binToId: l.binToId || null,
       };
     });
     if (input.docType === 'SUPPLY' && lines.length && lines.every((l) => l.qty.isZero())) {
@@ -154,12 +182,37 @@ export class TradeDocumentsService {
     return {
       lineNo: l.lineNo, productId: l.productId, qty: l.qty, price: l.price, discount: l.discount, amount: l.amount, vatRate: l.vatRate,
       expectedQty: l.expectedQty, rejectedQty: l.rejectedQty, discrepancyReason: l.discrepancyReason, discrepancyNote: l.discrepancyNote,
+      binId: l.binId, binToId: l.binToId,
     };
+  }
+
+  /** FP-032: служебный склад «В пути» организации (создаётся при первом двухэтапном перемещении). */
+  private async transitStore(tx: Tx, ctx: OrgContext) {
+    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${'transit:' + ctx.organizationId}))::text`;
+    return (await tx.store.findFirst({ where: { organizationId: ctx.organizationId, isTransit: true } }))
+      ?? tx.store.create({ data: { organizationId: ctx.organizationId, tenantId: ctx.tenantId, name: 'В пути', code: 'TRANSIT', isTransit: true } });
+  }
+
+  private reserveErr(e: unknown): never {
+    if (e instanceof ReserveError) throw new AccError(e.code, e.message, { status: e.status, details: e.details, fix: e.fix });
+    throw e;
+  }
+
+  /**
+   * Движения склада проведённой версии (FP-030) + резервы (FP-032): отгрузка по заказу расходует его резерв, затем
+   * проверка, что расход не забрал чужой резерв.
+   */
+  private async moveStock(tx: Tx, ctx: OrgContext, doc: any, reason?: string) {
+    await recordDocumentMoves(tx, doc, { userId: ctx.userId, reason });
+    try {
+      await consumeForShipment(tx, doc);
+      await assertReservesCovered(tx, plannedMoves(doc, await serviceIds(tx, doc)));
+    } catch (e) { this.reserveErr(e); }
   }
 
   private attrs(input: TradeDocInput, prev: any = {}) {
     const a: any = { ...prev };
-    for (const k of ['vatIncluded', 'paymentType', 'bankAccountId', 'departmentId', 'lossAccount', 'baseId', 'comment', 'allocation'] as const) if ((input as any)[k] !== undefined) a[k] = (input as any)[k];
+    for (const k of ['vatIncluded', 'paymentType', 'bankAccountId', 'departmentId', 'lossAccount', 'baseId', 'comment', 'allocation', 'twoStage', 'destinationStoreId', 'transferStage'] as const) if ((input as any)[k] !== undefined) a[k] = (input as any)[k];
     return a;
   }
 
@@ -173,8 +226,16 @@ export class TradeDocumentsService {
     await tx.documentVersion.create({ data: { tenantId: doc.tenantId, organizationId: ctx.organizationId, documentId: id, version: doc.version, action, snapshot: { ...snapshot, status: doc.status } as any, hash, changedBy: ctx.userId, reason } });
   }
 
-  /** FP-031: проведённое поступление с проведёнными доп. расходами нельзя менять или снимать — сначала доп. расходы. */
-  private async assertNoLandedCosts(tx: Tx, doc: { id: string; docType: string; number: string | null }) {
+  /**
+   * Проведённые зависимые документы: поступление с доп. расходами (FP-031), отгрузка на «В пути» с приёмками (FP-032) —
+   * не менять и не снимать, пока проведены зависимые.
+   */
+  private async assertNoLandedCosts(tx: Tx, doc: { id: string; docType: string; number: string | null; attributes?: any }) {
+    if (doc.docType === 'MOVE' && doc.attributes?.twoStage) {
+      const rec = await tx.document.findMany({ where: { docType: 'MOVE', status: 'POSTED', deleted: false, attributes: { path: ['baseId'], equals: doc.id } }, select: { number: true } });
+      if (rec.length) throw new AccError('TRANSFER_RECEIVED_DEPENDS', `По перемещению ${doc.number ?? ''} проведены приёмки ${rec.map((d) => d.number).join(', ')}`, { status: 409, fix: 'Сначала снимите с проведения приёмки, затем меняйте отгрузку.' });
+      return;
+    }
     if (doc.docType !== 'SUPPLY') return;
     const dep = await tx.document.findMany({ where: { docType: 'LANDED_COST' as any, status: 'POSTED', deleted: false, attributes: { path: ['baseId'], equals: doc.id } }, select: { number: true } });
     if (dep.length) {
@@ -195,14 +256,23 @@ export class TradeDocumentsService {
     });
   }
 
-  async create(ctx: OrgContext, input: TradeDocInput, override?: OverrideRequest) {
+  async create(ctx: OrgContext, input: TradeDocInput, override?: OverrideRequest, internal = false) {
     if (!EDITABLE.includes(input.docType)) throw new AccError('UNKNOWN_DOC_TYPE', `Тип документа ${input.docType} не поддерживается`);
     const date = new Date(input.date);
     if (!input.date || isNaN(date.getTime())) throw new AccError('BAD_DATE', 'Укажите дату документа');
     const isPayment = input.docType.startsWith('PAYMENT_');
     if (!isPayment && !(input.lines || []).length) throw new AccError('NO_LINES', 'Добавьте хотя бы одну строку');
     return this.prisma.$transaction(async (tx) => {
-      await this.validateRefs(tx, ctx, input);
+      // FP-032: перемещение в два этапа — склад-получатель запоминается, отгрузка идёт на «В пути».
+      if (input.docType === 'MOVE' && input.twoStage && !internal) {
+        if (!input.storeToId) throw new AccError('STORE_REQUIRED', 'Укажите склад-получатель');
+        await this.validateRefs(tx, ctx, { ...input, lines: input.lines?.map((l) => ({ ...l, binToId: null })) });
+        input = { ...input, destinationStoreId: input.storeToId, storeToId: (await this.transitStore(tx, ctx)).id, lines: input.lines?.map((l) => ({ ...l, binToId: null })) } as TradeDocInput;
+        internal = true;
+      } else if (input.twoStage) {
+        throw new AccError('BAD_TWO_STAGE', 'В два этапа оформляется только перемещение');
+      }
+      await this.validateRefs(tx, ctx, input, internal);
       const lines = this.buildLines(input);
       const total = isPayment ? money(input.amount, 2, 'сумма платежа') : lines.reduce((a, l) => a.plus(l.amount), new D(0));
       const number = await this.number(tx, ctx, input.docType, date);
@@ -240,12 +310,26 @@ export class TradeDocumentsService {
         lines: input.lines ?? doc.lines.map((l) => ({
           productId: l.productId, qty: l.qty.toString(), price: l.price?.toString(), discount: l.discount?.toString(), vatRate: l.vatRate?.toString() ?? null,
           expectedQty: l.expectedQty?.toString() ?? null, rejectedQty: l.rejectedQty?.toString() ?? null, discrepancyReason: l.discrepancyReason, discrepancyNote: l.discrepancyNote,
+          binId: l.binId, binToId: l.binToId,
         })),
         amount: input.amount ?? doc.total?.toString(),
       } as TradeDocInput;
       for (const k of ['comment', 'vatIncluded', 'paymentType', 'bankAccountId', 'departmentId', 'lossAccount', 'allocation'] as const) if ((input as any)[k] !== undefined) (merged as any)[k] = (input as any)[k];
       if (doc.docType === 'LANDED_COST') merged.baseId = (doc.attributes as any)?.baseId;
-      await this.validateRefs(tx, ctx, merged);
+      // FP-032: отгрузка в два этапа — склад «В пути» не меняется; новый склад-получатель — в реквизитах; приёмка с
+      // «В пути» — служебная (склады те же).
+      const da = (doc.attributes ?? {}) as any;
+      const internal = !!da.twoStage || da.transferStage === 'RECEIPT';
+      if (da.twoStage) {
+        if (input.storeToId && input.storeToId !== doc.storeToId) {
+          await this.validateRefs(tx, ctx, { docType: 'MOVE', date: merged.date, storeId: merged.storeId, storeToId: input.storeToId });
+          (input as any).destinationStoreId = input.storeToId;
+        }
+        merged.storeToId = doc.storeToId ?? undefined;
+        merged.lines = merged.lines?.map((l) => ({ ...l, binToId: null }));
+      }
+      if (da.transferStage === 'RECEIPT') { merged.storeId = doc.storeId ?? undefined; merged.storeToId = doc.storeToId ?? undefined; }
+      await this.validateRefs(tx, ctx, merged, internal);
       // FP-029: сохранение без изменения содержимого — не новая версия (иначе «Провести» на экране, которое сначала
       // сохраняет, отменяло бы согласование этой же версии).
       const lines0 = this.buildLines(merged);
@@ -276,13 +360,17 @@ export class TradeDocumentsService {
       });
       await tx.auditLog.create({ data: { userId: ctx.userId, organizationId: ctx.organizationId, action: 'TRADE_DOC_UPDATE', entity: 'document', entityId: id, reason: input.reason, before: { total: doc.total, date: doc.date } as any, after: { total: total.toFixed(2), date: merged.date } } });
       await this.writeVersion(tx, ctx, id, 'UPDATE', input.reason);
+      // FP-032: заказ с резервом — резерв подгоняется под новые строки.
+      if (doc.docType === 'CUSTOMER_ORDER' && (await activeReservations(tx, id)).length) {
+        try { await reserveOrder(tx, (await tx.document.findUniqueOrThrow({ where: { id }, include: { lines: { orderBy: { lineNo: 'asc' } } } })) as any, ctx.userId); } catch (e) { this.reserveErr(e); }
+      }
       // FP-029: изменение отменяет согласования прежней версии.
       await this.approvals.supersede(tx, ctx.organizationId, 'TRADE', id);
       if (wasPosted) {
         const fresh = await tx.document.findUnique({ where: { id }, include: { lines: true } });
         await tx.document.update({ where: { id }, data: { status: 'POSTED', postedVersion: fresh!.version } });
         await this.autopilot.syncTradeDocument(tx, id, { userId: ctx.userId, override, organizationId: ctx.organizationId });
-        await recordDocumentMoves(tx, fresh!, { userId: ctx.userId, reason: input.reason });
+        await this.moveStock(tx, ctx, fresh!, input.reason);
         await this.writeVersion(tx, ctx, id, 'POST', input.reason);
       }
       return this.view(tx, id);
@@ -306,7 +394,7 @@ export class TradeDocumentsService {
     await tx.document.update({ where: { id }, data: { status: 'POSTED', postedVersion: doc.version, updatedBy: ctx.userId } });
     // FP-030: сначала учёт (стоимость прихода — из него), затем движения склада с источником.
     await this.autopilot.syncTradeDocument(tx, id, { userId: ctx.userId, override, organizationId: ctx.organizationId });
-    await recordDocumentMoves(tx, doc, { userId: ctx.userId });
+    await this.moveStock(tx, ctx, doc);
     await this.writeVersion(tx, ctx, id, 'POST');
     return this.view(tx, id);
   }
@@ -334,7 +422,7 @@ export class TradeDocumentsService {
           try {
             await tx.document.update({ where: { id }, data: { status: 'POSTED', postedVersion: doc.version } });
             await this.autopilot.syncTradeDocument(tx, id, { userId: ctx.userId, organizationId: ctx.organizationId });
-            await recordDocumentMoves(tx, doc, { userId: ctx.userId });
+            await this.moveStock(tx, ctx, doc);
           } catch (e: any) {
             error = { code: e?.getResponse?.()?.code ?? 'ERROR', message: e?.getResponse?.()?.message ?? e?.message };
           }
@@ -387,6 +475,7 @@ export class TradeDocumentsService {
       if (doc.deleted && doc.status === 'CANCELLED') return this.view(tx, id);
       if (doc.status === 'POSTED') await this.assertNoLandedCosts(tx, doc);
       if (doc.status === 'POSTED') await reverseDocumentMoves(tx, doc, { userId: ctx.userId, reason: 'Пометка на удаление' });
+      if (doc.docType === 'CUSTOMER_ORDER') await releaseReservations(tx, id, 'ORDER_CANCELLED');
       await tx.document.update({ where: { id }, data: { status: 'CANCELLED', deleted: true, postedVersion: null, updatedBy: ctx.userId } });
       await this.autopilot.syncTradeDocument(tx, id, { userId: ctx.userId, override, organizationId: ctx.organizationId });
       await this.writeVersion(tx, ctx, id, 'CANCEL');
@@ -438,6 +527,87 @@ export class TradeDocumentsService {
     });
   }
 
+  // ── FP-032: резервы заказа покупателя ──
+
+  /** Зарезервировать заказ (свободный остаток склада заказа; по строкам — сколько вышло). */
+  reserve(ctx: OrgContext, id: string) {
+    return this.prisma.$transaction(async (tx) => {
+      const doc = await this.scoped(tx, ctx, id);
+      let lines;
+      try { lines = await reserveOrder(tx, doc as any, ctx.userId); } catch (e) { this.reserveErr(e); }
+      await tx.auditLog.create({ data: { userId: ctx.userId, organizationId: ctx.organizationId, action: 'STOCK_RESERVE', entity: 'document', entityId: id, after: { lines } as any } });
+      return { lines, document: await this.view(tx, id) };
+    }, { timeout: 60000 });
+  }
+
+  /** Снять резерв заказа. */
+  releaseReserve(ctx: OrgContext, id: string) {
+    return this.prisma.$transaction(async (tx) => {
+      await this.scoped(tx, ctx, id);
+      const n = await releaseReservations(tx, id, 'RELEASED');
+      await tx.auditLog.create({ data: { userId: ctx.userId, organizationId: ctx.organizationId, action: 'STOCK_RESERVE_RELEASE', entity: 'document', entityId: id, after: { released: n } } });
+      return this.view(tx, id);
+    });
+  }
+
+  // ── FP-032: перемещение в два этапа ──
+
+  /** Отгружено, принято и в пути по перемещению (по товару). */
+  private async transitOf(tx: Tx, doc: { id: string; status: string; lines: { productId: string; qty: any }[] }) {
+    const receipts = await tx.document.findMany({ where: { docType: 'MOVE', status: 'POSTED', deleted: false, attributes: { path: ['baseId'], equals: doc.id } }, include: { lines: true }, orderBy: { date: 'asc' } });
+    const shipped = new Map<string, Prisma.Decimal>(), received = new Map<string, Prisma.Decimal>();
+    if (doc.status === 'POSTED') for (const l of doc.lines) shipped.set(l.productId, (shipped.get(l.productId) ?? new D(0)).plus(l.qty));
+    for (const r of receipts) for (const l of r.lines) received.set(l.productId, (received.get(l.productId) ?? new D(0)).plus(l.qty));
+    const lines = [...shipped.entries()].map(([productId, q]) => {
+      const rec = received.get(productId) ?? new D(0);
+      return { productId, shipped: q.toString(), received: rec.toString(), inTransit: q.minus(rec).toString() };
+    });
+    const left = lines.some((l) => new D(l.inTransit).gt(0));
+    return { state: doc.status !== 'POSTED' ? 'NOT_SHIPPED' : left ? (receipts.length ? 'PARTIAL' : 'IN_TRANSIT') : 'RECEIVED', lines, receipts: receipts.map((r) => ({ id: r.id, number: r.number, date: r.date })) };
+  }
+
+  /**
+   * Приёмка перемещения на склад-получатель: проведённое перемещение «В пути» → склад-получатель, по умолчанию всё, что
+   * в пути; можно частями (остаток остаётся в пути). Не раньше даты отгрузки и не больше, чем в пути.
+   */
+  async receive(ctx: OrgContext, id: string, input: { date?: string; lines?: { productId: string; qty: string | number; binToId?: string | null }[] } = {}) {
+    const { ship, remaining } = await this.prisma.$transaction(async (tx) => {
+      const ship = await this.scoped(tx, ctx, id);
+      const a = (ship.attributes ?? {}) as any;
+      if (ship.docType !== 'MOVE' || !a.twoStage) throw new AccError('NOT_TWO_STAGE', 'Принимать можно только перемещение в два этапа');
+      if (ship.status !== 'POSTED' || ship.deleted) throw new AccError('TRANSFER_NOT_SHIPPED', 'Перемещение не проведено — товар ещё не отгружен');
+      return { ship, remaining: (await this.transitOf(tx, ship)).lines };
+    });
+    const date = input.date ?? new Date().toISOString().slice(0, 10);
+    if (new Date(date).getTime() < ship.date.getTime()) throw new AccError('RECEIVE_BEFORE_SHIP', 'Дата приёмки раньше даты отгрузки');
+    const want = input.lines?.length ? input.lines : remaining.filter((l) => new D(l.inTransit).gt(0)).map((l) => ({ productId: l.productId, qty: l.inTransit }));
+    if (!want.length) throw new AccError('TRANSFER_RECEIVED', `По перемещению ${ship.number ?? ''} всё уже принято`);
+    const left = new Map(remaining.map((l) => [l.productId, new D(l.inTransit)]));
+    for (const [i, l] of want.entries()) {
+      const q = money(l.qty, 3, `количество (строка ${i + 1})`);
+      const have = left.get(l.productId) ?? new D(0);
+      if (q.lte(0) || q.gt(have)) throw new AccError('RECEIVE_TOO_MUCH', `Строка ${i + 1}: в пути ${have}, принимается ${q}`);
+      left.set(l.productId, have.minus(q));
+    }
+    const dest = (ship.attributes as any).destinationStoreId as string;
+    return this.create(ctx, {
+      docType: 'MOVE', date, storeId: ship.storeToId!, storeToId: dest, baseId: id, comment: `Приёмка перемещения ${ship.number ?? ''}`,
+      lines: want.map((l) => ({ productId: l.productId, qty: String(l.qty), binToId: l.binToId ?? null })), status: 'POSTED',
+      ...({ transferStage: 'RECEIPT' } as any),
+    }, undefined, true);
+  }
+
+  /** Перемещения в пути (двухэтапные, не принятые полностью). */
+  async inTransit(ctx: OrgContext) {
+    const docs = await this.prisma.document.findMany({ where: { organizationId: ctx.organizationId, docType: 'MOVE', status: 'POSTED', deleted: false, attributes: { path: ['twoStage'], equals: true } }, include: { lines: true }, orderBy: { date: 'asc' } });
+    const out: any[] = [];
+    for (const d of docs) {
+      const t = await this.prisma.$transaction((tx) => this.transitOf(tx, d));
+      if (t.state !== 'RECEIVED') out.push({ id: d.id, number: d.number, date: d.date, storeId: d.storeId, destinationStoreId: (d.attributes as any)?.destinationStoreId, ...t });
+    }
+    return out;
+  }
+
   async list(ctx: OrgContext, q: { docType?: string; status?: string; from?: string; to?: string; search?: string; page?: number; limit?: number }) {
     const stores = (await this.prisma.store.findMany({ where: { organizationId: ctx.organizationId }, select: { id: true } })).map((s) => s.id);
     const where: Prisma.DocumentWhereInput = { OR: [{ organizationId: ctx.organizationId }, { organizationId: null, storeId: { in: stores } }] };
@@ -475,7 +645,7 @@ export class TradeDocumentsService {
   private async view(tx: Tx, id: string) {
     const doc = await tx.document.findUnique({
       where: { id },
-      include: { counterparty: { select: { id: true, name: true, inn: true } }, lines: { include: { product: { select: { id: true, name: true, kind: true, code: true, article: true } } }, orderBy: { lineNo: 'asc' } } },
+      include: { counterparty: { select: { id: true, name: true, inn: true } }, lines: { include: { product: { select: { id: true, name: true, kind: true, code: true, article: true } }, bin: { select: { id: true, name: true, code: true } }, binTo: { select: { id: true, name: true, code: true } } }, orderBy: { lineNo: 'asc' } } },
     });
     const org = doc!.organizationId;
     const entry = org ? await tx.accEntry.findFirst({
@@ -494,7 +664,10 @@ export class TradeDocumentsService {
     const movements = await tx.stockMovement.findMany({ where: { sourceType: TRADE_SOURCE, sourceId: id }, orderBy: [{ createdAt: 'asc' }, { sourceLine: 'asc' }, { qty: 'asc' }] });
     const receipt = doc!.docType === 'SUPPLY' ? receiptSummary(doc!.lines) : null;
     const fulfillment = doc!.docType.endsWith('_ORDER') ? await this.fulfillmentOf(tx, doc!) : null;
-    return { ...doc!, entry, costEntries, issue, related: [...(base ? [base] : []), ...children], movements, receipt, fulfillment };
+    // FP-032: резервы заказа покупателя, состояние перемещения в два этапа.
+    const reservations = doc!.docType === 'CUSTOMER_ORDER' ? await tx.stockReservation.findMany({ where: { sourceType: TRADE_SOURCE, sourceId: id }, orderBy: [{ createdAt: 'asc' }] }) : [];
+    const transit = doc!.docType === 'MOVE' && (doc!.attributes as any)?.twoStage ? await this.transitOf(tx, doc!) : null;
+    return { ...doc!, entry, costEntries, issue, related: [...(base ? [base] : []), ...children], movements, receipt, fulfillment, reservations, transit };
   }
 
   /**

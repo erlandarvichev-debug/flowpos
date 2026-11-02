@@ -30,6 +30,18 @@ export class WarehousesController {
     return this.warehouses.getStocks(s, id, query);
   }
 
+  @Post(':id/bins')
+  @RequirePermission('catalog.manage')
+  createBin(@CurrentScope() s: Scope, @Param('id') id: string, @Body() body: any) {
+    return this.warehouses.createBin(s, id, body);
+  }
+
+  @Put(':id/bins/:binId')
+  @RequirePermission('catalog.manage')
+  updateBin(@CurrentScope() s: Scope, @Param('id') id: string, @Param('binId') binId: string, @Body() body: any) {
+    return this.warehouses.updateBin(s, id, binId, body);
+  }
+
   @Post()
   @RequirePermission('catalog.manage')
   create(@CurrentScope() s: Scope, @Body() body: any) {

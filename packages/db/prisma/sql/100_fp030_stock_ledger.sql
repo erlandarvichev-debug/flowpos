@@ -96,17 +96,17 @@ BEGIN
 END $$;
 CREATE TRIGGER fp_stock_movements_immutable_trg BEFORE UPDATE OR DELETE ON stock_movements FOR EACH ROW EXECUTE FUNCTION fp_stock_movements_immutable();
 
--- ── Количество в stock — только из журнала ──
--- pg_trigger_depth() > 1: запись пришла из триггера движения. Резерв (reserved) меняется напрямую.
+-- ── Количество в stock — только из журнала, резерв — только из резервов (FP-032) ──
+-- pg_trigger_depth() > 1: запись пришла из триггера движения или резерва.
 CREATE OR REPLACE FUNCTION fp_stock_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
   IF pg_trigger_depth() > 1 OR fp_stock_maintenance() THEN
     RETURN COALESCE(NEW, OLD);
   END IF;
-  IF (TG_OP = 'INSERT' AND NEW.qty <> 0)
-     OR (TG_OP = 'UPDATE' AND (NEW.qty IS DISTINCT FROM OLD.qty OR NEW.product_id <> OLD.product_id OR NEW.store_id <> OLD.store_id
-                               OR NEW.bin_id IS DISTINCT FROM OLD.bin_id))
-     OR (TG_OP = 'DELETE' AND OLD.qty <> 0) THEN
+  IF (TG_OP = 'INSERT' AND (NEW.qty <> 0 OR NEW.reserved <> 0))
+     OR (TG_OP = 'UPDATE' AND (NEW.qty IS DISTINCT FROM OLD.qty OR NEW.reserved IS DISTINCT FROM OLD.reserved
+                               OR NEW.product_id <> OLD.product_id OR NEW.store_id <> OLD.store_id OR NEW.bin_id IS DISTINCT FROM OLD.bin_id))
+     OR (TG_OP = 'DELETE' AND (OLD.qty <> 0 OR OLD.reserved <> 0)) THEN
     RAISE EXCEPTION 'STOCK_LEDGER_ONLY: остаток меняется только складским движением с источником' USING ERRCODE = 'P0001';
   END IF;
   RETURN COALESCE(NEW, OLD);

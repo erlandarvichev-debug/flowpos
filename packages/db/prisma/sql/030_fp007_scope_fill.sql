@@ -63,6 +63,8 @@ BEGIN
     ['stock',               'tenant_id',       'store_id',          'stores',               'tenant_id'],
     ['stock_movements',     'tenant_id',       'store_id',          'stores',               'tenant_id'],
     ['stock_movements',     'organization_id', 'store_id',          'stores',               'organization_id'],
+    ['stock_reservations',  'tenant_id',       'store_id',          'stores',               'tenant_id'],
+    ['stock_reservations',  'organization_id', 'store_id',          'stores',               'organization_id'],
     ['contracts',           'tenant_id',       'counterparty_id',   'counterparties',       'tenant_id'],
     ['counterparty_addresses', 'tenant_id',    'counterparty_id',   'counterparties',       'tenant_id'],
     ['counterparty_bank_accounts', 'tenant_id', 'counterparty_id',   'counterparties',       'tenant_id'],

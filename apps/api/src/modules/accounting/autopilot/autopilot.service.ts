@@ -108,7 +108,9 @@ export class AutopilotService implements OnModuleInit, OnModuleDestroy {
     const existing = await tx.accEntry.findFirst({ where: { organizationId, sourceType: TRADE_SOURCE, sourceId: id, status: 'ACTIVE' } });
     const oldProducts = existing ? (await tx.accStockMove.findMany({ where: { entryId: existing.id }, select: { productId: true } })).map((m) => m.productId) : [];
 
-    const shouldPost = doc.status === 'POSTED' && !doc.deleted && settings.enabled && !settings.skipOwners.includes(doc.owner) && !NO_ACCOUNTING.includes(doc.docType);
+    // FP-032: перемещение между ячейками одного склада — без бухгалтерских последствий (склад тот же).
+    const binMove = doc.docType === 'MOVE' && !!doc.storeId && doc.storeId === doc.storeToId;
+    const shouldPost = doc.status === 'POSTED' && !doc.deleted && settings.enabled && !settings.skipOwners.includes(doc.owner) && !NO_ACCOUNTING.includes(doc.docType) && !binMove;
     if (!shouldPost) {
       if (existing) {
         await this.periods.assertOpen(tx, ctx, [existing.date], opts.override, 'отмена отражения документа');
@@ -116,7 +118,7 @@ export class AutopilotService implements OnModuleInit, OnModuleDestroy {
         await this.cost.recalcProducts(tx, ctx, oldProducts, opts.override);
       }
       await this.resolveIssue(tx, id);
-      return { status: existing ? 'CANCELLED' : 'SKIPPED', reason: NO_ACCOUNTING.includes(doc.docType) ? 'документ без бухгалтерских последствий' : undefined };
+      return { status: existing ? 'CANCELLED' : 'SKIPPED', reason: NO_ACCOUNTING.includes(doc.docType) || binMove ? 'документ без бухгалтерских последствий' : undefined };
     }
     if (!isSupported(doc.docType)) throw new AccError('NO_RULE', `Нет правила отражения для документа типа ${doc.docType}`);
     const version = Math.floor(doc.updatedAt.getTime() / 1000);

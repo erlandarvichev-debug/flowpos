@@ -16,6 +16,7 @@ export function tradeContent(doc: any) {
       lineNo: l.lineNo, productId: l.productId, qty: new D(l.qty).toString(), price: l.price == null ? null : new D(l.price).toFixed(2),
       discount: l.discount == null ? null : new D(l.discount).toString(), amount: l.amount == null ? null : new D(l.amount).toFixed(2), vatRate: l.vatRate == null ? null : new D(l.vatRate).toString(),
       ...receiptContent(l),
+      ...(l.binId || l.binToId ? { binId: l.binId ?? null, binToId: l.binToId ?? null } : {}), // FP-032: адрес — только если задан
     })),
   };
 }

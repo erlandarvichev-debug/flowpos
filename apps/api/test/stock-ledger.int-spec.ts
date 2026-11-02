@@ -150,8 +150,8 @@ describe('FP-030: журнал складских движений', () => {
     expect(await dbCode(prisma.$executeRaw`UPDATE stock SET qty = qty + 1 WHERE id = ${row.id}`)).toBe('STOCK_LEDGER_ONLY');
     expect(await dbCode(prisma.stockMovement.update({ where: { id: m.id }, data: { qty: 50 } }))).toBe('ACC_IMMUTABLE');
     expect(await dbCode(prisma.stockMovement.delete({ where: { id: m.id } }))).toBe('ACC_IMMUTABLE');
-    // Резерв — не количество: меняется напрямую.
-    expect((await prisma.stock.update({ where: { id: row.id }, data: { reserved: 2 } })).reserved.toString()).toBe('2');
+    // FP-032: резерв тоже не пишется напрямую — только резервами (stock_reservations).
+    expect(await dbCode(prisma.stock.update({ where: { id: row.id }, data: { reserved: 2 } }))).toBe('STOCK_LEDGER_ONLY');
 
     // Встречное — только точно встречное и одно.
     const base = { organizationId: ctx.organizationId, productId: t.goods.id, storeId: t.s1.id, kind: 'RECEIPT', sourceType: 'TRADE_DOCUMENT', sourceId: d.id, occurredAt: new Date() };

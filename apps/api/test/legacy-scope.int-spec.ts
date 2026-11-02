@@ -102,12 +102,14 @@ afterAll(async () => {
 
 describe('FP-007: каталог', () => {
   it('товар: общий — виден всем организациям клиента; личный — только своей; другого клиента — никому', async () => {
-    const shared = await items.create(A, { name: `Общий ${uid()}`, uomId: uomA });
-    const own = await items.create(A, { name: `Личный A ${uid()}`, uomId: uomA, organizationId: A.organizationId });
-    const foreign = await items.create(B, { name: `Товар B ${uid()}`, uomId: uomB });
+    // Метка прогона: поиск по ней не зависит от того, сколько товаров накопилось в тестовой БД.
+    const tag = `scope-${uid()}`;
+    const shared = await items.create(A, { name: `Общий ${tag}`, uomId: uomA });
+    const own = await items.create(A, { name: `Личный A ${tag}`, uomId: uomA, organizationId: A.organizationId });
+    const foreign = await items.create(B, { name: `Товар B ${tag}`, uomId: uomB });
     expect([shared.tenantId, shared.organizationId, own.organizationId, foreign.tenantId]).toEqual([DEFAULT_TENANT, null, A.organizationId, t2]);
 
-    const idsFor = async (s: Scope) => (await items.findAll(s, { limit: 500 })).items.map((i) => i.id);
+    const idsFor = async (s: Scope) => (await items.findAll(s, { search: tag, limit: 500 })).items.map((i) => i.id);
     expect(await idsFor(A)).toEqual(expect.arrayContaining([shared.id, own.id]));
     expect(await idsFor(A2)).toContain(shared.id);
     expect(await idsFor(A2)).not.toContain(own.id);

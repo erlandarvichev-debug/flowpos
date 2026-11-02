@@ -49,6 +49,7 @@ export class StockLedgerService {
       ? (await this.prisma.stockMovement.aggregate({ where: { ...where, occurredAt: { lt: from } }, _sum: { qty: true } }))._sum.qty ?? new D(0)
       : null;
 
+    const bins = await this.prisma.bin.findMany({ where: { id: { in: [...new Set(rows.map((r) => r.binId).filter(Boolean) as string[])] } }, select: { id: true, name: true, code: true } });
     const [products, stores, docs] = await Promise.all([
       this.prisma.product.findMany({ where: { id: { in: [...new Set(rows.map((r) => r.productId))] } }, select: { id: true, name: true, code: true } }),
       this.prisma.store.findMany({ where: { id: { in: [...new Set(rows.map((r) => r.storeId))] } }, select: { id: true, name: true } }),
@@ -64,6 +65,7 @@ export class StockLedgerService {
           reversed: reversedIds.has(r.id),
           product: products.find((p) => p.id === r.productId) ?? null,
           store: stores.find((s) => s.id === r.storeId) ?? null,
+          bin: bins.find((b) => b.id === r.binId) ?? null,
           source: r.sourceType === LEDGER_SOURCE ? docs.find((x) => x.id === r.sourceId) ?? null : null,
         };
       }),

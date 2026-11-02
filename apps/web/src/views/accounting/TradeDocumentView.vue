@@ -16,12 +16,17 @@
           <PostingPreview v-if="doc?.id && doc.status !== 'POSTED'" kind="TRADE" :id="doc.id" :version="doc.version" @changed="load" />
           <el-button type="success" :loading="busy" @click="post" v-if="org.can('acc.doc.post') && doc.status !== 'POSTED'">{{ t('post') }}</el-button>
         </template>
+        <el-button v-if="doc.transit && doc.transit.state !== 'RECEIVED' && doc.transit.state !== 'NOT_SHIPPED' && org.can('acc.doc.post')" type="success" :loading="busy" @click="openReceive">Принять на склад</el-button>
         <el-dropdown v-if="isSaved" @command="onCommand" trigger="click">
           <el-button>Ещё <el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
           <template #dropdown>
             <el-dropdown-menu>
               <el-dropdown-item v-for="tt in baseTargets" :key="tt" :command="`based:${tt}`">{{ t('createBased') }}: {{ tl(tt) }}</el-dropdown-item>
               <el-dropdown-item v-if="docType === 'SUPPLY' && doc.status === 'POSTED' && org.can('acc.doc.write')" command="landed">Доп. расходы (доставка, таможня…)</el-dropdown-item>
+              <template v-if="docType === 'CUSTOMER_ORDER' && org.can('acc.doc.write') && doc.status !== 'CANCELLED'">
+                <el-dropdown-item command="reserve" divided>Зарезервировать на складе</el-dropdown-item>
+                <el-dropdown-item v-if="activeReserves.length" command="release">Снять резерв</el-dropdown-item>
+              </template>
               <el-dropdown-item v-if="doc.status === 'POSTED' && org.can('acc.doc.post')" command="unpost" :divided="baseTargets.length > 0">{{ t('unpost') }}</el-dropdown-item>
               <el-dropdown-item v-if="doc.status !== 'CANCELLED' && org.can('acc.doc.cancel')" command="cancel" divided>{{ t('cancel') }}</el-dropdown-item>
               <el-dropdown-item v-if="(doc.status === 'CANCELLED' || doc.deleted) && org.can('acc.doc.cancel')" command="restore" divided>Восстановить</el-dropdown-item>
@@ -71,15 +76,20 @@
             <span class="hint">Сумма без НДС войдёт в стоимость товаров поступления; доля уже проданного — в себестоимость продаж.</span>
           </el-form-item>
         </template>
-        <el-form-item v-if="docType !== 'LANDED_COST'" :label="docType === 'MOVE' ? 'Склад-отправитель' : t('store')">
+        <el-form-item v-if="docType !== 'LANDED_COST' && !isTransferReceipt" :label="docType === 'MOVE' ? 'Склад-отправитель' : t('store')">
           <el-select v-model="form.storeId" filterable clearable :disabled="readonly" placeholder="Выберите склад" style="width: 320px;">
             <el-option v-for="s in stores" :key="s.id" :label="s.name" :value="s.id" />
           </el-select>
         </el-form-item>
-        <el-form-item v-if="docType === 'MOVE'" :label="t('storeTo')">
+        <el-form-item v-if="docType === 'MOVE' && !isTransferReceipt" :label="t('storeTo')">
           <el-select v-model="form.storeToId" filterable clearable :disabled="readonly" placeholder="Выберите склад-получатель" style="width: 320px;">
             <el-option v-for="s in stores" :key="s.id" :label="s.name" :value="s.id" />
           </el-select>
+          <el-checkbox v-model="form.twoStage" :disabled="readonly || isSaved" style="margin-left: 12px;">В два этапа (через «В пути»)</el-checkbox>
+          <span v-if="form.twoStage" class="hint">Проведение отгружает товар на «В пути»; на склад-получатель он поступит после «Принять на склад».</span>
+        </el-form-item>
+        <el-form-item v-if="isTransferReceipt" label="Приёмка">
+          <span>с «В пути» на склад «{{ stores.find((x) => x.id === doc.storeToId)?.name ?? doc.storeToId }}»</span>
         </el-form-item>
         <el-form-item v-if="hasPrices" :label="t('vatIncluded')">
           <el-switch v-model="form.vatIncluded" :disabled="readonly" />
@@ -115,6 +125,8 @@
           <div class="c-no">№</div><div class="c-prod">{{ t('product') }}</div>
           <template v-if="receiptCols"><div class="c-num">По документу</div><div class="c-num">Принято</div><div class="c-pct">Отказ</div><div class="c-reason">Причина</div></template>
           <div v-else class="c-num">{{ t('qty') }}</div>
+          <div v-if="binsFrom.length" class="c-bin">{{ docType === 'MOVE' ? 'Ячейка откуда' : 'Ячейка' }}</div>
+          <div v-if="binsTo.length" class="c-bin">Ячейка куда</div>
           <template v-if="hasPrices">
             <div class="c-num">{{ t('price') }}</div><div class="c-pct">{{ t('discount') }}</div><div class="c-pct">{{ t('vatRate') }}</div><div class="c-sum">{{ t('amount') }}</div>
           </template>
@@ -140,6 +152,12 @@
             </div>
           </template>
           <div v-else class="c-num"><el-input v-model="l.qty" size="small" class="nav-field num-in" :disabled="readonly" placeholder="0" /></div>
+          <div v-if="binsFrom.length" class="c-bin">
+            <el-select v-model="l.binId" size="small" clearable :disabled="readonly" placeholder="без ячейки"><el-option v-for="b in binsFrom" :key="b.id" :label="b.code || b.name" :value="b.id" /></el-select>
+          </div>
+          <div v-if="binsTo.length" class="c-bin">
+            <el-select v-model="l.binToId" size="small" clearable :disabled="readonly" placeholder="без ячейки"><el-option v-for="b in binsTo" :key="b.id" :label="b.code || b.name" :value="b.id" /></el-select>
+          </div>
           <template v-if="hasPrices">
             <div class="c-num"><el-input v-model="l.price" size="small" class="nav-field num-in" :disabled="readonly" placeholder="0.00" /></div>
             <div class="c-pct"><el-input v-model="l.discount" size="small" class="nav-field num-in" :disabled="readonly" /></div>
@@ -191,6 +209,25 @@
           </el-table>
           <div class="hint0" style="margin-top: 6px;">Стоимость расхода — по себестоимости (журнал «Движения товаров»).</div>
         </el-tab-pane>
+        <el-tab-pane v-if="docType === 'CUSTOMER_ORDER'" :label="`Резерв (${activeReserves.length})`">
+          <el-table :data="doc.reservations || []" size="small" empty-text="Резерва нет — «Ещё → Зарезервировать на складе»">
+            <el-table-column label="Строка" width="70" prop="sourceLine" />
+            <el-table-column label="Товар" min-width="200" show-overflow-tooltip><template #default="{ row }">{{ productName(row.productId) }}</template></el-table-column>
+            <el-table-column label="Зарезервировано" width="140" align="right"><template #default="{ row }">{{ Number(row.qty) }}</template></el-table-column>
+            <el-table-column label="Действует" width="110" align="right"><template #default="{ row }"><b>{{ Number(row.remaining) }}</b></template></el-table-column>
+            <el-table-column label="Состояние" width="170"><template #default="{ row }">{{ Number(row.remaining) > 0 ? 'в резерве' : RESERVE_CLOSE[row.closeReason] ?? 'закрыт' }}</template></el-table-column>
+          </el-table>
+          <div class="hint0" style="margin-top: 6px;">Зарезервированный товар не уйдёт в другие отгрузки, списания и перемещения. Отгрузка «на основании» заказа расходует резерв.</div>
+        </el-tab-pane>
+        <el-tab-pane v-if="doc.transit" :label="`В пути`">
+          <el-table :data="doc.transit.lines" size="small" empty-text="Не отгружено">
+            <el-table-column label="Товар" min-width="200" show-overflow-tooltip><template #default="{ row }">{{ productName(row.productId) }}</template></el-table-column>
+            <el-table-column label="Отгружено" width="110" align="right" prop="shipped" />
+            <el-table-column label="Принято" width="110" align="right" prop="received" />
+            <el-table-column label="В пути" width="110" align="right"><template #default="{ row }"><b>{{ row.inTransit }}</b></template></el-table-column>
+          </el-table>
+          <div v-if="doc.transit.receipts.length" class="hint0" style="margin-top: 6px;">Приёмки: <span v-for="r in doc.transit.receipts" :key="r.id"><el-link type="primary" @click="router.push(`/accounting/trade/${r.id}`)">{{ r.number }}</el-link> </span></div>
+        </el-tab-pane>
         <el-tab-pane v-if="doc.fulfillment" label="Исполнение">
           <el-table :data="doc.fulfillment.lines" size="small">
             <el-table-column label="Строка" width="70" prop="lineNo" />
@@ -214,6 +251,19 @@
         </el-tab-pane>
       </el-tabs>
     </el-card>
+
+    <el-dialog v-model="receiveOpen" title="Приёмка перемещения" width="min(640px, 96vw)">
+      <el-form label-width="120px">
+        <el-form-item label="Дата"><el-date-picker v-model="receiveForm.date" type="date" value-format="YYYY-MM-DD" format="DD.MM.YYYY" :clearable="false" /></el-form-item>
+      </el-form>
+      <el-table :data="receiveForm.lines" size="small">
+        <el-table-column label="Товар" min-width="200"><template #default="{ row }">{{ productName(row.productId) }}</template></el-table-column>
+        <el-table-column label="В пути" width="90" align="right" prop="inTransit" />
+        <el-table-column label="Принять" width="120"><template #default="{ row }"><el-input v-model="row.qty" size="small" class="num-in" /></template></el-table-column>
+      </el-table>
+      <div class="hint0" style="margin-top: 6px;">Можно принять частично — остаток останется «в пути» (недостачу в пути оформляют списанием со склада «В пути»).</div>
+      <template #footer><el-button @click="receiveOpen = false">Отмена</el-button><el-button type="success" :loading="busy" @click="doReceive">Принять</el-button></template>
+    </el-dialog>
   </div>
 </template>
 
@@ -266,9 +316,38 @@ let keySeq = 0
 const emptyForm = () => ({
   date: dayjs().format('YYYY-MM-DD'), counterpartyId: undefined as string | undefined, storeId: undefined as string | undefined,
   storeToId: undefined as string | undefined, vatIncluded: true, paymentType: 'CASH', lossAccount: '7170', comment: '', reason: '',
-  allocation: 'AMOUNT', baseId: undefined as string | undefined,
+  allocation: 'AMOUNT', baseId: undefined as string | undefined, twoStage: false,
   lines: [] as any[],
 })
+/** FP-032: ячейки складов (по складу), приёмка перемещения в два этапа, резерв заказа. */
+const binsByStore = ref<Record<string, any[]>>({})
+const binsOfStore = (id?: string) => (id ? (binsByStore.value[id] || []).filter((b: any) => b.isActive) : [])
+async function loadBins(id?: string) {
+  if (!id || binsByStore.value[id]) return
+  try { binsByStore.value = { ...binsByStore.value, [id]: ((await api.get(`/catalog/warehouses/${id}`)) as any).bins || [] } } catch { binsByStore.value = { ...binsByStore.value, [id]: [] } }
+}
+const isTransferReceipt = computed(() => (doc.value.attributes || {}).transferStage === 'RECEIPT')
+const binsFrom = computed(() => (isTransferReceipt.value || docType.value.endsWith('_ORDER') || docType.value === 'LANDED_COST' ? [] : binsOfStore(form.value.storeId)))
+const binsTo = computed(() => (docType.value === 'MOVE' && !form.value.twoStage ? binsOfStore(isTransferReceipt.value ? doc.value.storeToId : form.value.storeToId) : []))
+const activeReserves = computed(() => (doc.value.reservations || []).filter((r: any) => Number(r.remaining) > 0))
+const RESERVE_CLOSE: Record<string, string> = { SHIPPED: 'отгружено', RELEASED: 'снят', ORDER_CANCELLED: 'заказ отменён', RERESERVED: 'перерезервирован' }
+const receiveOpen = ref(false)
+const receiveForm = ref<any>({ date: '', lines: [] })
+function openReceive() {
+  receiveForm.value = { date: dayjs().format('YYYY-MM-DD'), lines: (doc.value.transit?.lines || []).filter((l: any) => Number(l.inTransit) > 0).map((l: any) => ({ ...l, qty: l.inTransit })) }
+  receiveOpen.value = true
+}
+async function doReceive() {
+  busy.value = true
+  try {
+    const r = (await api.post(`/accounting/trade-documents/${doc.value.id}/receive`, { date: receiveForm.value.date, lines: receiveForm.value.lines.filter((l: any) => Number(normAmount(l.qty)) > 0).map((l: any) => ({ productId: l.productId, qty: normAmount(l.qty) })) }, idem())) as any
+    ElMessage.success(`Принято: ${r.number}`)
+    receiveOpen.value = false
+    await load()
+  } catch (e) { showError(e) }
+  busy.value = false
+}
+
 /** FP-031: поступление-основание доп. расходов (номер, дата, сумма — для шапки). */
 const landedBase = ref<any>(null)
 const form = ref<any>(emptyForm())
@@ -324,13 +403,14 @@ function fillForm(d: any) {
   const a = d.attributes || {}
   form.value = {
     date: String(d.date).slice(0, 10), counterpartyId: d.counterpartyId || undefined, storeId: d.storeId || undefined,
-    storeToId: d.storeToId || undefined, vatIncluded: a.vatIncluded !== false, paymentType: a.paymentType || 'CASH',
+    storeToId: (a.twoStage ? a.destinationStoreId : d.storeToId) || undefined, vatIncluded: a.vatIncluded !== false, paymentType: a.paymentType || 'CASH',
     lossAccount: a.lossAccount || '7170', comment: d.comment || a.comment || '', reason: '',
-    allocation: a.allocation || 'AMOUNT', baseId: a.baseId,
+    allocation: a.allocation || 'AMOUNT', baseId: a.baseId, twoStage: !!a.twoStage,
     lines: (d.lines || []).map((l: any) => ({
       key: ++keySeq, productId: l.productId, productName: l.product ? `${l.product.code ? l.product.code + ' ' : ''}${l.product.name}` : '',
       qty: s(l.qty), price: s(l.price), discount: s(l.discount), vatRate: s(l.vatRate),
       expectedQty: s(l.expectedQty), rejectedQty: s(l.rejectedQty), discrepancyReason: l.discrepancyReason || undefined, discrepancyNote: l.discrepancyNote || '',
+      binId: l.binId || undefined, binToId: l.binToId || undefined,
     })),
   }
   receiptMode.value = d.docType === 'SUPPLY' && (d.lines || []).some((l: any) => l.expectedQty != null || l.rejectedQty != null)
@@ -338,7 +418,7 @@ function fillForm(d: any) {
 
 function payload() {
   const lines = form.value.lines.filter((l: any) => l.productId).map((l: any) => {
-    const o: any = { productId: l.productId, qty: normAmount(l.qty) }
+    const o: any = { productId: l.productId, qty: normAmount(l.qty), binId: l.binId || null, binToId: l.binToId || null }
     if (receiptMode.value && docType.value === 'SUPPLY') {
       o.expectedQty = normAmount(l.expectedQty) || null
       o.rejectedQty = normAmount(l.rejectedQty) || null
@@ -356,7 +436,9 @@ function payload() {
     date: form.value.date, comment: form.value.comment || undefined, storeId: form.value.storeId,
     counterpartyId: needsCounterparty.value ? form.value.counterpartyId : undefined, lines,
   }
-  if (docType.value === 'MOVE') p.storeToId = form.value.storeToId
+  if (docType.value === 'MOVE' && !isTransferReceipt.value) p.storeToId = form.value.storeToId
+  if (docType.value === 'MOVE' && form.value.twoStage && !isSaved.value) p.twoStage = true
+  if (isTransferReceipt.value) delete p.storeId
   if (hasPrices.value) p.vatIncluded = form.value.vatIncluded
   if (isRetail.value) p.paymentType = form.value.paymentType
   if (docType.value === 'LOSS') p.lossAccount = form.value.lossAccount
@@ -486,6 +568,21 @@ async function retry() {
 async function onCommand(cmd: string) {
   if (cmd === 'unpost') return action('unpost', 'Проведение отменено')
   if (cmd === 'landed') return router.push(`/accounting/trade/new?type=LANDED_COST&baseId=${doc.value.id}`)
+  if (cmd === 'reserve' || cmd === 'release') {
+    if (cmd === 'reserve' && !(await save(true))) return
+    busy.value = true
+    try {
+      const r = (await api.post(`/accounting/trade-documents/${doc.value.id}/${cmd === 'reserve' ? 'reserve' : 'release-reserve'}`, {}, idem())) as any
+      if (cmd === 'reserve') {
+        const short = r.lines.filter((l: any) => Number(l.shortfall) > 0)
+        if (short.length) ElMessage.warning(`Зарезервировано не всё: не хватает ${short.map((l: any) => `${productName(l.productId)} — ${l.shortfall}`).join('; ')}`)
+        else ElMessage.success('Заказ зарезервирован')
+      } else ElMessage.success('Резерв снят')
+      await load()
+    } catch (e) { showError(e) }
+    busy.value = false
+    return
+  }
   if (cmd === 'restore') return action('restore', 'Документ восстановлен')
   if (cmd === 'cancel') {
     try {
@@ -505,6 +602,8 @@ async function onCommand(cmd: string) {
 }
 
 watch(() => route.params.id, () => { if (route.path.startsWith('/accounting/trade')) load() })
+// FP-032: ячейки складов документа подгружаются при выборе склада.
+watch(() => [form.value.storeId, form.value.storeToId, doc.value.storeToId], (ids) => ids.forEach((id: any) => loadBins(id)), { immediate: true })
 
 onMounted(async () => {
   try {
@@ -534,6 +633,7 @@ onMounted(async () => {
 .hint { color: #909399; font-size: 12px; margin-left: 10px; }
 .hint0 { color: #909399; font-size: 12px; }
 .c-reason { width: 150px; }
+.c-bin { width: 130px; }
 .line.sub { padding-top: 0; border-bottom: 1px dashed #f0f0f0; font-size: 12px; }
 .diff { display: inline-flex; gap: 10px; min-width: 200px; }
 .neg { color: var(--el-color-danger); }

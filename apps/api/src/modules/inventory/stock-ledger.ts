@@ -34,11 +34,12 @@ export interface LedgerDoc {
   organizationId?: string | null;
   storeId: string | null;
   storeToId: string | null;
-  lines: { lineNo: number; productId: string; qty: Dec | number | string; amount?: Dec | number | string | null }[];
+  lines: { lineNo: number; productId: string; qty: Dec | number | string; amount?: Dec | number | string | null; binId?: string | null; binToId?: string | null }[];
 }
 
 export interface PlannedMove {
   storeId: string;
+  binId: string | null; // FP-032: ячейка
   productId: string;
   qty: Dec;
   kind: string;
@@ -53,8 +54,8 @@ export function plannedMoves(doc: LedgerDoc, services: Set<string> = new Set()):
   if (doc.docType === 'MOVE') {
     if (!doc.storeId || !doc.storeToId) return out;
     for (const l of lines) {
-      out.push({ storeId: doc.storeId, productId: l.productId, qty: new D(l.qty).neg(), kind: 'TRANSFER_OUT', sourceLine: l.lineNo, docValue: null });
-      out.push({ storeId: doc.storeToId, productId: l.productId, qty: new D(l.qty), kind: 'TRANSFER_IN', sourceLine: l.lineNo, docValue: null });
+      out.push({ storeId: doc.storeId, binId: l.binId ?? null, productId: l.productId, qty: new D(l.qty).neg(), kind: 'TRANSFER_OUT', sourceLine: l.lineNo, docValue: null });
+      out.push({ storeId: doc.storeToId, binId: l.binToId ?? null, productId: l.productId, qty: new D(l.qty), kind: 'TRANSFER_IN', sourceLine: l.lineNo, docValue: null });
     }
     return out;
   }
@@ -62,12 +63,12 @@ export function plannedMoves(doc: LedgerDoc, services: Set<string> = new Set()):
   if (!k || !doc.storeId) return out;
   for (const l of lines) {
     const docValue = PRICED_IN.includes(k.kind) && l.amount != null ? new D(l.amount) : null;
-    out.push({ storeId: doc.storeId, productId: l.productId, qty: new D(l.qty).times(k.sign), kind: k.kind, sourceLine: l.lineNo, docValue });
+    out.push({ storeId: doc.storeId, binId: l.binId ?? null, productId: l.productId, qty: new D(l.qty).times(k.sign), kind: k.kind, sourceLine: l.lineNo, docValue });
   }
   return out;
 }
 
-async function serviceIds(tx: Tx, doc: LedgerDoc) {
+export async function serviceIds(tx: Tx, doc: LedgerDoc) {
   const ids = [...new Set(doc.lines.map((l) => l.productId))];
   if (!ids.length) return new Set<string>();
   return new Set((await tx.product.findMany({ where: { id: { in: ids }, kind: 'SERVICE' }, select: { id: true } })).map((p) => p.id));
@@ -100,7 +101,7 @@ export async function recordDocumentMoves(tx: Tx, doc: LedgerDoc, opts: { userId
       else if (m.docValue) { value = m.docValue; basis = 'DOCUMENT'; }
     }
     return {
-      organizationId: orgs.get(m.storeId)!, productId: m.productId, storeId: m.storeId, qty: m.qty, value, valueBasis: basis, kind: m.kind,
+      organizationId: orgs.get(m.storeId)!, productId: m.productId, storeId: m.storeId, binId: m.binId, qty: m.qty, value, valueBasis: basis, kind: m.kind,
       sourceType: LEDGER_SOURCE, sourceId: doc.id, sourceLine: m.sourceLine, sourceVersion: doc.version ?? null,
       occurredAt: doc.date, createdBy: opts.userId ?? null, reason: opts.reason ?? null,
     };
@@ -121,7 +122,7 @@ export async function reverseDocumentMoves(tx: Tx, doc: LedgerDoc, opts: { userI
     if (!planned.length) return [];
     const orgs = await storeOrgs(tx, planned.map((m) => m.storeId));
     const rows = planned.map((m) => ({
-      organizationId: orgs.get(m.storeId)!, productId: m.productId, storeId: m.storeId, qty: m.qty.neg(), value: null, valueBasis: PRE_LEDGER, kind: m.kind,
+      organizationId: orgs.get(m.storeId)!, productId: m.productId, storeId: m.storeId, binId: m.binId, qty: m.qty.neg(), value: null, valueBasis: PRE_LEDGER, kind: m.kind,
       sourceType: LEDGER_SOURCE, sourceId: doc.id, sourceLine: m.sourceLine, sourceVersion: doc.version ?? null, occurredAt: doc.date,
       createdBy: opts.userId ?? null, reason: opts.reason ?? 'Снятие проведения документа, проведённого до журнала движений',
     }));

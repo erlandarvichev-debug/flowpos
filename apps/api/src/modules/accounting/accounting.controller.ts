@@ -258,6 +258,19 @@ export class AccountingController {
   @Post('trade-documents/:id/post') @RequirePermission('acc.doc.post') @ApiHeader(IDEMP_HEADER)
   tradePost(@Org() ctx: OrgContext, @Param('id') id: string, @Body() b: any) { return this.trade.post(ctx, id, b?.override, b?.expectedVersion); }
 
+  // ── FP-032: резервы и перемещение в два этапа ──
+  @Post('trade-documents/:id/reserve') @RequirePermission('acc.doc.write') @ApiHeader(IDEMP_HEADER)
+  tradeReserve(@Org() ctx: OrgContext, @Param('id') id: string) { return this.trade.reserve(ctx, id); }
+
+  @Post('trade-documents/:id/release-reserve') @RequirePermission('acc.doc.write') @ApiHeader(IDEMP_HEADER)
+  tradeReleaseReserve(@Org() ctx: OrgContext, @Param('id') id: string) { return this.trade.releaseReserve(ctx, id); }
+
+  @Post('trade-documents/:id/receive') @RequirePermission('acc.doc.post') @ApiHeader(IDEMP_HEADER)
+  tradeReceive(@Org() ctx: OrgContext, @Param('id') id: string, @Body() b: any) { return this.trade.receive(ctx, id, b ?? {}); }
+
+  @Get('transfers-in-transit') @RequirePermission('stock.read')
+  transfersInTransit(@Org() ctx: OrgContext) { return this.trade.inTransit(ctx); }
+
   @Post('trade-documents/:id/unpost') @RequirePermission('acc.doc.post') @ApiHeader(IDEMP_HEADER)
   tradeUnpost(@Org() ctx: OrgContext, @Param('id') id: string, @Body() b: any) { return this.trade.unpost(ctx, id, b?.override, b?.expectedVersion); }
 

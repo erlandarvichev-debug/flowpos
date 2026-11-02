@@ -127,7 +127,7 @@ Inventory | P1 | Accounting engineer | L | DONE_LOCAL — см. `FP-031-COST-LAN
 Зависимости: FP-030. Приёмка: Fixture COGS2200 profit800 stock8800; остаток округления детерминирован; метод периода.
 
 ## FP-032 · Резервы перемещения и адреса
-Inventory | P1 | Backend/Frontend | M | PLANNED
+Inventory | P1 | Backend/Frontend | M | DONE_LOCAL — см. `FP-032-RESERVES-TRANSFER-BINS.md` (не выкладывалось)
 Зависимости: FP-030. Приёмка: Available=fact-reserved; нет двойного резерва при конкуренции; two-stage transfer.
 
 ## FP-033 · Инвентаризация списание партии серии

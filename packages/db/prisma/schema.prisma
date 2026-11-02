@@ -519,6 +519,7 @@ model Product {
   docLines   DocumentLine[]
   stocks     Stock[]
   stockMovements StockMovement[]
+  reservations StockReservation[]
 
   @@unique([tenantId, onecBase, onecGuid])
   @@unique([tenantId, msAccountId, msId])
@@ -754,6 +755,8 @@ model Store {
   organizationId String  @map("organization_id")
   tenantId       String  @default(dbgenerated("NULLIF(current_setting('flowpos.tenant_id', true), '')")) @map("tenant_id")
   isRetail       Boolean @default(false) @map("is_retail")
+  /// FP-032: служебный склад «В пути» организации (двухэтапное перемещение); в выборе складов не показывается
+  isTransit      Boolean @default(false) @map("is_transit")
   isActive       Boolean @default(true) @map("is_active")
   // sync fields — 1С
   onecGuid       String? @map("onec_guid")
@@ -773,6 +776,7 @@ model Store {
   bins         Bin[]
   stocks       Stock[]
   stockMovements StockMovement[]
+  reservations StockReservation[]
   posTerminals POSTerminal[]
   documents    Document[]   @relation("DocumentStore")
   docTransfers Document[]   @relation("DocumentStoreTo")
@@ -796,10 +800,15 @@ model Bin {
   section String?
   level   String?
 
+  isActive Boolean @default(true) @map("is_active")
+
   store  Store   @relation(fields: [tenantId, storeId], references: [tenantId, id])
   stocks Stock[]
+  lineBins   DocumentLine[] @relation("LineBin")
+  lineBinsTo DocumentLine[] @relation("LineBinTo")
 
   @@unique([tenantId, id])
+  @@unique([storeId, id])
   @@map("bins")
 }
 
@@ -821,6 +830,33 @@ model Stock {
   @@index([productId])
   @@index([storeId])
   @@map("stock")
+}
+
+/// FP-032: резерв товара на складе под строку документа (заказ покупателя). Резервируется только свободный остаток
+/// (факт − резервы) — проверка и учёт в stock.reserved делает БД под блокировкой строки остатка; одна действующая
+/// запись на строку документа (уникальность). qty неизменно; remaining уменьшается при отгрузке и снятии резерва.
+model StockReservation {
+  id             String    @id @default(uuid())
+  tenantId       String    @default(dbgenerated("NULLIF(current_setting('flowpos.tenant_id', true), '')")) @map("tenant_id")
+  organizationId String    @map("organization_id")
+  productId      String    @map("product_id")
+  storeId        String    @map("store_id")
+  qty            Decimal   @db.Decimal(18,3)
+  remaining      Decimal   @db.Decimal(18,3)
+  sourceType     String    @default("TRADE_DOCUMENT") @map("source_type")
+  sourceId       String    @map("source_id")
+  sourceLine     Int       @map("source_line")
+  createdBy      String?   @map("created_by")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  closedAt       DateTime? @map("closed_at")
+  closeReason    String?   @map("close_reason") // SHIPPED | RELEASED | ORDER_CANCELLED
+
+  product Product @relation(fields: [tenantId, productId], references: [tenantId, id])
+  store   Store   @relation(fields: [organizationId, storeId], references: [organizationId, id])
+
+  @@index([organizationId, productId, storeId])
+  @@index([sourceType, sourceId])
+  @@map("stock_reservations")
 }
 
 /// FP-030: журнал складских движений — единственный источник изменения остатка (stock.qty меняется только
@@ -1201,8 +1237,13 @@ model DocumentLine {
   rejectedQty       Decimal? @map("rejected_qty") @db.Decimal(18,3)
   discrepancyReason String?  @map("discrepancy_reason") // SHORTAGE | SURPLUS | DAMAGED | WRONG_ITEM | OTHER
   discrepancyNote   String?  @map("discrepancy_note")
+  /// FP-032: адрес хранения — ячейка склада документа (для перемещения — откуда) и ячейка склада-получателя
+  binId             String?  @map("bin_id")
+  binToId           String?  @map("bin_to_id")
 
   document Document @relation(fields: [tenantId, documentId], references: [tenantId, id], onDelete: Cascade)
+  bin      Bin?     @relation("LineBin", fields: [tenantId, binId], references: [tenantId, id])
+  binTo    Bin?     @relation("LineBinTo", fields: [tenantId, binToId], references: [tenantId, id])
   product  Product  @relation(fields: [tenantId, productId], references: [tenantId, id])
 
   @@unique([documentId, lineNo])
