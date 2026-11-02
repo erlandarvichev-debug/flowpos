@@ -1143,6 +1143,7 @@ enum DocType {
   SUPPLY
   INVOICE_IN
   PURCHASE_RETURN
+  LANDED_COST // FP-031: дополнительные расходы на поступление (доставка, таможня) — в стоимость товаров
   // Продажи
   CUSTOMER_ORDER
   DEMAND

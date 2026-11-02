@@ -11,7 +11,8 @@ import { PostingInput } from '../core/posting.types';
 type Tx = Prisma.TransactionClient;
 type Dec = Prisma.Decimal;
 
-interface Lot { qty: Dec; cost: Dec }
+/** Партия: количество, стоимость и ссылка на строку поступления (документ:строка) — для доп. расходов (FP-031). */
+interface Lot { qty: Dec; cost: Dec; ref: string | null }
 interface Move {
   id: string; sourceType: string; sourceId: string; lineNo: number; date: Date; createdAt: Date;
   productId: string; storeId: string; account: string; direction: string; kind: string;
@@ -19,6 +20,7 @@ interface Move {
 }
 
 export const COST_SOURCE = 'COST';
+export const monthStart = (d: Date) => new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1));
 export const COST_RULE_VERSION = '1';
 
 /**
@@ -31,8 +33,12 @@ export const COST_RULE_VERSION = '1';
 export class CostService {
   constructor(private posting: PostingService, private periods: PeriodsService) {}
 
+  /**
+   * FP-031: метод оценки — метод периода (месяца): учётная политика, действующая на 1-е число месяца движения.
+   * Внутри месяца метод не меняется, даже если версия политики начата с середины месяца (она действует со следующего).
+   */
   private async method(tx: Tx, organizationId: string, date: Date): Promise<{ method: string; allowNegative: boolean }> {
-    const p = await tx.accPolicy.findFirst({ where: { organizationId, validFrom: { lte: date } }, orderBy: { validFrom: 'desc' } });
+    const p = await tx.accPolicy.findFirst({ where: { organizationId, validFrom: { lte: monthStart(date) } }, orderBy: { validFrom: 'desc' } });
     return { method: p?.inventoryMethod ?? 'FIFO', allowNegative: !!p?.allowNegativeStock };
   }
 
@@ -68,7 +74,8 @@ export class CostService {
       out.set(key, o);
     };
 
-    const consume = async (m: Move, store: string): Promise<Dec> => {
+    /** Расход: стоимость и списанные куски партий (со ссылками на поступление — для перемещения). */
+    const consume = async (m: Move, store: string): Promise<{ cost: Dec; pieces: Lot[] }> => {
       const ls = lotsOf(store);
       const { method, allowNegative } = await this.method(tx, ctx.organizationId, m.date);
       const have = qtyOf(ls);
@@ -83,46 +90,61 @@ export class CostService {
       }
       let need = m.quantity;
       let cost = new D(0);
+      const pieces: Lot[] = [];
       if (method === 'AVERAGE') {
         const q = qtyOf(ls), c = costOf(ls);
-        const unit = q.gt(0) ? c.div(q) : new D(0);
-        cost = round(unit.times(D.min(need, q.gt(0) ? q : new D(0))));
+        // Весь остаток уходит целиком — по его полной стоимости (без потери тиынов на округлении средней).
+        const taken = q.gt(0) ? D.min(need, q) : new D(0);
+        cost = taken.isZero() ? new D(0) : taken.eq(q) ? c : round(c.div(q).times(taken));
+        if (taken.gt(0)) pieces.push({ qty: taken, cost, ref: null });
         const remainingQty = q.minus(need);
         const remainingCost = c.minus(cost);
         ls.length = 0;
-        if (!remainingQty.isZero()) ls.push({ qty: remainingQty, cost: remainingQty.gt(0) ? remainingCost : new D(0) });
-        return cost;
+        if (!remainingQty.isZero()) ls.push({ qty: remainingQty, cost: remainingQty.gt(0) ? remainingCost : new D(0), ref: null });
+        if (need.gt(taken)) pieces.push({ qty: need.minus(taken), cost: new D(0), ref: null });
+        return { cost, pieces };
       }
       while (need.gt(0) && ls.length && ls[0].qty.gt(0)) {
         const lot = ls[0];
         if (lot.qty.lte(need)) {
-          cost = cost.plus(lot.cost); need = need.minus(lot.qty); ls.shift();
+          cost = cost.plus(lot.cost); need = need.minus(lot.qty); pieces.push({ ...lot }); ls.shift();
         } else {
           const part = round(lot.cost.times(need).div(lot.qty));
-          cost = cost.plus(part); lot.cost = lot.cost.minus(part); lot.qty = lot.qty.minus(need); need = new D(0);
+          cost = cost.plus(part); pieces.push({ qty: need, cost: part, ref: lot.ref }); lot.cost = lot.cost.minus(part); lot.qty = lot.qty.minus(need); need = new D(0);
         }
       }
-      if (need.gt(0)) ls.push({ qty: need.neg(), cost: new D(0) }); // разрешённый минус: стоимость 0, учтётся при приходе
-      return cost;
+      if (need.gt(0)) {
+        ls.push({ qty: need.neg(), cost: new D(0), ref: null }); // разрешённый минус: стоимость 0, учтётся при приходе
+        pieces.push({ qty: need, cost: new D(0), ref: null });
+      }
+      return { cost, pieces };
     };
 
-    const addLot = (store: string, qty: Dec, cost: Dec) => {
+    const addLot = (store: string, qty: Dec, cost: Dec, ref: string | null) => {
       const ls = lotsOf(store);
       // погашение разрешённого минуса
       if (ls.length && ls[ls.length - 1].qty.isNegative()) {
-        ls[ls.length - 1].qty = ls[ls.length - 1].qty.plus(qty);
-        ls[ls.length - 1].cost = ls[ls.length - 1].cost.plus(cost);
-        if (ls[ls.length - 1].qty.isZero()) ls.pop();
+        const last = ls[ls.length - 1];
+        last.qty = last.qty.plus(qty);
+        last.cost = last.cost.plus(cost);
+        if (last.qty.gt(0)) last.ref = ref;
+        if (last.qty.isZero()) ls.pop();
         return;
       }
-      ls.push({ qty, cost });
+      ls.push({ qty, cost, ref });
     };
+    const valuePosting = (side: 'D' | 'C', account: string, amount: Dec, store: string, memo: string): PostingInput =>
+      ({ side, account, amount: amount.toFixed(2), quantity: '0.000', dims: { PRODUCT: productId, STORE: store }, memo }); // только стоимость
 
     const inv = (m: Move, side: 'D' | 'C', amount: Dec, qty: Dec, store: string): PostingInput =>
       ({ side, account: m.account, amount: amount.toFixed(2), quantity: qty.toFixed(3), dims: { PRODUCT: productId, STORE: store }, memo: 'Себестоимость' });
 
     for (const m of moves) {
       if (m.kind === 'MOVE_IN') continue; // обрабатывается вместе с MOVE_OUT
+      if (m.kind === 'LANDED_COST') {
+        await this.applyLanded(tx, ctx.organizationId, m, moves, lots, productId, push, valuePosting);
+        continue;
+      }
       if (m.direction === 'IN') {
         let cost = m.knownCost;
         if (cost === null) {
@@ -132,14 +154,15 @@ export class CostService {
           cost = q.gt(0) ? round(c.div(q).times(m.quantity)) : new D(m.meta?.fallbackCost ?? 0);
           if (!cost.isZero()) push(m, [inv(m, 'D', cost, m.quantity, m.storeId), { side: 'C', account: m.costAccount ?? '7010', amount: cost.toFixed(2), dims: { PRODUCT: productId }, memo: 'Возврат себестоимости' }]);
         }
-        addLot(m.storeId, m.quantity, cost);
+        addLot(m.storeId, m.quantity, cost, m.kind === 'PURCHASE' || m.kind === 'ENTER' || m.kind === 'OPENING' ? `${m.sourceId}:${m.lineNo}` : null);
         continue;
       }
-      const cost = await consume(m, m.storeId);
+      const { cost, pieces } = await consume(m, m.storeId);
       if (m.kind === 'MOVE_OUT') {
         const pin = m.pairKey ? pendingIn.get(m.pairKey) : undefined;
         if (!pin) throw new AccError('MOVE_PAIR_MISSING', 'Перемещение без прихода на склад-получатель');
-        addLot(pin.storeId, pin.quantity, cost);
+        // Куски партий переезжают со ссылками на поступление (доп. расходы найдут их и на другом складе).
+        for (const p of pieces) addLot(pin.storeId, p.qty, p.cost, p.ref);
         if (!cost.isZero()) push(m, [inv(pin, 'D', cost, pin.quantity, pin.storeId), inv(m, 'C', cost, m.quantity, m.storeId)]);
         continue;
       }
@@ -185,6 +208,54 @@ export class CostService {
       await this.periods.assertOpen(tx, ctx, [e.date], override, 'пересчёт себестоимости');
       await this.posting.cancelSource(tx, ctx.organizationId, COST_SOURCE, e.sourceId);
     }
+  }
+
+  /**
+   * FP-031: доп. расходы на строку поступления (ref = документ:строка, сумма A). Q0 — количество строки поступления,
+   * H — сколько из него ещё в партиях (на любых складах). FIFO: на остаток — round(A × H / Q0), по партиям
+   * пропорционально количеству (остаток округления — последней партии в порядке складов и очереди), остальное — уже
+   * списано: в себестоимость (счёт затрат строки, по умолчанию 7010) на дату доп. расходов. Часть на другом складе —
+   * переносом стоимости со склада поступления. Средняя: идентичность партий потеряна — доля
+   * round(A × min(остаток склада поступления, Q0) / Q0) в стоимость остатка склада, остальное — в себестоимость.
+   */
+  private async applyLanded(
+    tx: Tx, organizationId: string, m: Move, moves: Move[], lots: Map<string, Lot[]>, productId: string,
+    push: (m: Move, p: PostingInput[]) => void,
+    valuePosting: (side: 'D' | 'C', account: string, amount: Dec, store: string, memo: string) => PostingInput,
+  ) {
+    const ref = m.pairKey!;
+    const A = new D(m.knownCost ?? 0);
+    const base = moves.find((x) => x.direction === 'IN' && x.kind === 'PURCHASE' && `${x.sourceId}:${x.lineNo}` === ref);
+    if (!base || base.date.getTime() > m.date.getTime()) {
+      throw new AccError('LANDED_BASE_MISSING', 'Доп. расходы относятся к строке поступления, которой нет (поступление снято с проведения или изменено)', { fix: 'Снимите с проведения доп. расходы или верните поступление.' });
+    }
+    const Q0 = base.quantity;
+    const baseStore = base.storeId;
+    const { method } = await this.method(tx, organizationId, m.date);
+    const cogs = m.costAccount ?? '7010';
+    const memo = 'Доп. расходы';
+    let onHand = new D(0);
+    if (method === 'AVERAGE') {
+      const ls = lots.get(baseStore) ?? [];
+      const q = ls.reduce((a, l) => a.plus(l.qty), new D(0));
+      const share = q.gt(0) ? (q.gte(Q0) ? A : round(A.times(q).div(Q0))) : new D(0);
+      if (share.gt(0) && ls.length) { ls[0].cost = ls[0].cost.plus(share); onHand = share; }
+    } else {
+      const held: { store: string; lot: Lot }[] = [];
+      for (const store of [...lots.keys()].sort()) for (const lot of lots.get(store)!) if (lot.ref === ref && lot.qty.gt(0)) held.push({ store, lot });
+      const H = held.reduce((a, h) => a.plus(h.lot.qty), new D(0));
+      const share = H.gte(Q0) ? A : round(A.times(H).div(Q0));
+      let left = share;
+      held.forEach((h, i) => {
+        const part = i === held.length - 1 ? left : round(share.times(h.lot.qty).div(H));
+        left = left.minus(part);
+        h.lot.cost = h.lot.cost.plus(part);
+        if (h.store !== baseStore && !part.isZero()) push(m, [valuePosting('D', m.account, part, h.store, memo), valuePosting('C', m.account, part, baseStore, memo)]);
+      });
+      onHand = share;
+    }
+    const sold = A.minus(onHand);
+    if (!sold.isZero()) push(m, [{ side: 'D', account: cogs, amount: sold.toFixed(2), dims: cogs === '7010' ? { PRODUCT: productId } : {}, memo: `${memo}: доля списанного товара` }, valuePosting('C', m.account, sold, baseStore, `${memo}: доля списанного товара`)]);
   }
 
   private versionOf(postings: PostingInput[]): number {

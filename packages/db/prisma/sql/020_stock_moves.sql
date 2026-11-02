@@ -2,9 +2,9 @@
 DO $$ BEGIN
   ALTER TABLE acc_stock_moves ADD CONSTRAINT acc_stock_moves_dir_chk CHECK (direction IN ('IN','OUT'));
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN
-  ALTER TABLE acc_stock_moves ADD CONSTRAINT acc_stock_moves_qty_chk CHECK (quantity > 0);
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+-- FP-031: количество 0 — только у доп. расходов (меняют стоимость партии, не количество).
+ALTER TABLE acc_stock_moves DROP CONSTRAINT IF EXISTS acc_stock_moves_qty_chk;
+ALTER TABLE acc_stock_moves ADD CONSTRAINT acc_stock_moves_qty_chk CHECK (quantity > 0 OR (kind = 'LANDED_COST' AND quantity = 0));
 
 CREATE OR REPLACE FUNCTION acc_stock_moves_immutable() RETURNS trigger AS $$
 BEGIN

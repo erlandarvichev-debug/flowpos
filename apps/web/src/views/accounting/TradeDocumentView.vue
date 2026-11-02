@@ -21,6 +21,7 @@
           <template #dropdown>
             <el-dropdown-menu>
               <el-dropdown-item v-for="tt in baseTargets" :key="tt" :command="`based:${tt}`">{{ t('createBased') }}: {{ tl(tt) }}</el-dropdown-item>
+              <el-dropdown-item v-if="docType === 'SUPPLY' && doc.status === 'POSTED' && org.can('acc.doc.write')" command="landed">Доп. расходы (доставка, таможня…)</el-dropdown-item>
               <el-dropdown-item v-if="doc.status === 'POSTED' && org.can('acc.doc.post')" command="unpost" :divided="baseTargets.length > 0">{{ t('unpost') }}</el-dropdown-item>
               <el-dropdown-item v-if="doc.status !== 'CANCELLED' && org.can('acc.doc.cancel')" command="cancel" divided>{{ t('cancel') }}</el-dropdown-item>
               <el-dropdown-item v-if="(doc.status === 'CANCELLED' || doc.deleted) && org.can('acc.doc.cancel')" command="restore" divided>Восстановить</el-dropdown-item>
@@ -57,7 +58,20 @@
           <div style="width: 420px;"><DimSelect dim="COUNTERPARTY" v-model="form.counterpartyId" :selected-label="doc?.counterparty?.name" size="default" :disabled="readonly" /></div>
           <span v-if="doc.counterparty && form.counterpartyId === doc.counterparty.id" class="hint">{{ doc.counterparty.name }}{{ doc.counterparty.inn ? ` · ${doc.counterparty.inn}` : '' }}</span>
         </el-form-item>
-        <el-form-item :label="docType === 'MOVE' ? 'Склад-отправитель' : t('store')">
+        <template v-if="docType === 'LANDED_COST'">
+          <el-form-item label="Поступление">
+            <el-link v-if="landedBase" type="primary" @click="router.push(`/accounting/trade/${landedBase.id}`)">{{ landedBase.number }} от {{ fmtDate(landedBase.date) }} · {{ fmtMoney(landedBase.total) }} ₸</el-link>
+            <span v-else class="hint">не указано — откройте поступление и выберите «Ещё → Доп. расходы»</span>
+          </el-form-item>
+          <el-form-item label="Распределить">
+            <el-radio-group v-model="form.allocation" :disabled="readonly">
+              <el-radio-button value="AMOUNT">по сумме строк</el-radio-button>
+              <el-radio-button value="QTY">по количеству</el-radio-button>
+            </el-radio-group>
+            <span class="hint">Сумма без НДС войдёт в стоимость товаров поступления; доля уже проданного — в себестоимость продаж.</span>
+          </el-form-item>
+        </template>
+        <el-form-item v-if="docType !== 'LANDED_COST'" :label="docType === 'MOVE' ? 'Склад-отправитель' : t('store')">
           <el-select v-model="form.storeId" filterable clearable :disabled="readonly" placeholder="Выберите склад" style="width: 320px;">
             <el-option v-for="s in stores" :key="s.id" :label="s.name" :value="s.id" />
           </el-select>
@@ -99,7 +113,7 @@
       <div class="lines" ref="linesEl">
         <div class="line head">
           <div class="c-no">№</div><div class="c-prod">{{ t('product') }}</div>
-          <template v-if="receiptMode"><div class="c-num">По документу</div><div class="c-num">Принято</div><div class="c-pct">Отказ</div><div class="c-reason">Причина</div></template>
+          <template v-if="receiptCols"><div class="c-num">По документу</div><div class="c-num">Принято</div><div class="c-pct">Отказ</div><div class="c-reason">Причина</div></template>
           <div v-else class="c-num">{{ t('qty') }}</div>
           <template v-if="hasPrices">
             <div class="c-num">{{ t('price') }}</div><div class="c-pct">{{ t('discount') }}</div><div class="c-pct">{{ t('vatRate') }}</div><div class="c-sum">{{ t('amount') }}</div>
@@ -115,7 +129,7 @@
               <el-option v-for="p in mergedProducts(l)" :key="p.value" :label="p.label" :value="p.value" />
             </el-select>
           </div>
-          <template v-if="receiptMode">
+          <template v-if="receiptCols">
             <div class="c-num"><el-input v-model="l.expectedQty" size="small" class="nav-field num-in" :disabled="readonly" placeholder="—" /></div>
             <div class="c-num"><el-input v-model="l.qty" size="small" class="nav-field num-in" :disabled="readonly" placeholder="0" /></div>
             <div class="c-pct"><el-input v-model="l.rejectedQty" size="small" class="nav-field num-in" :disabled="readonly" /></div>
@@ -134,7 +148,7 @@
           </template>
           <div class="c-del"><el-button v-if="!readonly" link type="danger" :icon="Delete" @click="form.lines.splice(i, 1)" /></div>
         </div>
-        <div v-if="receiptMode && (diffOf(l).has || l.discrepancyReason)" class="line sub">
+        <div v-if="receiptCols && (diffOf(l).has || l.discrepancyReason)" class="line sub">
           <div class="c-no"></div>
           <span class="diff">
             <span v-if="diffOf(l).shortage" class="neg">недостача {{ diffOf(l).shortage }}</span>
@@ -252,8 +266,11 @@ let keySeq = 0
 const emptyForm = () => ({
   date: dayjs().format('YYYY-MM-DD'), counterpartyId: undefined as string | undefined, storeId: undefined as string | undefined,
   storeToId: undefined as string | undefined, vatIncluded: true, paymentType: 'CASH', lossAccount: '7170', comment: '', reason: '',
+  allocation: 'AMOUNT', baseId: undefined as string | undefined,
   lines: [] as any[],
 })
+/** FP-031: поступление-основание доп. расходов (номер, дата, сумма — для шапки). */
+const landedBase = ref<any>(null)
 const form = ref<any>(emptyForm())
 
 const isSaved = computed(() => !!doc.value.id)
@@ -274,6 +291,8 @@ function emptyLine() { return { key: ++keySeq, productId: undefined, productName
 
 /** FP-030: приёмка с расхождениями (поступление) — включается сама, если у строк есть «по документу». */
 const receiptMode = ref(false)
+/** Колонки приёмки — только у поступления (режим не переносится на другой тип документа при переходе). */
+const receiptCols = computed(() => receiptMode.value && docType.value === 'SUPPLY')
 const num = (v: any) => Number(normAmount(v) || 0)
 /** Расхождение строки (как на сервере): недостача = по документу − принято − отказ, излишек — наоборот. */
 function diffOf(l: any) {
@@ -307,6 +326,7 @@ function fillForm(d: any) {
     date: String(d.date).slice(0, 10), counterpartyId: d.counterpartyId || undefined, storeId: d.storeId || undefined,
     storeToId: d.storeToId || undefined, vatIncluded: a.vatIncluded !== false, paymentType: a.paymentType || 'CASH',
     lossAccount: a.lossAccount || '7170', comment: d.comment || a.comment || '', reason: '',
+    allocation: a.allocation || 'AMOUNT', baseId: a.baseId,
     lines: (d.lines || []).map((l: any) => ({
       key: ++keySeq, productId: l.productId, productName: l.product ? `${l.product.code ? l.product.code + ' ' : ''}${l.product.name}` : '',
       qty: s(l.qty), price: s(l.price), discount: s(l.discount), vatRate: s(l.vatRate),
@@ -340,6 +360,7 @@ function payload() {
   if (hasPrices.value) p.vatIncluded = form.value.vatIncluded
   if (isRetail.value) p.paymentType = form.value.paymentType
   if (docType.value === 'LOSS') p.lossAccount = form.value.lossAccount
+  if (docType.value === 'LANDED_COST') { p.baseId = form.value.baseId; p.allocation = form.value.allocation; delete p.storeId }
   return p
 }
 
@@ -366,16 +387,27 @@ async function load() {
   const id = route.params.id as string | undefined
   if (!id || id === 'new') {
     doc.value = {}
+    receiptMode.value = false
     form.value = { ...emptyForm(), lines: [emptyLine()] }
     if (stores.value.length === 1) form.value.storeId = stores.value[0].id
+    if (route.query.baseId) form.value.baseId = String(route.query.baseId)
+    if (docType.value === 'LANDED_COST') form.value.lines[0].qty = '1' // услуга — обычно одной строкой на сумму
+    await loadLandedBase()
     return
   }
   loading.value = true
   try {
     doc.value = (await api.get(`/accounting/trade-documents/${id}`)) as any
     fillForm(doc.value)
+    await loadLandedBase()
   } catch (e) { showError(e) }
   loading.value = false
+}
+
+async function loadLandedBase() {
+  landedBase.value = null
+  if (docType.value !== 'LANDED_COST' || !form.value.baseId) return
+  try { landedBase.value = await api.get(`/accounting/trade-documents/${form.value.baseId}`) } catch { /* нет доступа — без шапки */ }
 }
 
 async function handleConflict(e: any) {
@@ -453,6 +485,7 @@ async function retry() {
 
 async function onCommand(cmd: string) {
   if (cmd === 'unpost') return action('unpost', 'Проведение отменено')
+  if (cmd === 'landed') return router.push(`/accounting/trade/new?type=LANDED_COST&baseId=${doc.value.id}`)
   if (cmd === 'restore') return action('restore', 'Документ восстановлен')
   if (cmd === 'cancel') {
     try {

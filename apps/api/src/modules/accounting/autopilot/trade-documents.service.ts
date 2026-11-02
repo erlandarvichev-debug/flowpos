@@ -16,7 +16,7 @@ import { ReceiptError, checkReceiptLine, receiptSummary } from '../../inventory/
 type Tx = Prisma.TransactionClient;
 
 const PREFIX: Record<string, string> = {
-  PURCHASE_ORDER: 'ЗП', SUPPLY: 'ПТ', PURCHASE_RETURN: 'ВП', CUSTOMER_ORDER: 'ЗК', DEMAND: 'РТ', SALES_RETURN: 'ВК',
+  PURCHASE_ORDER: 'ЗП', SUPPLY: 'ПТ', PURCHASE_RETURN: 'ВП', LANDED_COST: 'ДР', CUSTOMER_ORDER: 'ЗК', DEMAND: 'РТ', SALES_RETURN: 'ВК',
   ENTER: 'ОПР', LOSS: 'СП', MOVE: 'ПМ', PAYMENT_IN: 'ПВ', PAYMENT_OUT: 'ИП', RETAIL_DEMAND: 'ЧЕК', RETAIL_RETURN: 'ВЧ',
 };
 const EDITABLE = Object.keys(PREFIX);
@@ -41,6 +41,8 @@ export interface TradeDocInput {
   departmentId?: string;
   lossAccount?: string;
   amount?: string | number; // для платежей
+  /** FP-031, доп. расходы: база распределения — сумма строк поступления (AMOUNT) или количество (QTY). */
+  allocation?: 'AMOUNT' | 'QTY';
   baseId?: string;
   lines?: TradeLineInput[];
   status?: 'DRAFT' | 'POSTED';
@@ -88,6 +90,16 @@ export class TradeDocumentsService {
       const base = await tx.document.findUnique({ where: { id: input.baseId }, select: { organizationId: true, storeId: true } });
       const baseOrg = base?.organizationId ?? (base?.storeId ? (await tx.store.findUnique({ where: { id: base.storeId } }))?.organizationId : null);
       if (!base || baseOrg !== ctx.organizationId) throw new AccError('REF_FOREIGN', 'Документ-основание не найден в этой организации');
+    }
+    // FP-031: доп. расходы — на основании проведённого поступления своей организации, склад — склад поступления.
+    if (input.docType === 'LANDED_COST') {
+      const base = input.baseId ? await tx.document.findUnique({ where: { id: input.baseId }, select: { docType: true, status: true, deleted: true, storeId: true, date: true, number: true } }) : null;
+      if (!base || base.docType !== 'SUPPLY') throw new AccError('LANDED_BASE_REQUIRED', 'Доп. расходы оформляются на основании поступления товаров', { fix: 'Откройте поступление и выберите «Ещё → Доп. расходы».' });
+      if (base.status !== 'POSTED' || base.deleted) throw new AccError('LANDED_BASE_NOT_POSTED', `Поступление ${base.number ?? ''} не проведено`, { fix: 'Сначала проведите поступление.' });
+      if (input.date && new Date(input.date).getTime() < base.date.getTime()) throw new AccError('LANDED_BEFORE_BASE', `Дата доп. расходов раньше даты поступления ${base.number ?? ''}`);
+      if (input.allocation !== undefined && !['AMOUNT', 'QTY'].includes(input.allocation)) throw new AccError('BAD_ALLOCATION', 'База распределения: AMOUNT (по сумме) или QTY (по количеству)');
+      if (!input.counterpartyId) throw new AccError('COUNTERPARTY_REQUIRED', 'Укажите поставщика услуги (перевозчик, брокер…)');
+      input.storeId = base.storeId ?? undefined;
     }
     // FP-026: договор — своей организации, с контрагентом документа и действует на дату документа.
     if (input.contractId) {
@@ -147,7 +159,7 @@ export class TradeDocumentsService {
 
   private attrs(input: TradeDocInput, prev: any = {}) {
     const a: any = { ...prev };
-    for (const k of ['vatIncluded', 'paymentType', 'bankAccountId', 'departmentId', 'lossAccount', 'baseId', 'comment'] as const) if ((input as any)[k] !== undefined) a[k] = (input as any)[k];
+    for (const k of ['vatIncluded', 'paymentType', 'bankAccountId', 'departmentId', 'lossAccount', 'baseId', 'comment', 'allocation'] as const) if ((input as any)[k] !== undefined) a[k] = (input as any)[k];
     return a;
   }
 
@@ -159,6 +171,15 @@ export class TradeDocumentsService {
     const snapshot = tradeContent(doc);
     const hash = tradeHash(doc);
     await tx.documentVersion.create({ data: { tenantId: doc.tenantId, organizationId: ctx.organizationId, documentId: id, version: doc.version, action, snapshot: { ...snapshot, status: doc.status } as any, hash, changedBy: ctx.userId, reason } });
+  }
+
+  /** FP-031: проведённое поступление с проведёнными доп. расходами нельзя менять или снимать — сначала доп. расходы. */
+  private async assertNoLandedCosts(tx: Tx, doc: { id: string; docType: string; number: string | null }) {
+    if (doc.docType !== 'SUPPLY') return;
+    const dep = await tx.document.findMany({ where: { docType: 'LANDED_COST' as any, status: 'POSTED', deleted: false, attributes: { path: ['baseId'], equals: doc.id } }, select: { number: true } });
+    if (dep.length) {
+      throw new AccError('LANDED_COST_DEPENDS', `К поступлению ${doc.number ?? ''} проведены доп. расходы ${dep.map((d) => d.number).join(', ')}`, { status: 409, fix: 'Сначала снимите с проведения доп. расходы, затем меняйте поступление.' });
+    }
   }
 
   private checkVersion(doc: { version: number }, expected: unknown) {
@@ -222,7 +243,8 @@ export class TradeDocumentsService {
         })),
         amount: input.amount ?? doc.total?.toString(),
       } as TradeDocInput;
-      for (const k of ['comment', 'vatIncluded', 'paymentType', 'bankAccountId', 'departmentId', 'lossAccount'] as const) if ((input as any)[k] !== undefined) (merged as any)[k] = (input as any)[k];
+      for (const k of ['comment', 'vatIncluded', 'paymentType', 'bankAccountId', 'departmentId', 'lossAccount', 'allocation'] as const) if ((input as any)[k] !== undefined) (merged as any)[k] = (input as any)[k];
+      if (doc.docType === 'LANDED_COST') merged.baseId = (doc.attributes as any)?.baseId;
       await this.validateRefs(tx, ctx, merged);
       // FP-029: сохранение без изменения содержимого — не новая версия (иначе «Провести» на экране, которое сначала
       // сохраняет, отменяло бы согласование этой же версии).
@@ -234,6 +256,7 @@ export class TradeDocumentsService {
       };
       if (tradeHash(candidate) === tradeHash(doc)) return this.view(tx, id);
       const wasPosted = doc.status === 'POSTED';
+      if (wasPosted) await this.assertNoLandedCosts(tx, doc);
       // Проведённая версия неизменяема: снимаем проведение, меняем, проводим новую версию (всё в одной транзакции).
       if (wasPosted) {
         await reverseDocumentMoves(tx, doc, { userId: ctx.userId, reason: input.reason });
@@ -348,6 +371,7 @@ export class TradeDocumentsService {
       const doc = await this.scoped(tx, ctx, id);
       this.checkVersion(doc, expectedVersion);
       if (doc.status !== 'POSTED') return this.view(tx, id);
+      await this.assertNoLandedCosts(tx, doc);
       await tx.document.update({ where: { id }, data: { status: 'DRAFT', postedVersion: null, updatedBy: ctx.userId } });
       await reverseDocumentMoves(tx, doc, { userId: ctx.userId, reason: 'Снятие проведения' });
       await this.autopilot.syncTradeDocument(tx, id, { userId: ctx.userId, override, organizationId: ctx.organizationId });
@@ -361,6 +385,7 @@ export class TradeDocumentsService {
       const doc = await this.scoped(tx, ctx, id);
       this.checkVersion(doc, expectedVersion);
       if (doc.deleted && doc.status === 'CANCELLED') return this.view(tx, id);
+      if (doc.status === 'POSTED') await this.assertNoLandedCosts(tx, doc);
       if (doc.status === 'POSTED') await reverseDocumentMoves(tx, doc, { userId: ctx.userId, reason: 'Пометка на удаление' });
       await tx.document.update({ where: { id }, data: { status: 'CANCELLED', deleted: true, postedVersion: null, updatedBy: ctx.userId } });
       await this.autopilot.syncTradeDocument(tx, id, { userId: ctx.userId, override, organizationId: ctx.organizationId });

@@ -5,6 +5,7 @@ import { PostingInput, StockMoveInput } from '../core/posting.types';
 import { PostingService } from '../core/posting.service';
 import { AccountsMap } from './accounts';
 import { splitVat, standardVatRate } from './vat';
+import { allocate } from '../../inventory/landed-cost';
 
 type Tx = Prisma.TransactionClient;
 type Dec = Prisma.Decimal;
@@ -42,7 +43,7 @@ export interface RuleResult {
   moves: StockMoveInput[];
 }
 
-const SUPPORTED = ['SUPPLY', 'DEMAND', 'SALES_RETURN', 'PURCHASE_RETURN', 'ENTER', 'LOSS', 'MOVE', 'RETAIL_DEMAND', 'RETAIL_RETURN', 'PAYMENT_IN', 'PAYMENT_OUT'];
+const SUPPORTED = ['SUPPLY', 'LANDED_COST', 'DEMAND', 'SALES_RETURN', 'PURCHASE_RETURN', 'ENTER', 'LOSS', 'MOVE', 'RETAIL_DEMAND', 'RETAIL_RETURN', 'PAYMENT_IN', 'PAYMENT_OUT'];
 /** Документы без бухгалтерских последствий (заказы, счета, инвентаризация, смена). */
 export const NO_ACCOUNTING = ['PURCHASE_ORDER', 'CUSTOMER_ORDER', 'INVOICE_IN', 'INVOICE_OUT', 'INVENTORY', 'RETAIL_SHIFT'];
 
@@ -168,6 +169,48 @@ export async function buildTradeEntry(doc: TradeDoc, rc: TradeRuleCtx): Promise<
       } else {
         P.push({ side: 'C', account: a.receivable, amount: total.toFixed(2), dims: cp(), memo: 'Уменьшение задолженности покупателя' });
       }
+      break;
+    }
+    case 'LANDED_COST': {
+      // FP-031: дополнительные расходы (доставка, таможня…) — в стоимость товаров поступления-основания, распределённые
+      // по сумме строк (без НДС) или количеству. Себестоимость (CostService) добавит долю к партиям; доля уже
+      // проданного — в себестоимость продаж на дату документа.
+      const baseId = doc.attributes?.baseId;
+      const base = baseId ? await rc.tx.document.findUnique({ where: { id: baseId }, include: { lines: { include: { product: true }, orderBy: { lineNo: 'asc' } } } }) : null;
+      if (!base || base.docType !== 'SUPPLY' || base.organizationId !== doc.organizationId) {
+        throw new AccError('LANDED_BASE_REQUIRED', `Доп. расходы ${doc.number ?? ''}: укажите поступление товаров своей организации`, { fix: 'Оформите доп. расходы на основании поступления.' });
+      }
+      if (base.status !== 'POSTED' || base.deleted) throw new AccError('LANDED_BASE_NOT_POSTED', `Поступление ${base.number ?? ''} не проведено — доп. расходы распределить не на что`, { fix: 'Сначала проведите поступление.' });
+      if (doc.date.getTime() < base.date.getTime()) throw new AccError('LANDED_BEFORE_BASE', `Доп. расходы ${doc.number ?? ''} датированы раньше поступления ${base.number ?? ''}`, { fix: 'Дата доп. расходов — не раньше даты поступления.' });
+      const baseDoc = { ...base, organizationId: doc.organizationId } as unknown as TradeDoc;
+      const goods = baseDoc.lines.filter((l) => !isService(l) && !new D(l.qty).isZero());
+      if (!goods.length) throw new AccError('LANDED_NO_GOODS', `В поступлении ${base.number ?? ''} нет товаров для распределения`);
+      const st = store(base.storeId);
+      let net = new D(0), total = new D(0);
+      for (const l of doc.lines) {
+        const v = await lineVat(rc, doc, l);
+        net = net.plus(v.net);
+        total = total.plus(v.gross);
+        if (!v.vat.isZero()) P.push({ side: 'D', account: a.vatIn, amount: v.vat.toFixed(2), dims: { COUNTERPARTY: doc.counterpartyId ?? undefined, SETTLEMENT_DOC: doc.id }, memo: 'НДС к зачёту' });
+      }
+      if (net.lte(0)) throw new AccError('ZERO_AMOUNT', `Доп. расходы ${doc.number ?? ''}: сумма не указана`);
+      const byQty = doc.attributes?.allocation === 'QTY';
+      const weights: { key: TradeDoc['lines'][number]; weight: Dec; order: number }[] = [];
+      for (const l of goods) weights.push({ key: l, weight: byQty ? new D(l.qty) : (await lineVat(rc, baseDoc, l)).net, order: l.lineNo });
+      let parts;
+      try {
+        parts = allocate(net, weights);
+      } catch {
+        throw new AccError('LANDED_NO_BASE_AMOUNT', `Поступление ${base.number ?? ''}: нечем распределить (сумма строк товаров нулевая)`, { fix: 'Распределите по количеству.' });
+      }
+      const what = doc.lines.map((l) => l.product.name).join(', ');
+      for (const { key: l, amount } of parts) {
+        if (amount.isZero()) continue;
+        // Количество 0: растёт только стоимость партии (счёт запасов количественный).
+        P.push({ side: 'D', account: a.inventory, amount: amount.toFixed(2), quantity: '0.000', dims: inv(l.productId, st), memo: `Доп. расходы (${what}): ${l.product.name}` });
+        M.push({ lineNo: l.lineNo, productId: l.productId, storeId: st, account: a.inventory, direction: 'IN', kind: 'LANDED_COST', quantity: '0.000', knownCost: amount.toFixed(2), pairKey: `${base.id}:${l.lineNo}`, costAccount: a.cogs });
+      }
+      P.push({ side: 'C', account: a.payable, amount: total.toFixed(2), dims: cp(), memo: 'Задолженность за доп. расходы' });
       break;
     }
     case 'PURCHASE_RETURN': {

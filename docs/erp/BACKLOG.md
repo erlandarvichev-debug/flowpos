@@ -123,7 +123,7 @@ Inventory | P1 | Backend | L | DONE_LOCAL — см. `FP-030-STOCK-LEDGER-RECEIPT
 Зависимости: FP-025,FP-028. Приёмка: Частичная приёмка/расхождения; qty и value; источник каждого movement.
 
 ## FP-031 · Себестоимость и дополнительные расходы
-Inventory | P1 | Accounting engineer | L | PLANNED
+Inventory | P1 | Accounting engineer | L | DONE_LOCAL — см. `FP-031-COST-LANDED.md` (не выкладывалось)
 Зависимости: FP-030. Приёмка: Fixture COGS2200 profit800 stock8800; остаток округления детерминирован; метод периода.
 
 ## FP-032 · Резервы перемещения и адреса

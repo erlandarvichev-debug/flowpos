@@ -127,6 +127,17 @@ export class RefsService {
     };
     if (!['GENERAL', 'SIMPLIFIED', 'RETAIL_TAX', 'OTHER'].includes(data.taxRegime)) throw new AccError('BAD_REGIME', 'Неизвестный налоговый режим');
     if (!['FIFO', 'AVERAGE'].includes(data.inventoryMethod)) throw new AccError('BAD_METHOD', 'Метод оценки запасов: FIFO или AVERAGE');
+    // FP-031: метод оценки — метод периода. Смена — только с 1-го числа месяца и только в открытом периоде
+    // (иначе пересчёт себестоимости переоценил бы уже закрытые месяцы или смешал методы внутри месяца).
+    if (prev && data.inventoryMethod !== prev.inventoryMethod) {
+      if (validFrom.getUTCDate() !== 1) {
+        throw new AccError('METHOD_PERIOD_START', 'Метод оценки запасов меняется только с первого числа месяца', { fix: `Укажите дату начала действия ${new Date(Date.UTC(validFrom.getUTCFullYear(), validFrom.getUTCMonth() + 1, 1)).toISOString().slice(0, 10)} или 1-е число нужного месяца.` });
+      }
+      const lock = await this.prisma.accPeriodLock.findUnique({ where: { organizationId: ctx.organizationId } });
+      if (lock && validFrom.getTime() <= lock.lockedUntil.getTime()) {
+        throw new AccError('METHOD_PERIOD_CLOSED', `Период по ${lock.lockedUntil.toISOString().slice(0, 10)} закрыт — метод оценки в нём не меняется`, { status: 409, fix: 'Выберите первое число открытого месяца.' });
+      }
+    }
     const row = await this.prisma.accPolicy.upsert({
       where: { organizationId_validFrom: { organizationId: ctx.organizationId, validFrom } },
       create: { ...data, organizationId: ctx.organizationId, validFrom, createdBy: ctx.userId },
