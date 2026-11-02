@@ -76,7 +76,6 @@ afterAll(async () => {
     await prisma.outbox.deleteMany({ where: { localId: { in: [...docs, ...accDocs] } } });
     await prisma.document.deleteMany({ where: { tenantId: t2 } });
     await prisma.employee.deleteMany({ where: { organizationId: { in: orgs } } });
-    await prisma.onecConnection.deleteMany({ where: { organizationId: { in: orgs } } });
     await prisma.product.deleteMany({ where: { tenantId: t2 } });
     await prisma.counterparty.deleteMany({ where: { tenantId: t2 } });
     await prisma.uom.deleteMany({ where: { tenantId: t2 } });
@@ -95,12 +94,13 @@ afterAll(async () => {
 describe('FP-007 приёмка через HTTP: два клиента × две организации', () => {
   it('справочник клиента виден его организациям и не виден другому клиенту; личный — только своей организации', async () => {
     const uom = await prisma.uom.create({ data: { tenantId: DEFAULT_TENANT, name: 'шт', shortName: 'шт' } });
-    const shared = (await http(A1, 'POST', '/catalog/items', { name: `Общий ${uid()}`, uomId: uom.id })).body;
+    const sharedName = `Общий ${uid()}`;
+    const shared = (await http(A1, 'POST', '/catalog/items', { name: sharedName, uomId: uom.id })).body;
     const own = (await http(A1, 'POST', '/catalog/counterparties', { name: `Личный A1 ${uid()}`, organizationId: A1.orgId })).body;
     expect([shared.tenantId, own.organizationId]).toEqual([DEFAULT_TENANT, A1.orgId]);
 
-    expect(ids((await http(A2, 'GET', '/catalog/items?limit=500')).body.items)).toContain(shared.id);
-    expect(ids((await http(B1, 'GET', '/catalog/items?limit=500')).body.items)).not.toContain(shared.id);
+    expect(ids((await http(A2, 'GET', `/catalog/items?limit=500&search=${encodeURIComponent(sharedName)}`)).body.items)).toContain(shared.id);
+    expect(ids((await http(B1, 'GET', `/catalog/items?limit=500&search=${encodeURIComponent(sharedName)}`)).body.items)).not.toContain(shared.id);
     expect((await http(B1, 'GET', `/catalog/items/${shared.id}`)).status).toBe(404);
     expect((await http(B2, 'PUT', `/catalog/items/${shared.id}`, { name: 'захват' })).status).toBe(404);
     expect((await http(A2, 'GET', `/catalog/counterparties/${own.id}`)).status).toBe(404);
@@ -129,19 +129,12 @@ describe('FP-007 приёмка через HTTP: два клиента × две
     expect((await login(A1.email, 'чужой-пароль-1')).status).toBe(401);
   });
 
-  it('кадры и обмен с 1С — только своей организации, пароль подключения не отдаётся', async () => {
+  it('кадры — только своей организации', async () => {
     const emp = (await http(A1, 'POST', '/hr/employees', { firstName: 'Сотрудник', lastName: `A1-${uid()}` })).body;
     expect(emp.organizationId).toBe(A1.orgId);
     expect(ids((await http(A2, 'GET', '/hr/employees?limit=500')).body.employees)).not.toContain(emp.id);
     expect(ids((await http(B1, 'GET', '/hr/employees?limit=500')).body.employees)).not.toContain(emp.id);
     expect((await http(B1, 'GET', `/hr/employees/${emp.id}`)).status).toBe(404);
-
-    const conn = await prisma.onecConnection.create({ data: { organizationId: A1.orgId, name: 'A1', baseCode: `b-${uid()}`, baseUrl: 'http://1c.invalid', username: 'u', passwordEnc: 'секрет-1с' } });
-    const mine = await http(A1, 'GET', '/sync/instances');
-    expect(ids(mine.body)).toContain(conn.id);
-    expect(mine.text).not.toContain('секрет-1с');
-    expect(ids((await http(B1, 'GET', '/sync/instances')).body)).not.toContain(conn.id);
-    expect((await http(B1, 'POST', `/sync/instances/${conn.id}/sync`)).status).toBe(404);
   });
 
   it('бухгалтерия: чужая организация в заголовке — 403; организация своего клиента — только по членству', async () => {

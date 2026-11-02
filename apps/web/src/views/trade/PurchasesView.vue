@@ -23,11 +23,6 @@
             <el-table-column label="Сумма" width="140" align="right">
               <template #default="{ row }">{{ formatMoney(row.totalAmount) }}</template>
             </el-table-column>
-            <el-table-column label="1С" width="110">
-              <template #default="{ row }">
-                <SyncStatusBadge :status="row.syncStatus" />
-              </template>
-            </el-table-column>
           </el-table>
           <div v-if="ordersMeta.hasMore" style="text-align:center; margin-top:12px;">
             <el-button :loading="loadingOrders" @click="loadMoreOrders">Загрузить ещё</el-button>
@@ -55,11 +50,6 @@
             </el-table-column>
             <el-table-column label="Сумма" width="140" align="right">
               <template #default="{ row }">{{ formatMoney(row.totalAmount) }}</template>
-            </el-table-column>
-            <el-table-column label="1С" width="110">
-              <template #default="{ row }">
-                <SyncStatusBadge :status="row.syncStatus" />
-              </template>
             </el-table-column>
           </el-table>
           <div v-if="receiptsMeta.hasMore" style="text-align:center; margin-top:12px;">
@@ -98,7 +88,6 @@ import { Plus } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import dayjs from 'dayjs'
 import api from '@/api/client'
-import SyncStatusBadge from '@/components/SyncStatusBadge.vue'
 
 const activeTab = ref('orders')
 const loadingOrders = ref(false)

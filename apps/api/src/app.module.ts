@@ -1,7 +1,6 @@
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { DbContextMiddleware } from './common/db-context.middleware';
 import { ConfigModule } from '@nestjs/config';
-import { BullModule } from '@nestjs/bull';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { PrismaModule } from './prisma/prisma.module';
 import { OutboxModule } from './common/outbox/outbox.module';
@@ -12,7 +11,6 @@ import { CatalogModule } from './modules/catalog/catalog.module';
 import { PricingModule } from './modules/pricing/pricing.module';
 import { TradeModule } from './modules/trade/trade.module';
 import { PosModule } from './modules/pos/pos.module';
-import { SyncModule } from './modules/sync/sync.module';
 import { HrModule } from './modules/hr/hr.module';
 import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { AccountingModule } from './modules/accounting/accounting.module';
@@ -21,9 +19,6 @@ import { AccountingModule } from './modules/accounting/accounting.module';
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     ThrottlerModule.forRoot([{ ttl: 60000, limit: 300 }]),
-    BullModule.forRoot({
-      redis: process.env.REDIS_URL || 'redis://localhost:6379',
-    }),
     PrismaModule,
     OutboxModule,
     AuthModule,
@@ -33,7 +28,6 @@ import { AccountingModule } from './modules/accounting/accounting.module';
     PricingModule,
     TradeModule,
     PosModule,
-    SyncModule,
     HrModule,
     AnalyticsModule,
     AccountingModule,

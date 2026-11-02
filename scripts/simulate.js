@@ -375,41 +375,6 @@ async function main() {
     assert(r.status === 200, `expected 200, got ${r.status}`);
   });
 
-  // ─── SYNC ───────────────────────────────────────────────────────────────────
-  section('SYNC / СИНХРОНИЗАЦИЯ');
-
-  await check('GET /sync/status — статус очереди', async () => {
-    const r = await api('GET', '/sync/status');
-    assert(r.status === 200, `expected 200, got ${r.status}`);
-    assert(typeof r.data.pending === 'number', `no pending: ${JSON.stringify(r.data)}`);
-  });
-
-  await check('GET /sync/queue — записи очереди', async () => {
-    const r = await api('GET', '/sync/queue');
-    assert(r.status === 200, `expected 200, got ${r.status}`);
-  });
-
-  await check('GET /sync/outbox — outbox', async () => {
-    const r = await api('GET', '/sync/outbox');
-    assert(r.status === 200, `expected 200, got ${r.status}`);
-  });
-
-  await check('GET /sync/outbox/status — статус outbox', async () => {
-    const r = await api('GET', '/sync/outbox/status');
-    assert(r.status === 200, `expected 200, got ${r.status}`);
-  });
-
-  await check('GET /sync/conflicts — конфликты', async () => {
-    const r = await api('GET', '/sync/conflicts');
-    assert(r.status === 200, `expected 200, got ${r.status}`);
-  });
-
-  await check('GET /sync/instances — 1С подключения', async () => {
-    const r = await api('GET', '/sync/instances');
-    assert(r.status === 200, `expected 200, got ${r.status}`);
-    assert(Array.isArray(r.data), `expected array, got ${typeof r.data}`);
-  });
-
   // ─── ROLES ──────────────────────────────────────────────────────────────────
   section('ROLES / ПРАВА ДОСТУПА');
 

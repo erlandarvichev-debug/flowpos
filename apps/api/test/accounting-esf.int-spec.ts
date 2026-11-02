@@ -886,7 +886,7 @@ describe('FP-022: метрики, оповещения, трассировка, 
     await mk(ctx, 1, { status: 'UNKNOWN', sentAt: new Date() });
     const text = await monitor.prometheus();
     expect(text).toContain(`flowpos_esf_unknown_count{organization_id="${ctx.organizationId}",environment="TEST"} 1`);
-    expect(text).toMatch(/# TYPE flowpos_outbox_lease_expired gauge\nflowpos_outbox_lease_expired \d+/);
+    expect(text).not.toContain('flowpos_outbox_'); // очереди в 1С больше нет
     expect(text).not.toContain('123456789021');
   });
 });

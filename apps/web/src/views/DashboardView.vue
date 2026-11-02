@@ -55,7 +55,7 @@
     </el-row>
 
     <el-row :gutter="16" style="margin-top: 16px;">
-      <el-col :span="12">
+      <el-col :span="24">
         <el-card>
           <template #header><b>HR — показатели</b></template>
           <el-row :gutter="16">
@@ -76,27 +76,6 @@
                 <div class="stat-value" style="font-size: 20px;">{{ hrKpi.avgHoursPerEmployee }}</div>
                 <div class="stat-label">Ср. часов</div>
               </div>
-            </el-col>
-          </el-row>
-        </el-card>
-      </el-col>
-      <el-col :span="12">
-        <el-card>
-          <template #header>
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-              <b>Очередь синхронизации 1С</b>
-              <el-button size="small" @click="loadSyncStatus">Обновить</el-button>
-            </div>
-          </template>
-          <el-row :gutter="8">
-            <el-col :span="6" v-for="s in syncStats" :key="s.label">
-              <el-statistic :value="s.value" :title="s.label">
-                <template #prefix>
-                  <el-icon :style="{ color: s.color }">
-                    <component :is="s.icon" />
-                  </el-icon>
-                </template>
-              </el-statistic>
             </el-col>
           </el-row>
         </el-card>
@@ -125,7 +104,6 @@ const dateRange = ref([
 
 const kpiData = ref<any>({})
 const hrKpi = ref<any>({})
-const syncStatus = ref<any>({})
 
 const kpis = computed(() => [
   {
@@ -170,13 +148,6 @@ const salesChartOption = computed(() => {
   }
 })
 
-const syncStats = computed(() => [
-  { label: 'Ожидает', value: syncStatus.value?.pending || 0, color: '#e6a23c', icon: 'Clock' },
-  { label: 'Отправляется', value: syncStatus.value?.sending || 0, color: '#409eff', icon: 'Loading' },
-  { label: 'Готово', value: syncStatus.value?.done || 0, color: '#67c23a', icon: 'CircleCheck' },
-  { label: 'Ошибки', value: (syncStatus.value?.error || 0) + (syncStatus.value?.dead || 0), color: '#f56c6c', icon: 'CircleClose' },
-])
-
 function formatMoney(v: number) {
   return new Intl.NumberFormat('ru-KZ', { style: 'currency', currency: 'KZT', minimumFractionDigits: 0 }).format(v)
 }
@@ -194,14 +165,7 @@ async function loadDashboard() {
   loading.value = false
 }
 
-async function loadSyncStatus() {
-  try {
-    syncStatus.value = await api.get('/sync/outbox/status') as any
-  } catch {}
-}
-
 onMounted(() => {
   loadDashboard()
-  loadSyncStatus()
 })
 </script>

@@ -21,7 +21,6 @@ export const PERMISSIONS = [
   'trade.read', 'trade.write',
   'pos.operate', 'pos.manage',
   'analytics.read',
-  'sync.read', 'sync.manage',
 ] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
@@ -37,13 +36,13 @@ export const ROLE_PERMISSIONS: Record<OrgRole, Permission[]> = {
   owner: [...PERMISSIONS],
   admin: PERMISSIONS.filter((p) => p !== 'acc.period.override'),
   chief_accountant: PERMISSIONS.filter((p) => p !== 'org.members.manage'),
-  accountant: [...READ_ALL, 'acc.doc.write', 'acc.doc.post', 'acc.doc.cancel', 'acc.refs.manage', 'acc.esf.send', 'hr.read', 'hr.manage', 'payroll.approve', 'payroll.read', ...TRADE_READ, 'catalog.manage', 'trade.write', 'analytics.read', 'sync.read'],
+  accountant: [...READ_ALL, 'acc.doc.write', 'acc.doc.post', 'acc.doc.cancel', 'acc.refs.manage', 'acc.esf.send', 'hr.read', 'hr.manage', 'payroll.approve', 'payroll.read', ...TRADE_READ, 'catalog.manage', 'trade.write', 'analytics.read'],
   // Кадровик ведёт кадры, но зарплату видит только с payroll.read — его у роли нет.
   hr: ['acc.refs.read', 'hr.read', 'hr.manage'],
   cashier: ['acc.doc.read', 'acc.doc.write', 'acc.refs.read', 'catalog.read', 'stock.read', 'pos.operate'],
   storekeeper: ['acc.doc.read', 'acc.refs.read', ...TRADE_READ, 'trade.write'],
-  manager: [...READ_ALL, 'hr.read', ...TRADE_READ, 'analytics.read', 'sync.read'],
-  auditor: [...READ_ALL, 'acc.audit.read', ...TRADE_READ, 'analytics.read', 'sync.read'],
+  manager: [...READ_ALL, 'hr.read', ...TRADE_READ, 'analytics.read'],
+  auditor: [...READ_ALL, 'acc.audit.read', ...TRADE_READ, 'analytics.read'],
 };
 
 export const ROLE_LABELS: Record<OrgRole, { ru: string; kk: string }> = {

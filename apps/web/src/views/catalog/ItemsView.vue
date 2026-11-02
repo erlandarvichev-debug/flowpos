@@ -38,11 +38,6 @@
             {{ getRetailPrice(row) }}
           </template>
         </el-table-column>
-        <el-table-column label="1С" width="110">
-          <template #default="{ row }">
-            <SyncStatusBadge :status="row.syncStatus" />
-          </template>
-        </el-table-column>
         <el-table-column label="" width="50">
           <template #default="{ row }">
             <el-button size="small" text :icon="Edit" @click.stop="openForm(row)" />
@@ -125,7 +120,7 @@
 
     <el-dialog v-model="dupVisible" title="Дубли штрихкодов" width="720px">
       <el-alert type="warning" :closable="false" show-icon style="margin-bottom: 12px;"
-        title="Код из обмена с 1С/МойСклад уже принадлежит другому товару — у этого товара на кассе он не найдётся. Уберите код у одного из товаров (в учётной системе-источнике)." />
+        title="Код из обмена с МойСклад уже принадлежит другому товару — у этого товара на кассе он не найдётся. Уберите код у одного из товаров (в учётной системе-источнике)." />
       <el-table :data="dups" size="small" empty-text="Дублей нет">
         <el-table-column prop="barcode" label="Штрихкод" width="150" />
         <el-table-column label="Товар с кодом в карточке"><template #default="{ row }"><el-link @click="router.push(`/catalog/items/${row.productId}`)">{{ row.productName }}</el-link></template></el-table-column>
@@ -142,7 +137,6 @@ import { Plus, Search, Edit } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import api from '@/api/client'
 import { showError } from '../accounting/acc'
-import SyncStatusBadge from '@/components/SyncStatusBadge.vue'
 
 const router = useRouter()
 const loading = ref(false)

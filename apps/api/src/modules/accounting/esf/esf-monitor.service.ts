@@ -169,10 +169,6 @@ export class EsfMonitorService {
       g('flowpos_esf_decisions_overdue', 'Просроченных решений', (m) => m.decisionsOverdue);
       const open = await this.prisma.opsAlert.groupBy({ by: ['severity'], where: { resolvedAt: null }, _count: true });
       gauge('flowpos_ops_alerts_open', 'Открытых оповещений', ['WARNING', 'CRITICAL'].map((sv) => [{ severity: sv }, open.find((o) => o.severity === sv)?._count ?? 0]));
-      const outbox = await this.prisma.outbox.groupBy({ by: ['status'], _count: true });
-      gauge('flowpos_outbox_messages', 'Сообщения outbox по статусам (очередь в 1С)', outbox.map((o) => [{ status: o.status }, o._count]));
-      const expired = await this.prisma.outbox.count({ where: { status: 'SENDING', leaseUntil: { lt: now } } });
-      gauge('flowpos_outbox_lease_expired', 'Outbox: аренда истекла, а статус SENDING', [[{}, expired]]);
       const tick = EsfMonitorService.lastTickAt;
       gauge('flowpos_esf_worker_last_tick_age_seconds', 'Секунд с последнего прохода фоновой обработки ЭСФ в этом процессе', [[{}, tick ? Math.round((now.getTime() - tick.getTime()) / 1000) : null]]);
       return lines.join('\n').replace(/\{\}/g, '') + '\n';

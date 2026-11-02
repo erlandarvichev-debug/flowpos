@@ -45,11 +45,3 @@ groups:
         annotations:
           summary: "Синхронизация с ИС ЭСФ не удаётся ({{ $labels.organization_id }})"
           runbook: "docs/erp/runbooks/ESF.md#esf-sync-failing"
-
-      - alert: FlowposOutboxLeaseExpired
-        expr: flowpos_outbox_lease_expired > 0
-        for: 10m
-        labels: { severity: warning, owner: sre }
-        annotations:
-          summary: "Outbox: аренда истекла, а сообщение в SENDING (воркер push упал?)"
-          runbook: "docs/erp/runbooks/ESF.md#outbox-lease-expired"

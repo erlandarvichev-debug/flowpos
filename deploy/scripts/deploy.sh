@@ -30,7 +30,7 @@ as_app "npm ci --include=dev --no-audit --no-fund"
 as_app "node deploy/scripts/ensure-native-deps.mjs"
 as_app "npm run generate --workspace=packages/db"
 for w in api web mcp; do as_app "npm run build --workspace=apps/$w"; done
-for w in sync-worker moysklad-worker push-worker analytics-worker; do
+for w in moysklad-worker analytics-worker; do
   systemctl is-enabled --quiet "flowpos-worker@$w" 2>/dev/null && as_app "npm run build --workspace=apps/$w"
 done
 

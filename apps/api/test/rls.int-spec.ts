@@ -7,10 +7,6 @@ import { OutboxService } from '../src/common/outbox/outbox.service';
 import { SalesService } from '../src/modules/trade/sales.service';
 import { runtimeDatabaseUrl } from './http-app';
 import { DEFAULT_TENANT, defaultTenant } from './accounting-helpers';
-import { PrismaService as SyncWorkerPrisma, runAsTenant as workerAsTenant } from '../../sync-worker/src/prisma.service';
-import { PullService as OnecPullService } from '../../sync-worker/src/modules/pull/pull.service';
-import { PrismaService as PushWorkerPrisma } from '../../push-worker/src/prisma.service';
-import { PushService } from '../../push-worker/src/modules/push/push.service';
 
 const uid = () => randomUUID().slice(0, 8);
 const owner = new PrismaService();
@@ -21,8 +17,6 @@ const owner = new PrismaService();
  */
 function asRuntime<T>(make: () => T): T {
   PrismaService.nextUrl = runtimeDatabaseUrl();
-  SyncWorkerPrisma.nextUrl = runtimeDatabaseUrl();
-  PushWorkerPrisma.nextUrl = runtimeDatabaseUrl();
   return make();
 }
 const app = asRuntime(() => new PrismaService());
@@ -55,7 +49,6 @@ afterAll(async () => {
   await owner.pOSTerminal.deleteMany({ where: { tenantId: t2 } });
   await owner.accEntry.deleteMany({ where: { organizationId: { in: orgs } } });
   await owner.idMap.deleteMany({ where: { connection: { organizationId: { in: orgs } } } });
-  await owner.onecConnection.deleteMany({ where: { organizationId: { in: orgs } } });
   await owner.document.deleteMany({ where: { tenantId: t2 } });
   await owner.product.deleteMany({ where: { tenantId: t2 } });
   await owner.uom.deleteMany({ where: { tenantId: t2 } });
@@ -165,40 +158,6 @@ describe('FP-009: единица работы и outbox', () => {
       expect(await runAsTenant(t2, () => other.outbox.count({ where: { idempotencyKey: key } }))).toBe(0);
     } finally {
       await other.$disconnect();
-    }
-  });
-});
-
-describe('FP-009: воркеры на рабочей роли', () => {
-  it('1С: без контекста подключений не видно; синхронизация пишет в клиента подключения', async () => {
-    const wp = asRuntime(() => new SyncWorkerPrisma());
-    try {
-      const conn = await owner.onecConnection.create({ data: { organizationId: w['2'].org.id, name: 'B', baseCode: `b-${uid()}`, baseUrl: 'http://1c.invalid', username: 'u', passwordEnc: 'p' } });
-      expect(await wp.onecConnection.count({ where: { id: conn.id } })).toBe(0);
-      const pull = new OnecPullService(wp as any);
-      const guid = randomUUID();
-      await workerAsTenant(t2, () => wp.$transaction((tx) => (pull as any).upsertMirror(tx, { tenantId: t2, organizationId: w['2'].org.id }, 'uom', 'default', conn.id, { guid, version: '1', deletionMark: false, data: { name: 'кг' } })));
-      expect((await owner.uom.findFirstOrThrow({ where: { onecGuid: guid } })).tenantId).toBe(t2);
-      // Подмена клиента в области записи не проходит: строка не того клиента, что в контексте, — отказ RLS.
-      await expect(workerAsTenant(T1, () => wp.$transaction((tx) => (pull as any).upsertMirror(tx, { tenantId: t2, organizationId: w['2'].org.id }, 'uom', 'default', conn.id, { guid: randomUUID(), version: '1', deletionMark: false, data: { name: 'л' } })))).rejects.toThrow(/row-level security|42501/);
-    } finally {
-      await wp.$disconnect();
-    }
-  });
-
-  it('отправка в 1С: запись outbox клиента A не уходит в подключение клиента B', async () => {
-    const pw = asRuntime(() => new PushWorkerPrisma());
-    try {
-      const connB = await owner.onecConnection.create({ data: { organizationId: w['2'].org.id, name: 'B', baseCode: `b-${uid()}`, baseUrl: 'http://127.0.0.1:9', username: 'u', passwordEnc: 'p' } });
-      const leak = await owner.outbox.create({ data: { tenantId: T1, connectionId: connB.id, idempotencyKey: `leak-${uid()}`, entity: 'document', localId: w['1'].doc.id, operation: 'CREATE', payload: {} } });
-      const own = await owner.outbox.create({ data: { tenantId: t2, connectionId: connB.id, idempotencyKey: `own-${uid()}`, entity: 'document', localId: w['2'].doc.id, operation: 'CREATE', payload: {} } });
-      await (new PushService(pw as any) as any).processBatch();
-      const [l, o] = await Promise.all([owner.outbox.findUniqueOrThrow({ where: { id: leak.id } }), owner.outbox.findUniqueOrThrow({ where: { id: own.id } })]);
-      expect([l.status, l.attempts]).toEqual(['PENDING', 0]); // не выбрана вовсе
-      expect(o.attempts).toBe(1); // выбрана и отправлялась (1С недоступна — ошибка, повтор позже)
-      await owner.outbox.deleteMany({ where: { id: { in: [leak.id, own.id] } } });
-    } finally {
-      await pw.$disconnect();
     }
   });
 });

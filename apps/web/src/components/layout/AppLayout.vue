@@ -102,12 +102,6 @@
             <span>Настройки</span>
           </template>
           <el-menu-item index="/settings/users">Пользователи</el-menu-item>
-          <el-menu-item index="/settings/integration">Интеграция 1С</el-menu-item>
-          <el-menu-item index="/settings/conflicts">
-            <span>Конфликты</span>
-            <el-badge v-if="conflictCount > 0" :value="conflictCount" type="danger" style="margin-left: 6px;" />
-          </el-menu-item>
-          <el-menu-item index="/settings/simulator">Симулятор</el-menu-item>
         </el-sub-menu>
       </el-menu>
 
@@ -225,7 +219,6 @@ async function createOrg() {
 }
 
 const collapsed = ref(false)
-const conflictCount = ref(0)
 const autopilotIssues = ref(0)
 async function loadAutopilotIssues() {
   try { autopilotIssues.value = ((await api.get('/accounting/autopilot/status')) as any).openIssues || 0 } catch { autopilotIssues.value = 0 }
@@ -250,20 +243,12 @@ function handleUserCommand(cmd: string) {
   }
 }
 
-async function loadConflictCount() {
-  try {
-    const res = await api.get('/sync/conflicts')
-    conflictCount.value = (res.data?.data ?? []).length
-  } catch { /* silent */ }
-}
-
 watch(() => org.currentId, () => loadAutopilotIssues())
 
 onMounted(() => {
   org.load()
-  loadConflictCount()
   loadAutopilotIssues()
-  setInterval(() => { loadConflictCount(); loadAutopilotIssues() }, 60_000)
+  setInterval(() => loadAutopilotIssues(), 60_000)
 })
 </script>
 
