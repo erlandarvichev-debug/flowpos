@@ -2826,6 +2826,36 @@ model TaxRegister {
   @@map("tax_registers")
 }
 
+/// FP-054: налоговая декларация (ФНО) из зафиксированного регистра и утверждённого пакета правил. Черновик пересобирается;
+/// готовая (FINAL) неизменна; сдача — отметка с номером/квитанцией; исправление — дополнительная декларация (previousId).
+model TaxDeclaration {
+  id             String    @id @default(uuid())
+  organizationId String    @map("organization_id")
+  form           String    // 300.00 | 910.00
+  year           Int
+  period         String    // Q1..Q4 | H1 | H2
+  kind           String    @default("INITIAL") // INITIAL | ADDITIONAL | LIQUIDATION | BY_NOTICE
+  previousId     String?   @map("previous_id")
+  registerId     String?   @map("register_id")
+  packId         String    @map("pack_id")
+  packVersion    String    @map("pack_version")
+  header         Json
+  lines          Json      // [{ code, name, value, formula?, source? }]
+  checks         Json      // контрольные соотношения: [{ code, ok, text }]
+  contentHash    String    @map("content_hash")
+  status         String    @default("DRAFT") // DRAFT | FINAL | SUBMITTED | ACCEPTED | REJECTED
+  createdBy      String    @map("created_by")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  finalizedBy    String?   @map("finalized_by")
+  finalizedAt    DateTime? @map("finalized_at")
+  submittedAt    DateTime? @map("submitted_at")
+  receipt        Json?     // номер, дата приёма, орган — со слов пользователя или из ИСНА
+  statusNote     String?   @map("status_note")
+
+  @@index([organizationId, form, year, period])
+  @@map("tax_declarations")
+}
+
 model VatCreditAllocation {
   id             String    @id @default(uuid())
   organizationId String    @map("organization_id")

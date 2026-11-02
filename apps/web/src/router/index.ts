@@ -175,6 +175,8 @@ const router = createRouter({
         { path: 'operations/manual', name: 'j-operations-manual', component: () => import('@/views/accounting/DocumentsView.vue'), meta: { title: 'Операции вручную', docTypes: ['MANUAL_OPERATION', 'OPENING_BALANCE', 'STORNO'] } },
         // Налоги (FP-039)
         { path: 'tax/rules', name: 'tax-rules', component: () => import('@/views/tax/TaxRulesView.vue'), meta: { title: 'Налоговые правила' } },
+        { path: 'tax/declarations', name: 'tax-declarations', component: () => import('@/views/tax/DeclarationsView.vue'), meta: { title: 'Декларации' } },
+        { path: 'tax/simplified', name: 'tax-simplified', component: () => import('@/views/tax/SimplifiedRegisterView.vue'), meta: { title: 'Доходы для упрощёнки' } },
         { path: 'tax/vat', name: 'tax-vat', component: () => import('@/views/tax/VatRegisterView.vue'), meta: { title: 'Регистр НДС' } },
         // Аналитика
         {

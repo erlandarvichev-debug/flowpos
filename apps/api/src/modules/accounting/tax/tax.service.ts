@@ -34,13 +34,33 @@ export interface VatRegisterData {
     vat: string;
   };
   input: {
-    rows: { esfId: string; num: string; registrationNumber: string | null; date: string; sellerTin: string | null; seller: string | null; kind: string; amount: string }[];
+    rows: { esfId: string; num: string; registrationNumber: string | null; date: string; sellerTin: string | null; seller: string | null; kind: string; amount: string; base: string }[];
     credit: string;
     nonCreditable: string;
   };
   payable: string;
   issues: { severity: 'ERROR' | 'WARNING'; code: string; text: string; docId?: string }[];
 }
+
+export interface SimplifiedRegisterData {
+  pack: { code: string; version: string; hash: string };
+  period: { year: number; period: string; from: string; to: string };
+  rule: { code: string; version: string; status: string; overrides: { include: string[]; exclude: string[] } };
+  rows: { account: string; name: string; amount: string; included: boolean }[];
+  income: string;
+  limit: string;
+  issues: { severity: 'ERROR' | 'WARNING'; code: string; text: string }[];
+}
+
+/** Какие доходы (счета раздела 6) входят в доход упрощёнки. Черновик: неденежные переоценки и восстановления — не доход. */
+export const SIMPLIFIED_INCOME_RULE = {
+  code: 'KZ_SIMPLIFIED_INCOME',
+  version: '1.0.0-draft',
+  status: 'METHODOLOGIST_REVIEW',
+  /** Курсовые разницы, восстановление обесценения, изменение справедливой стоимости, доля в прибыли — не включаются. */
+  exclude: ['6130', '6140', '6170', '6180', '6230', '6250', '6260', '6270'],
+  include(code: string) { return code.startsWith('6') && !this.exclude.includes(code); },
+} as const;
 
 /** Часть регистра, значимая для налога (без наименований для показа): от неё — хэш и воспроизводимость. */
 function coreOf(d: VatRegisterData) {
@@ -72,8 +92,9 @@ export class TaxService {
 
   async packs(ctx: OrgContext) {
     await this.ensureBuiltin();
-    const packs = await this.prisma.taxRulePack.findMany({ orderBy: [{ code: 'asc' }, { validFrom: 'desc' }] });
     const adoptions = await this.prisma.orgTaxPack.findMany({ where: { organizationId: ctx.organizationId }, orderBy: { approvedAt: 'desc' } });
+    // Действующие пакеты и те, что организация когда-либо утверждала (выведенные из действия — для истории).
+    const packs = await this.prisma.taxRulePack.findMany({ where: { OR: [{ status: 'PUBLISHED' }, { id: { in: adoptions.map((a) => a.packId) } }] }, orderBy: [{ code: 'asc' }, { validFrom: 'desc' }] });
     return packs.map((p) => ({ ...p, adoption: adoptions.find((a) => a.packId === p.id && a.status === 'ACTIVE') ?? null, history: adoptions.filter((a) => a.packId === p.id) }));
   }
 
@@ -192,13 +213,15 @@ export class TaxService {
 
       // Зачёт — регистр FP-019.
       const alloc = await tx.vatCreditAllocation.findMany({ where: { organizationId: ctx.organizationId, year, quarter: Number(period[1]) }, orderBy: { createdAt: 'asc' } });
-      const esf = await tx.esfInvoice.findMany({ where: { id: { in: alloc.map((a) => a.esfInvoiceId) } }, select: { id: true, num: true, registrationNumber: true, date: true, sellerTin: true, sellerName: true } });
+      const esf = await tx.esfInvoice.findMany({ where: { id: { in: alloc.map((a) => a.esfInvoiceId) } }, select: { id: true, num: true, registrationNumber: true, date: true, sellerTin: true, sellerName: true, totalWithoutTax: true, totalNds: true } });
       let credit = new D(0), nonCred = new D(0);
       const inRows = alloc.map((a) => {
         const e = esf.find((x) => x.id === a.esfInvoiceId);
         const amt = new D(a.amount);
         if (a.kind === 'NON_CREDITABLE') nonCred = nonCred.plus(amt); else credit = credit.plus(amt); // CREDIT и REVERSAL (со знаком)
-        return { esfId: a.esfInvoiceId, num: e?.num ?? '', registrationNumber: e?.registrationNumber ?? null, date: e ? iso(e.date) : '', sellerTin: e?.sellerTin ?? null, seller: e?.sellerName ?? null, kind: a.kind, amount: amt.toFixed(2) };
+        // Оборот без НДС — в той же доле, что и сумма НДС строки зачёта от НДС ЭСФ (300.00.013 А / 015 А).
+        const base = e && !new D(e.totalNds).isZero() ? new D(e.totalWithoutTax).times(amt).div(e.totalNds).toDecimalPlaces(2) : new D(0);
+        return { esfId: a.esfInvoiceId, num: e?.num ?? '', registrationNumber: e?.registrationNumber ?? null, date: e ? iso(e.date) : '', sellerTin: e?.sellerTin ?? null, seller: e?.sellerName ?? null, kind: a.kind, amount: amt.toFixed(2), base: base.toFixed(2) };
       });
 
       const outVat = [...totalByRate.values()].reduce((s, v) => s.plus(v.vat), new D(0));
@@ -230,7 +253,7 @@ export class TaxService {
     if (reg.status !== 'DRAFT') throw new AccError('REGISTER_NOT_DRAFT', 'Фиксируется только черновик', { status: 409 });
     const errors = ((reg.data as any).issues ?? []).filter((i: any) => i.severity === 'ERROR');
     if (errors.length) throw new AccError('REGISTER_HAS_ERRORS', `В регистре ошибки (${errors.length}): ${errors[0].text}`, { fix: 'Исправьте документы, пересоберите регистр.' });
-    const now = await this.computeVat(ctx, reg.year, reg.period, reg.packId);
+    const now = reg.kind === 'VAT' ? await this.computeVat(ctx, reg.year, reg.period, reg.packId) : await this.computeSimplified(ctx, reg.year, reg.period, reg.packId);
     if (now.hash !== reg.contentHash) throw new AccError('REGISTER_STALE', 'Данные изменились после сборки — пересоберите регистр', { status: 409 });
     return this.prisma.$transaction(async (tx) => {
       const prev = await tx.taxRegister.findFirst({ where: { organizationId: ctx.organizationId, kind: reg.kind, year: reg.year, period: reg.period, status: 'FIXED' } });
@@ -242,6 +265,65 @@ export class TaxService {
       const fixed = await tx.taxRegister.update({ where: { id: reg.id }, data: { status: 'FIXED', fixedBy: ctx.userId, fixedAt: new Date() } });
       await tx.auditLog.create({ data: { userId: ctx.userId, organizationId: ctx.organizationId, action: 'TAX_REGISTER_FIXED', entity: 'tax_register', entityId: reg.id, reason: input.reason ?? null, after: { kind: reg.kind, year: reg.year, period: reg.period, hash: reg.contentHash, pack: reg.packVersion, replaced: prev?.id ?? null } as any } });
       return fixed;
+    });
+  }
+
+  /** Воспроизводимость любого регистра (по виду). */
+  async verifyRegister(ctx: OrgContext, id: string) {
+    const reg = await this.prisma.taxRegister.findFirst({ where: { id, organizationId: ctx.organizationId } });
+    if (!reg) throw new AccError('NOT_FOUND', 'Регистр не найден', { status: 404 });
+    if (reg.kind === 'VAT') return this.verify(ctx, id);
+    const now = await this.computeSimplified(ctx, reg.year, reg.period, reg.packId);
+    const was = reg.data as any as SimplifiedRegisterData;
+    return { same: now.hash === reg.contentHash, savedHash: reg.contentHash, currentHash: now.hash, was: { income: was.income }, now: { income: now.data.income }, changedDocs: [] as string[] };
+  }
+
+  /**
+   * Регистр доходов упрощённой декларации (910.00) за полугодие: обороты по счетам раздела 6 (кредит − дебет; возвраты
+   * 6020 уменьшают). Какие счета входят в доход — правило SIMPLIFIED_INCOME (черновик для методолога, ст. 724 НК);
+   * организация может переопределить в учётной политике: params.simplifiedIncome = { include: [...], exclude: [...] }.
+   */
+  async computeSimplified(ctx: OrgContext, year: number, period: string, packId?: string): Promise<{ packId: string; data: SimplifiedRegisterData; hash: string }> {
+    if (!Number.isInteger(year) || year < 2000 || year > 2100 || !/^H[12]$/.test(period)) throw new AccError('BAD_PERIOD', 'Период — год и полугодие H1/H2');
+    const h = Number(period[1]);
+    const from = new Date(Date.UTC(year, (h - 1) * 6, 1)), to = new Date(Date.UTC(year, h * 6, 0));
+    return this.prisma.$transaction(async (tx) => {
+      let pack: { id: string; def: TaxPackDef };
+      if (packId) {
+        const p = await tx.taxRulePack.findUniqueOrThrow({ where: { id: packId } });
+        pack = { id: p.id, def: { code: p.code, version: p.version, validFrom: iso(p.validFrom), validTo: p.validTo ? iso(p.validTo) : null, params: p.params as any, sources: p.sources as any, unverified: p.unverified as any } };
+      } else pack = await this.packFor(tx, ctx.organizationId, to);
+      const policy = await tx.accPolicy.findFirst({ where: { organizationId: ctx.organizationId, validFrom: { lte: to } }, orderBy: { validFrom: 'desc' } });
+      if (policy?.taxRegime !== 'SIMPLIFIED') throw new AccError('NOT_SIMPLIFIED', 'Налоговый режим организации — не упрощённая декларация (учётная политика)', { link: '/accounting/settings' });
+      const ov = ((policy?.params as any) ?? {}).simplifiedIncome ?? {};
+      const include = (code: string) => (ov.exclude ?? []).includes(code) ? false : (ov.include ?? []).includes(code) ? true : SIMPLIFIED_INCOME_RULE.include(code);
+      const accounts = await tx.accAccount.findMany({ where: { code: { startsWith: '6' }, isGroup: false, OR: [{ organizationId: null }, { organizationId: ctx.organizationId }] }, select: { id: true, code: true, name: true } });
+      const sums = await tx.accPosting.groupBy({
+        by: ['accountId', 'side'], where: { organizationId: ctx.organizationId, isActive: true, ledger: 'BU', accountId: { in: accounts.map((a) => a.id) }, date: { gte: from, lte: to }, entry: { status: 'ACTIVE' } }, _sum: { amount: true },
+      });
+      const byAcc = new Map<string, Dec>();
+      for (const r of sums) byAcc.set(r.accountId, (byAcc.get(r.accountId) ?? new D(0)).plus(r.side === 'C' ? new D(r._sum.amount ?? 0) : new D(r._sum.amount ?? 0).neg()));
+      const rows = accounts.filter((a) => byAcc.has(a.id) && !byAcc.get(a.id)!.isZero()).sort((a, b) => a.code.localeCompare(b.code))
+        .map((a) => ({ account: a.code, name: a.name, amount: byAcc.get(a.id)!.toFixed(2), included: include(a.code) }));
+      const income = rows.filter((r) => r.included).reduce((s, r) => s.plus(r.amount), new D(0));
+      const limit = new D(pack.def.params.mrp).times(pack.def.params.simplified.incomeLimitMrp);
+      const issues: SimplifiedRegisterData['issues'] = [];
+      if (income.gt(limit)) issues.push({ severity: 'WARNING', code: 'LIMIT_EXCEEDED', text: `Доход ${income.toFixed(2)} превышает предел ${limit.toFixed(2)} (${pack.def.params.simplified.incomeLimitMrp} МРП) — режим не применяется` });
+      const data: SimplifiedRegisterData = {
+        pack: { code: pack.def.code, version: pack.def.version, hash: packHash(pack.def) },
+        period: { year, period, from: iso(from), to: iso(to) },
+        rule: { code: SIMPLIFIED_INCOME_RULE.code, version: SIMPLIFIED_INCOME_RULE.version, status: SIMPLIFIED_INCOME_RULE.status, overrides: { include: ov.include ?? [], exclude: ov.exclude ?? [] } },
+        rows, income: income.toFixed(2), limit: limit.toFixed(2), issues,
+      };
+      return { packId: pack.id, data, hash: hashOf({ ...data, rows: rows.map(({ name: _n, ...r }) => r) }) };
+    });
+  }
+
+  async buildSimplified(ctx: OrgContext, year: number, period: string) {
+    const r = await this.computeSimplified(ctx, Number(year), String(period));
+    return this.prisma.$transaction(async (tx) => {
+      await tx.taxRegister.deleteMany({ where: { organizationId: ctx.organizationId, kind: 'SIMPLIFIED', year: Number(year), period, status: 'DRAFT' } });
+      return tx.taxRegister.create({ data: { organizationId: ctx.organizationId, kind: 'SIMPLIFIED', year: Number(year), period, packId: r.packId, packVersion: `${r.data.pack.code} ${r.data.pack.version}`, data: r.data as any, contentHash: r.hash, createdBy: ctx.userId } });
     });
   }
 

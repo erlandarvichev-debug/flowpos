@@ -15,6 +15,7 @@ import { ChartService } from './chart/chart.service';
 import { RefsService } from './refs/refs.service';
 import { OrgEcpService } from './refs/org-ecp';
 import { TaxService } from './tax/tax.service';
+import { DeclarationsService } from './tax/declarations.service';
 import { PeriodsService } from './periods/periods.service';
 import { AutopilotService } from './autopilot/autopilot.service';
 import { TradeDocumentsService } from './autopilot/trade-documents.service';
@@ -43,6 +44,7 @@ export class AccountingController {
   constructor(
     private orgEcp: OrgEcpService,
     private tax: TaxService,
+    private decl: DeclarationsService,
     private docs: DocumentsService,
     private graph: DocumentGraphService,
     private approvals: ApprovalsService,
@@ -525,11 +527,33 @@ export class AccountingController {
   @Post('tax/registers/vat') @RequirePermission('acc.reports.read')
   taxBuildVat(@Org() ctx: OrgContext, @Body() b: any) { return this.tax.buildVat(ctx, Number(b?.year), String(b?.period ?? '')); }
 
+  @Post('tax/registers/simplified') @RequirePermission('acc.reports.read')
+  taxBuildSimplified(@Org() ctx: OrgContext, @Body() b: any) { return this.tax.buildSimplified(ctx, Number(b?.year), String(b?.period ?? '')); }
+
   @Post('tax/registers/:id/fix') @RequirePermission('acc.period.lock') @RequireMfa()
   taxFix(@Org() ctx: OrgContext, @Param('id') id: string, @Body() b: any) { return this.tax.fix(ctx, id, b ?? {}); }
 
   @Get('tax/registers/:id/verify') @RequirePermission('acc.reports.read')
-  taxVerify(@Org() ctx: OrgContext, @Param('id') id: string) { return this.tax.verify(ctx, id); }
+  taxVerify(@Org() ctx: OrgContext, @Param('id') id: string) { return this.tax.verifyRegister(ctx, id); }
+
+  // ── Налоговые декларации (FP-054) ──
+  @Get('tax/forms') @RequirePermission('acc.reports.read')
+  taxForms() { return this.decl.forms(); }
+
+  @Get('tax/declarations') @RequirePermission('acc.reports.read')
+  taxDeclarations(@Org() ctx: OrgContext, @Query() q: any) { return this.decl.list(ctx, q); }
+
+  @Get('tax/declarations/:id') @RequirePermission('acc.reports.read')
+  taxDeclaration(@Org() ctx: OrgContext, @Param('id') id: string) { return this.decl.get(ctx, id); }
+
+  @Post('tax/declarations') @RequirePermission('acc.reports.read')
+  taxBuildDeclaration(@Org() ctx: OrgContext, @Body() b: any) { return this.decl.build(ctx, b ?? {}); }
+
+  @Post('tax/declarations/:id/finalize') @RequirePermission('acc.period.lock') @RequireMfa()
+  taxFinalize(@Org() ctx: OrgContext, @Param('id') id: string) { return this.decl.finalize(ctx, id); }
+
+  @Post('tax/declarations/:id/mark') @RequirePermission('acc.period.lock') @RequireMfa()
+  taxMark(@Org() ctx: OrgContext, @Param('id') id: string, @Body() b: any) { return this.decl.mark(ctx, id, b ?? {}); }
 
   // ── Учётная политика ──
   @Get('policy') @RequirePermission('acc.refs.read')

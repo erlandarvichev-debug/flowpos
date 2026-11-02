@@ -109,7 +109,9 @@
             <el-icon><Stamp /></el-icon>
             <span>Налоги</span>
           </template>
+          <el-menu-item index="/tax/declarations">Декларации</el-menu-item>
           <el-menu-item index="/tax/vat">Регистр НДС</el-menu-item>
+          <el-menu-item index="/tax/simplified">Доходы для упрощёнки</el-menu-item>
           <el-menu-item v-if="org.can('acc.esf.read')" index="/accounting/esf">ЭСФ и зачёт НДС</el-menu-item>
           <el-menu-item index="/tax/rules">Налоговые правила</el-menu-item>
         </el-sub-menu>

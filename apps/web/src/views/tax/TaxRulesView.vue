@@ -14,7 +14,7 @@
         <el-tag v-else type="warning">Не утверждён</el-tag>
       </div>
 
-      <el-descriptions :column="2" size="small" border class="params">
+      <el-descriptions v-if="p.params?.vat && p.params?.payroll" :column="2" size="small" border class="params">
         <el-descriptions-item label="МРП / МЗП">{{ n(p.params.mrp) }} / {{ n(p.params.mzp) }} ₸</el-descriptions-item>
         <el-descriptions-item label="НДС">{{ p.params.vat.standardRate }}%, пониженные {{ p.params.vat.reducedRates.map((r: any) => r.rate + '%').join(', ') }}, 0%; квартал</el-descriptions-item>
         <el-descriptions-item label="Порог НДС">{{ n(p.params.vat.registrationThresholdMrp) }} МРП</el-descriptions-item>
@@ -25,7 +25,7 @@
       </el-descriptions>
 
       <el-collapse class="more">
-        <el-collapse-item :title="`Источники (${p.sources.length})`" name="src">
+        <el-collapse-item :title="`Источники (${p.sources?.length ?? 0})`" name="src">
           <ul class="list"><li v-for="(s, i) in p.sources" :key="i"><b>{{ s.topic }}</b> — {{ s.npa }}<span v-if="s.articles">, {{ s.articles }}</span> <el-tag size="small" :type="s.confidence === 'ОФ' ? 'success' : s.confidence === 'ВТ' ? 'info' : 'danger'">{{ s.confidence }}</el-tag> <el-link v-if="s.url" :href="s.url" target="_blank" type="primary">ссылка</el-link></li></ul>
         </el-collapse-item>
       </el-collapse>
@@ -33,9 +33,9 @@
       <template v-if="!p.adoption">
         <el-alert type="warning" :closable="false" show-icon title="Перед утверждением сверьте с текстом НПА и отметьте каждый пункт:" class="warn" />
         <el-checkbox-group v-model="ack[p.id]" class="ack">
-          <el-checkbox v-for="u in p.unverified" :key="u.key" :value="u.key">{{ u.text }}</el-checkbox>
+          <el-checkbox v-for="u in p.unverified ?? []" :key="u.key" :value="u.key">{{ u.text }}</el-checkbox>
         </el-checkbox-group>
-        <el-button v-if="org.can('acc.policy.manage')" type="primary" :disabled="(ack[p.id]?.length ?? 0) < p.unverified.length" :loading="busy === p.id" @click="approve(p)">Утвердить пакет</el-button>
+        <el-button v-if="org.can('acc.policy.manage')" type="primary" :disabled="(ack[p.id]?.length ?? 0) < (p.unverified?.length ?? 0)" :loading="busy === p.id" @click="approve(p)">Утвердить пакет</el-button>
         <span v-else class="muted">Утверждает главный бухгалтер или владелец.</span>
       </template>
       <div v-else class="muted">Утвердил(а): {{ p.adoption.approvedBy.slice(0, 8) }} · отмечено пунктов: {{ p.adoption.acknowledged.length }}

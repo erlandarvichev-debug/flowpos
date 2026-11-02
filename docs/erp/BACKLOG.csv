@@ -52,7 +52,7 @@ FP-050,Payroll,P1,Payroll engineer,L,"FP-048,FP-049,FP-039",PLANNED,Расчёт
 FP-051,Payroll,P1,Backend/Frontend,L,"FP-050,FP-037",PLANNED,Утверждение перерасчёт payslip и реестр выплаты,Closed run immutable; adjustment trace; approval separate from real payout
 FP-052,Tax/ISNA,P1,Tax methodologist,M,"FP-039,FP-040",PLANNED,Профиль обязанностей и календарь,Forms/periods per org; source/effective dates; overdue ownership
 FP-053,Tax/ISNA,P1,Integration lead,M,FP-052,PLANNED,Получить ИСНА контракты по нужным ФНО,Per-form access/schema/receipt/signing confirmed; no invented universal endpoint
-FP-054,Tax/ISNA,P1,Backend/Frontend,L,"FP-053,FP-039,FP-016",PLANNED,Сборка ФНО контрольные соотношения и отправка,Drilldown fields; immutable submission; final accepted receipt; correction history
+FP-054,Tax/ISNA,P1,Backend/Frontend,L,"FP-053,FP-039,FP-016",PARTIAL,Сборка ФНО контрольные соотношения и отправка,Drilldown fields; immutable submission; final accepted receipt; correction history
 FP-055,NKT,P1,Integration engineer,M,"FP-025,FP-011",PLANNED,Подтвердить НКТ contract и environments,OpenAPI checksum auth/limits; test platform distinguished from productive NKT
 FP-056,NKT,P1,Backend/Frontend,L,"FP-055,FP-025",PLANNED,Mapping NTIN KZTIN заявки и статусы,Own stable ID; source/history; failed matching not silent; status reconciliation
 FP-057,Statistics,P1,Methodologist/Integration,M,FP-052,PLANNED,Установить формы респондента и доступ,Для каждой формы XML/API/export подтверждён; general automation not assumed

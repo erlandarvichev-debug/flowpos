@@ -215,7 +215,7 @@ Tax/ISNA | P1 | Integration lead | M | PLANNED
 Зависимости: FP-052. Приёмка: Per-form access/schema/receipt/signing confirmed; no invented universal endpoint.
 
 ## FP-054 · Сборка ФНО контрольные соотношения и отправка
-Tax/ISNA | P1 | Backend/Frontend | L | PLANNED
+Tax/ISNA | P1 | Backend/Frontend | L | PARTIAL — 300.00 и 910.00 без отправки в ИСНА, см. `FP-054-FNO-300-910.md` (не выкладывалось)
 Зависимости: FP-053,FP-039,FP-016. Приёмка: Drilldown fields; immutable submission; final accepted receipt; correction history.
 
 ## FP-055 · Подтвердить НКТ contract и environments
