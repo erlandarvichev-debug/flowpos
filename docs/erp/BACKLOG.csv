@@ -37,7 +37,7 @@ FP-035,Purchases,P1,Backend/Frontend,L,"FP-026,FP-030,FP-029",DONE_LOCAL,Пот�
 FP-036,Treasury,P1,Backend,L,"FP-028,FP-026",DONE_LOCAL,Банк касса авансы и разнесение,Bank key scoped by account; дубли не зачисляют дважды; allocation/reversal audited
 FP-037,Treasury,P1,Backend/Frontend,M,"FP-036,FP-029",PLANNED,Платёжный календарь и заявки,Согласование получателя/суммы; cash forecast scenarios; import не делает payout
 FP-038,Accounting,P0,Accounting engineer,L,"FP-028,FP-031,FP-036",PLANNED,Двойная запись и аналитики,Balanced entry; unique source/version; decimal rules; posting simulation accepted
-FP-039,Accounting,P0,Tax methodologist,L,FP-038,PLANNED,Rule packs и налоговые регистры,Effective period/source/approval; воспроизводимость; golden tests не меняются под код
+FP-039,Accounting,P0,Tax methodologist,L,FP-038,DONE_LOCAL,Rule packs и налоговые регистры,Effective period/source/approval; воспроизводимость; golden tests не меняются под код
 FP-040,Accounting,P1,Accounting engineer,L,"FP-038,FP-039",PLANNED,Закрытие периода и сторно,Locked period enforced server; reopen audited; balance/stock reconciliation
 FP-041,Accounting,P2,Accounting engineer,L,"FP-038,FP-040",PLANNED,ОС НМА амортизация и РБП,Asset lifecycle; disposal; period rules; accepted reference dataset
 FP-042,Accounting,P1,Backend,M,"FP-036,FP-038",PLANNED,Валюты курсы и переоценка,Источник/дата курса; точные decimal; realized/unrealized difference; audit

@@ -173,6 +173,9 @@ const router = createRouter({
         { path: 'bank/statements', name: 'j-bank-statements', component: () => import('@/views/accounting/DocumentsView.vue'), meta: { title: 'Банковские выписки', docTypes: ['BANK_IN', 'BANK_OUT'] } },
         { path: 'bank/cash', name: 'j-bank-cash', component: () => import('@/views/accounting/DocumentsView.vue'), meta: { title: 'Кассовые документы', docTypes: ['CASH_IN', 'CASH_OUT'] } },
         { path: 'operations/manual', name: 'j-operations-manual', component: () => import('@/views/accounting/DocumentsView.vue'), meta: { title: 'Операции вручную', docTypes: ['MANUAL_OPERATION', 'OPENING_BALANCE', 'STORNO'] } },
+        // Налоги (FP-039)
+        { path: 'tax/rules', name: 'tax-rules', component: () => import('@/views/tax/TaxRulesView.vue'), meta: { title: 'Налоговые правила' } },
+        { path: 'tax/vat', name: 'tax-vat', component: () => import('@/views/tax/VatRegisterView.vue'), meta: { title: 'Регистр НДС' } },
         // Аналитика
         {
           path: 'analytics',

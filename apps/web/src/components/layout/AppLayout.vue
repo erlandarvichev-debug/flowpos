@@ -104,6 +104,16 @@
           <el-menu-item index="/accounting/documents">Все документы учёта</el-menu-item>
         </el-sub-menu>
 
+        <el-sub-menu index="tax">
+          <template #title>
+            <el-icon><Stamp /></el-icon>
+            <span>Налоги</span>
+          </template>
+          <el-menu-item index="/tax/vat">Регистр НДС</el-menu-item>
+          <el-menu-item v-if="org.can('acc.esf.read')" index="/accounting/esf">ЭСФ и зачёт НДС</el-menu-item>
+          <el-menu-item index="/tax/rules">Налоговые правила</el-menu-item>
+        </el-sub-menu>
+
         <el-sub-menu index="reports">
           <template #title>
             <el-icon><DataAnalysis /></el-icon>

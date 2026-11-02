@@ -35,7 +35,7 @@ DO $$
 DECLARE
   r record;
   spec text[];
-  global_tables text[] := ARRAY['acc_charts', 'currencies', 'currency_rates', 'vat_rates', 'roles', 'permissions', 'role_permissions', '_prisma_migrations'];
+  global_tables text[] := ARRAY['acc_charts', 'currencies', 'currency_rates', 'vat_rates', 'tax_rule_packs', 'roles', 'permissions', 'role_permissions', '_prisma_migrations'];
   system_tables text[] := ARRAY['oidc_states', 'acc_autopilot_cursors',
     -- старые витрины и маркетплейс без клиента/организации; в API не используются
     'gig_workers', 'gig_offers', 'marketplace_orders', 'marketplace_assignments', 'mart_payroll', 'mart_sales_daily',

@@ -2761,6 +2761,71 @@ model EsfInvoice {
 /// FP-019: налоговый регистр распределения входного НДС по ЭСФ — что и в каком квартале принято к зачёту.
 /// Строки неизменяемы (триггер); корректировка — строка REVERSAL со ссылкой на исходную. Автоматики нет:
 /// каждая строка — явная команда с основанием, правилом и его версией.
+/// FP-039: пакет налоговых правил (ставки, пороги, сроки) с источниками. Содержимое неизменно (sql/140); новая редакция —
+/// новая версия. Действует в организации только после утверждения (org_tax_packs).
+model TaxRulePack {
+  id          String    @id @default(uuid())
+  code        String    // KZ
+  version     String    // 2026.1
+  validFrom   DateTime  @map("valid_from") @db.Date
+  validTo     DateTime? @map("valid_to") @db.Date
+  params      Json
+  sources     Json
+  unverified  Json      // пункты, которые нужно сверить с текстом НПА (методолог/главбух)
+  contentHash String    @map("content_hash")
+  status      String    @default("PUBLISHED") // PUBLISHED | RETIRED
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  adoptions OrgTaxPack[]
+
+  @@unique([code, version])
+  @@map("tax_rule_packs")
+}
+
+/// FP-039: утверждение пакета правил организацией (кто, когда, с какими оговорками). Отзыв — с причиной.
+model OrgTaxPack {
+  id             String    @id @default(uuid())
+  organizationId String    @map("organization_id")
+  packId         String    @map("pack_id")
+  contentHash    String    @map("content_hash")
+  acknowledged   Json      // пункты unverified, которые утверждающий подтвердил
+  approvedBy     String    @map("approved_by")
+  approvedAt     DateTime  @default(now()) @map("approved_at")
+  status         String    @default("ACTIVE") // ACTIVE | REVOKED
+  revokedBy      String?   @map("revoked_by")
+  revokedAt      DateTime? @map("revoked_at")
+  revokeReason   String?   @map("revoke_reason")
+
+  pack TaxRulePack @relation(fields: [packId], references: [id], onDelete: Restrict)
+
+  @@index([organizationId, status])
+  @@map("org_tax_packs")
+}
+
+/// FP-039: налоговый регистр за период (снимок). Черновик пересобирается; зафиксированный неизменен и воспроизводим
+/// (повторная сборка сравнивается по хэшу); новая фиксация — через замену прежней с причиной.
+model TaxRegister {
+  id             String    @id @default(uuid())
+  organizationId String    @map("organization_id")
+  kind           String    // VAT
+  year           Int
+  period         String    // Q1..Q4
+  packId         String    @map("pack_id")
+  packVersion    String    @map("pack_version")
+  data           Json
+  contentHash    String    @map("content_hash")
+  status         String    @default("DRAFT") // DRAFT | FIXED | SUPERSEDED
+  createdBy      String    @map("created_by")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  fixedBy        String?   @map("fixed_by")
+  fixedAt        DateTime? @map("fixed_at")
+  supersededBy   String?   @map("superseded_by")
+  supersedeReason String?  @map("supersede_reason")
+
+  @@index([organizationId, kind, year, period])
+  @@map("tax_registers")
+}
+
 model VatCreditAllocation {
   id             String    @id @default(uuid())
   organizationId String    @map("organization_id")

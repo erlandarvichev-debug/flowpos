@@ -155,7 +155,7 @@ Accounting | P0 | Accounting engineer | L | PLANNED
 Зависимости: FP-028,FP-031,FP-036. Приёмка: Balanced entry; unique source/version; decimal rules; posting simulation accepted.
 
 ## FP-039 · Rule packs и налоговые регистры
-Accounting | P0 | Tax methodologist | L | PLANNED
+Accounting | P0 | Tax methodologist | L | DONE_LOCAL — см. `FP-039-TAX-RULE-PACKS-REGISTERS.md` (не выкладывалось)
 Зависимости: FP-038. Приёмка: Effective period/source/approval; воспроизводимость; golden tests не меняются под код.
 
 ## FP-040 · Закрытие периода и сторно

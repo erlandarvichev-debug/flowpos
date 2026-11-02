@@ -14,6 +14,7 @@ import { ReportsService } from './reports/reports.service';
 import { ChartService } from './chart/chart.service';
 import { RefsService } from './refs/refs.service';
 import { OrgEcpService } from './refs/org-ecp';
+import { TaxService } from './tax/tax.service';
 import { PeriodsService } from './periods/periods.service';
 import { AutopilotService } from './autopilot/autopilot.service';
 import { TradeDocumentsService } from './autopilot/trade-documents.service';
@@ -41,6 +42,7 @@ const IDEMP_HEADER = { name: 'Idempotency-Key', required: false, description: '�
 export class AccountingController {
   constructor(
     private orgEcp: OrgEcpService,
+    private tax: TaxService,
     private docs: DocumentsService,
     private graph: DocumentGraphService,
     private approvals: ApprovalsService,
@@ -506,6 +508,28 @@ export class AccountingController {
     if (!m[kind]) throw new (require('./common/acc-error').AccError)('UNKNOWN_REF', `Неизвестный справочник: ${kind}`, { status: 404 });
     return m[kind];
   }
+
+  // ── Налоги (FP-039): пакеты правил и регистры ──
+  @Get('tax/packs') @RequirePermission('acc.reports.read')
+  taxPacks(@Org() ctx: OrgContext) { return this.tax.packs(ctx); }
+
+  @Post('tax/packs/:id/approve') @RequirePermission('acc.policy.manage') @RequireMfa()
+  taxPackApprove(@Org() ctx: OrgContext, @Param('id') id: string, @Body() b: any) { return this.tax.adopt(ctx, id, b ?? {}); }
+
+  @Post('tax/pack-approvals/:id/revoke') @RequirePermission('acc.policy.manage') @RequireMfa()
+  taxPackRevoke(@Org() ctx: OrgContext, @Param('id') id: string, @Body() b: any) { return this.tax.revoke(ctx, id, b?.reason); }
+
+  @Get('tax/registers') @RequirePermission('acc.reports.read')
+  taxRegisters(@Org() ctx: OrgContext, @Query() q: any) { return this.tax.list(ctx, q); }
+
+  @Post('tax/registers/vat') @RequirePermission('acc.reports.read')
+  taxBuildVat(@Org() ctx: OrgContext, @Body() b: any) { return this.tax.buildVat(ctx, Number(b?.year), String(b?.period ?? '')); }
+
+  @Post('tax/registers/:id/fix') @RequirePermission('acc.period.lock') @RequireMfa()
+  taxFix(@Org() ctx: OrgContext, @Param('id') id: string, @Body() b: any) { return this.tax.fix(ctx, id, b ?? {}); }
+
+  @Get('tax/registers/:id/verify') @RequirePermission('acc.reports.read')
+  taxVerify(@Org() ctx: OrgContext, @Param('id') id: string) { return this.tax.verify(ctx, id); }
 
   // ── Учётная политика ──
   @Get('policy') @RequirePermission('acc.refs.read')

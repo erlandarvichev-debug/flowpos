@@ -9,6 +9,7 @@ import { ReportsService } from './reports/reports.service';
 import { ChartService } from './chart/chart.service';
 import { RefsService } from './refs/refs.service';
 import { OrgEcpService } from './refs/org-ecp';
+import { TaxService } from './tax/tax.service';
 import { PeriodsService } from './periods/periods.service';
 import { PostingService } from './core/posting.service';
 import { CostService } from './inventory/cost.service';
@@ -27,7 +28,7 @@ import { PurchasingService } from './purchasing/purchasing.service';
 
 @Module({
   controllers: [AccountingController, OpsMetricsController],
-  providers: [OrgGuard, IdempotencyInterceptor, StockLedgerService, PurchasingService, DocumentsService, DocumentGraphService, ApprovalsService, ReportsService, ChartService, RefsService, OrgEcpService, PeriodsService, PostingService, CostService, AutopilotService, TradeDocumentsService, BankImportService, EsfService, EsfMonitorService, StatementsService, ClosingService, PayrollService, VatCreditService],
+  providers: [OrgGuard, IdempotencyInterceptor, StockLedgerService, PurchasingService, DocumentsService, DocumentGraphService, ApprovalsService, ReportsService, ChartService, RefsService, OrgEcpService, TaxService, PeriodsService, PostingService, CostService, AutopilotService, TradeDocumentsService, BankImportService, EsfService, EsfMonitorService, StatementsService, ClosingService, PayrollService, VatCreditService],
   exports: [ApprovalsService, PayrollService, StatementsService, ClosingService, EsfService, AutopilotService, TradeDocumentsService, CostService, DocumentsService, ReportsService, ChartService, RefsService, PeriodsService, PostingService, OrgGuard],
 })
 export class AccountingModule {}

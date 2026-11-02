@@ -77,7 +77,7 @@ describe('FP-009: рабочая роль', () => {
     const rows = await owner.$queryRaw<{ relname: string }[]>`
       SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
       WHERE n.nspname = 'public' AND c.relkind = 'r' AND NOT (c.relrowsecurity AND c.relforcerowsecurity) ORDER BY 1`;
-    expect(rows.map((r) => r.relname)).toEqual(['acc_charts', 'currencies', 'currency_rates', 'permissions', 'role_permissions', 'roles', 'vat_rates']);
+    expect(rows.map((r) => r.relname)).toEqual(['acc_charts', 'currencies', 'currency_rates', 'permissions', 'role_permissions', 'roles', 'tax_rule_packs', 'vat_rates']);
   });
 });
 
