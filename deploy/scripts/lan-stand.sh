@@ -26,6 +26,10 @@ limit_req_zone \$binary_remote_addr zone=flowpos_api:10m rate=30r/s;
 server {
     listen 80 default_server;
     server_name _;
+    # Доступ по IP — только из локальной сети (снаружи — по домену через HTTPS, public-domain.sh).
+    allow $NET;
+    allow 127.0.0.1;
+    deny all;
     add_header X-Content-Type-Options nosniff always;
     add_header X-Frame-Options SAMEORIGIN always;
     client_max_body_size 25m;

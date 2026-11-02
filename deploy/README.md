@@ -114,3 +114,14 @@ ssh root@SERVER 'bash /root/flowpos-deploy/scripts/deploy.sh /tmp/flowpos-releas
 ## Исправлено по ходу подготовки
 - `apps/api`: сборка клала `main.js` в `dist/src/`, а `npm start` искал `dist/main.js`. Добавлен `tsconfig.build.json`.
 - `sync-worker`, `moysklad-worker`, `push-worker`: `npm start` указывал на несуществующий файл.
+
+## Публикация по домену (HTTPS)
+
+`sudo bash deploy/scripts/public-domain.sh flowpos.kz 192.168.2.0/24` — nginx для домена (проверка Let's Encrypt и
+перенаправление на HTTPS), брандмауэр 80/443 для всех, сертификат Let's Encrypt (без e-mail; продление — таймер certbot с
+перезагрузкой nginx), HTTPS-сайт (API, без Swagger и метрик снаружи), fail2ban на перебор входа и сканеры; доступ по IP
+без домена — только из локальной сети, чужие имена на 443 — сброс соединения; `CORS_ORIGIN=https://домен`. Повторный
+запуск безопасен. На роутере: пробросить TCP 80 и 443 на сервер (веб-панель роутера — не на внешнем адресе).
+
+Сброс пароля пользователя: `NEW_PASSWORD='…' node deploy/scripts/reset-password.mjs --email …` (из каталога релиза,
+с переменными из `api.env`): пароль только из переменной окружения, сессии отзываются, запись в журнал аудита.
