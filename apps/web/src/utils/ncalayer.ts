@@ -22,7 +22,7 @@ function connect(): Promise<WebSocket> {
   })
 }
 
-async function sign(format: 'xml' | 'raw', data: string | string[], eku: string, locale = 'ru'): Promise<any> {
+async function sign(format: 'xml' | 'raw' | 'cms', data: string | string[], eku: string, locale = 'ru', encapsulate = true): Promise<any> {
   const ws = await connect()
   return new Promise((resolve, reject) => {
     ws.onmessage = (ev) => {
@@ -40,7 +40,7 @@ async function sign(format: 'xml' | 'raw', data: string | string[], eku: string,
       args: {
         format,
         data,
-        signingParams: { decode: 'false', encapsulate: 'true', digested: 'false', tsaProfile: null, outputCert: 'true' },
+        signingParams: { decode: format === 'cms' ? 'true' : 'false', encapsulate: encapsulate ? 'true' : 'false', digested: 'false', tsaProfile: null, outputCert: 'true' },
         signerParams: { extKeyUsageOids: [eku], chain: [] },
         locale,
       },
@@ -60,4 +60,13 @@ export async function signRaw(items: string[]): Promise<{ certificate: string; s
   const signatures: string[] = Array.isArray(r?.signatures) ? r.signatures : []
   if (signatures.length !== items.length) throw new NcaLayerError('NCALayer вернул не все подписи', 'PARTIAL')
   return { certificate: String(r?.certificate ?? ''), signatures }
+}
+
+/**
+ * Подпись одноразового кода с сервера (CMS без вложенных данных, ключ AUTH) — доказательство владения ключом при
+ * добавлении организации по ЭЦП. data — base64 кода; возвращает CMS в base64.
+ */
+export async function signChallengeCms(dataB64: string): Promise<string> {
+  const r = await sign('cms', dataB64, EKU_AUTH, 'ru', false)
+  return Array.isArray(r) ? r[0] : r
 }

@@ -13,6 +13,7 @@ import { PurchasingService } from './purchasing/purchasing.service';
 import { ReportsService } from './reports/reports.service';
 import { ChartService } from './chart/chart.service';
 import { RefsService } from './refs/refs.service';
+import { OrgEcpService } from './refs/org-ecp';
 import { PeriodsService } from './periods/periods.service';
 import { AutopilotService } from './autopilot/autopilot.service';
 import { TradeDocumentsService } from './autopilot/trade-documents.service';
@@ -39,6 +40,7 @@ const IDEMP_HEADER = { name: 'Idempotency-Key', required: false, description: '�
 @Controller('accounting')
 export class AccountingController {
   constructor(
+    private orgEcp: OrgEcpService,
     private docs: DocumentsService,
     private graph: DocumentGraphService,
     private approvals: ApprovalsService,
@@ -518,6 +520,13 @@ export class AccountingController {
 
   @Post('organizations')
   createOrg(@CurrentUser('sub') userId: string, @Body() b: any) { return this.refs.createOrganization(userId, b); }
+
+  /** Организация по ЭЦП: одноразовый код → подпись в NCALayer → проверка в NCANode. */
+  @Post('organizations/ecp/challenge')
+  orgEcpChallenge(@CurrentUser('sub') userId: string) { return this.orgEcp.challenge(userId); }
+
+  @Post('organizations/ecp')
+  createOrgEcp(@CurrentUser('sub') userId: string, @Body() b: any) { return this.orgEcp.create(userId, b); }
 
   @Get('roles')
   roles() { return this.refs.roles(); }

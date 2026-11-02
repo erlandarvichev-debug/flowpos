@@ -39,9 +39,18 @@ export const useOrgStore = defineStore('org', () => {
     return org
   }
 
+  /** FP: организация по ЭЦП — сервер выдаёт код, NCALayer подписывает, сервер проверяет и создаёт. */
+  async function createByEcp(sign: (dataB64: string) => Promise<string>, extra: any) {
+    const ch = (await api.post('/accounting/organizations/ecp/challenge', {})) as any
+    const cms = await sign(ch.data)
+    const org = (await api.post('/accounting/organizations/ecp', { challengeId: ch.challengeId, cms, ...extra })) as any
+    await select(org.id)
+    return org
+  }
+
   function can(perm: string) {
     return context.value?.permissions?.includes(perm) ?? false
   }
 
-  return { organizations, currentId, current, context, load, loadContext, select, create, can }
+  return { organizations, currentId, current, context, load, loadContext, select, create, createByEcp, can }
 })

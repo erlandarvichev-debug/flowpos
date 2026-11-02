@@ -162,13 +162,19 @@
   </el-container>
 
   <el-dialog v-model="orgDialog" :title="t('newOrganization')" width="460px">
+    <el-segmented v-model="orgMode" :options="[{ label: 'По ЭЦП', value: 'ecp' }, { label: 'Вручную', value: 'manual' }]" block style="margin-bottom: 16px;" />
     <el-form :model="orgForm" label-width="150px">
+      <template v-if="orgMode === 'ecp'">
+        <p class="ecp-hint">Наименование и БИН/ИИН возьмутся из сертификата. Нужен NCALayer и ключ первого руководителя или сотрудника с правом подписи (для ИП — ключ ИП).</p>
+      </template>
+      <template v-else>
       <el-form-item label="Наименование"><el-input v-model="orgForm.name" /></el-form-item>
       <el-form-item label="Атауы (қаз.)"><el-input v-model="orgForm.nameKk" /></el-form-item>
       <el-form-item label="БИН / ИИН"><el-input v-model="orgForm.inn" maxlength="12" /></el-form-item>
       <el-form-item label="Форма">
         <el-select v-model="orgForm.legalForm"><el-option value="TOO" label="ТОО" /><el-option value="IP" label="ИП" /><el-option value="AO" label="АО" /><el-option value="OTHER" label="Иная" /></el-select>
       </el-form-item>
+      </template>
       <el-form-item label="Плательщик НДС"><el-switch v-model="orgForm.vatPayer" /></el-form-item>
       <el-form-item label="Налоговый режим">
         <el-select v-model="orgForm.taxRegime">
@@ -179,7 +185,8 @@
     </el-form>
     <template #footer>
       <el-button @click="orgDialog = false">Отмена</el-button>
-      <el-button type="primary" :disabled="!orgForm.name" @click="createOrg">Создать</el-button>
+      <el-button v-if="orgMode === 'ecp'" type="primary" :loading="ecpBusy" @click="createOrgEcp">Подписать ЭЦП и создать</el-button>
+      <el-button v-else type="primary" :disabled="!orgForm.name" @click="createOrg">Создать</el-button>
     </template>
   </el-dialog>
 </template>
@@ -193,6 +200,7 @@ import { useI18n } from '@/composables/useI18n'
 import { Plus } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import api from '@/api/client'
+import { signChallengeCms, NcaLayerError, NCALAYER_DOWNLOAD } from '@/utils/ncalayer'
 
 const route = useRoute()
 const router = useRouter()
@@ -215,6 +223,23 @@ async function createOrg() {
     orgForm.value = { name: '', nameKk: '', inn: '', legalForm: 'TOO', vatPayer: false, taxRegime: 'GENERAL' }
   } catch (e: any) {
     ElMessage.error(e?.message || 'Ошибка')
+  }
+}
+
+const orgMode = ref<'ecp' | 'manual'>('ecp')
+const ecpBusy = ref(false)
+async function createOrgEcp() {
+  ecpBusy.value = true
+  try {
+    const created = await org.createByEcp(signChallengeCms, { vatPayer: orgForm.value.vatPayer, taxRegime: orgForm.value.taxRegime })
+    ElMessage.success(`Создана организация ${created.name}`)
+    orgDialog.value = false
+  } catch (e: any) {
+    if (e instanceof NcaLayerError && e.code === 'NOT_RUNNING') ElMessage.error({ message: `NCALayer не запущен — запустите его (${NCALAYER_DOWNLOAD})`, duration: 8000 })
+    else if (e instanceof NcaLayerError && e.code === 'CANCELED') ElMessage.info('Подпись отменена')
+    else ElMessage.error({ message: e?.message || 'Ошибка', duration: 10000 })
+  } finally {
+    ecpBusy.value = false
   }
 }
 
@@ -324,4 +349,5 @@ onMounted(() => {
   padding: 20px;
   overflow-y: auto;
 }
+.ecp-hint { margin: 0 0 16px; color: var(--el-text-color-secondary); font-size: 13px; line-height: 1.5; }
 </style>
