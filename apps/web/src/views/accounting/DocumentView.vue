@@ -344,7 +344,7 @@ const moneyCurrency = computed(() => {
   return list.find((x) => x.id === money.value.selfId)?.currency || 'KZT'
 })
 const docType = computed<string>(() => doc.value.docType || (route.query.type as string) || 'MANUAL_OPERATION')
-const readonly = computed(() => doc.value.status === 'CANCELLED' || docType.value === 'STORNO' || !org.can('acc.doc.write')
+const readonly = computed(() => doc.value.status === 'CANCELLED' || docType.value === 'STORNO' || docType.value.startsWith('ASSET_') || !org.can('acc.doc.write')
   || (doc.value.status === 'POSTED' && !org.can('acc.doc.post')))
 const accMap = computed(() => new Map(accounts.value.map((a) => [a.code, a])))
 const acc = (code?: string) => (code ? accMap.value.get(code) : undefined)

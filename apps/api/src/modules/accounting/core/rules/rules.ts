@@ -26,6 +26,8 @@ export interface PostingRule {
   numberPrefix: string;
   build(doc: DocLike, rc: RuleContext): Promise<PostingInput[]>;
   amount(body: any): string;
+  /** Можно ли снять с проведения / изменить проведённый / пометить на удаление (иначе — ошибка). */
+  guard?(doc: DocLike, tx: Prisma.TransactionClient, organizationId: string): Promise<void>;
 }
 
 const side = (s: any) => s || {};

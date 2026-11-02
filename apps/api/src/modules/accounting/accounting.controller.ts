@@ -17,6 +17,7 @@ import { OrgEcpService } from './refs/org-ecp';
 import { TaxService } from './tax/tax.service';
 import { DeclarationsService } from './tax/declarations.service';
 import { PrintService } from './print/print.service';
+import { AssetsService } from './assets/assets.service';
 import { declarationFileName, declarationPdf, declarationXlsx } from './tax/declaration-export';
 import { PeriodsService } from './periods/periods.service';
 import { AutopilotService } from './autopilot/autopilot.service';
@@ -48,6 +49,7 @@ export class AccountingController {
     private tax: TaxService,
     private decl: DeclarationsService,
     private print: PrintService,
+    private assets: AssetsService,
     private docs: DocumentsService,
     private graph: DocumentGraphService,
     private approvals: ApprovalsService,
@@ -601,6 +603,34 @@ export class AccountingController {
   /** Данные документа для печатной формы (kind — вид формы; для акта сверки id = «-», параметры в запросе). */
   @Get('print/data/:kind/:id') @RequirePermission('acc.doc.read')
   printData(@Org() ctx: OrgContext, @Param('kind') kind: string, @Param('id') id: string, @Query() q: any) { return this.print.data(ctx, kind, id, q); }
+
+  // ── Основные средства и НМА (FP-041) ──
+  @Get('assets') @RequirePermission('acc.refs.read')
+  assetList(@Org() ctx: OrgContext, @Query() q: any) { return this.assets.list(ctx, q); }
+
+  @Get('assets/depreciation/:period') @RequirePermission('acc.reports.read')
+  assetDeprRegister(@Org() ctx: OrgContext, @Param('period') period: string) { return this.assets.register(ctx, period); }
+
+  @Post('assets/depreciation/:period') @RequirePermission('acc.doc.post')
+  assetDepreciate(@Org() ctx: OrgContext, @Param('period') period: string) { return this.assets.depreciate(ctx, period); }
+
+  @Post('assets/depreciation/:period/cancel') @RequirePermission('acc.doc.cancel')
+  assetDeprCancel(@Org() ctx: OrgContext, @Param('period') period: string, @Body() b: any) { return this.assets.cancelDepreciation(ctx, period, b?.reason); }
+
+  @Get('assets/:id') @RequirePermission('acc.refs.read')
+  assetGet(@Org() ctx: OrgContext, @Param('id') id: string) { return this.assets.get(ctx, id); }
+
+  @Post('assets') @RequirePermission('acc.refs.manage')
+  assetCreate(@Org() ctx: OrgContext, @Body() b: any) { return this.assets.create(ctx, b ?? {}); }
+
+  @Put('assets/:id') @RequirePermission('acc.refs.manage')
+  assetUpdate(@Org() ctx: OrgContext, @Param('id') id: string, @Body() b: any) { return this.assets.update(ctx, id, b ?? {}); }
+
+  @Post('assets/:id/accept') @RequirePermission('acc.doc.post')
+  assetAccept(@Org() ctx: OrgContext, @Param('id') id: string, @Body() b: any) { return this.assets.accept(ctx, id, b ?? {}); }
+
+  @Post('assets/:id/dispose') @RequirePermission('acc.doc.post')
+  assetDispose(@Org() ctx: OrgContext, @Param('id') id: string, @Body() b: any) { return this.assets.dispose(ctx, id, b ?? {}); }
 
   // ── Учётная политика ──
   @Get('policy') @RequirePermission('acc.refs.read')

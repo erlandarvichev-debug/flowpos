@@ -12,6 +12,7 @@ import { CostService } from '../inventory/cost.service';
 import { DIM_COLUMNS, Dim } from '../chart/kz-chart.data';
 import { NO_ACCOUNTING, TRADE_SOURCE, isSupported } from '../autopilot/trade-rules';
 import { FIN_RESULT_RULE, REVAL_RULE, StatementsService } from '../statements/statements.service';
+import { assetClosingCheck } from '../assets/assets.service';
 
 type Tx = Prisma.TransactionClient;
 type Dec = Prisma.Decimal;
@@ -117,6 +118,13 @@ export class ClosingService {
     push({ code: 'ESF', title: 'ЭСФ по реализациям отправлены', status: ep ? 'warn' : 'ok', count: ep, message: ep ? `${ep} реализаций месяца без отправленного ЭСФ` : 'ЭСФ отправлены', link: '/accounting/esf' });
 
     // 7. Предыдущий месяц
+    // FP-041: амортизация основных средств и НМА за месяц начислена и актуальна.
+    const dep = await this.prisma.$transaction((tx) => assetClosingCheck(tx, ctx, period));
+    const depOk = !dep.error && !dep.stale;
+    push({ code: 'DEPRECIATION', title: 'Амортизация ОС и НМА начислена', status: depOk ? 'ok' : 'error', count: dep.due,
+      message: dep.error ? dep.error : !dep.due && !dep.posted ? 'Объектов к амортизации нет' : depOk ? `Начислено по ${dep.posted} объектам` : `Начислено по ${dep.posted} из ${dep.due} объектов или суммы устарели`,
+      fix: 'Начислите амортизацию за месяц в разделе «Основные средства → Амортизация».', link: '/assets/depreciation' });
+
     const prev = prevPeriod(period);
     const prevClosed = !!lock && lock.lockedUntil.getTime() >= bounds(prev).to.getTime();
     push({ code: 'PREVIOUS', title: `Предыдущий месяц (${prev}) закрыт`, status: prevClosed ? 'ok' : 'warn', message: prevClosed ? 'Закрыт' : 'Не закрыт — при закрытии этого месяца закроется и он (без переоценки за тот месяц)' });

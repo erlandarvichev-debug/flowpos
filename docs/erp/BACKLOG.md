@@ -163,7 +163,7 @@ Accounting | P1 | Accounting engineer | L | PLANNED
 Зависимости: FP-038,FP-039. Приёмка: Locked period enforced server; reopen audited; balance/stock reconciliation.
 
 ## FP-041 · ОС НМА амортизация и РБП
-Accounting | P2 | Accounting engineer | L | PLANNED
+Accounting | P2 | Accounting engineer | L | PARTIAL — ОС/НМА и амортизация БУ, см. `FP-041-FIXED-ASSETS.md` (не выкладывалось)
 Зависимости: FP-038,FP-040. Приёмка: Asset lifecycle; disposal; period rules; accepted reference dataset.
 
 ## FP-042 · Валюты курсы и переоценка

@@ -11,8 +11,10 @@ import { DEFAULT_ACCOUNTS } from '../autopilot/accounts';
 import { accHash } from './content-hash';
 import { ApprovalsService } from '../approvals/approvals.service';
 import { syncAllocations } from '../bank/allocations';
+import { ASSET_RULES } from '../assets/asset-rules';
 
 MONEY_RULES.forEach(registerRule);
+ASSET_RULES.forEach(registerRule);
 
 export const SOURCE = 'ACC_DOCUMENT';
 
@@ -204,6 +206,7 @@ export class DocumentsService {
         if (!input.reason) throw new AccError('REASON_REQUIRED', 'Изменение проведённого документа требует указать причину', { fix: 'Заполните поле «Причина изменения».' });
         if (!ctx.can('acc.doc.post')) throw new AccError('FORBIDDEN', 'Нет права перепроводить документы', { status: 403 });
         await this.periods.assertOpen(tx, ctx, [doc.date, newDate], input.override, 'изменение проведённого документа');
+        await ruleFor(doc.docType).guard?.(doc as any, tx, ctx.organizationId);
       }
       const rule = ruleFor(doc.docType);
       const updated = await tx.accDocument.update({
@@ -306,6 +309,7 @@ export class DocumentsService {
       if (doc.status !== 'POSTED') return doc;
       await this.assertNotStornoed(tx, ctx, id);
       await this.periods.assertOpen(tx, ctx, [doc.date], opts.override, 'отмена проведения');
+      await ruleFor(doc.docType).guard?.(doc as any, tx, ctx.organizationId);
       await this.posting.cancelSource(tx, ctx.organizationId, SOURCE, id);
       const d = await tx.accDocument.update({ where: { id }, data: { status: 'DRAFT', postedVersion: null, updatedById: ctx.userId } });
       await this.allocations(tx, ctx, id, opts.reason || 'Снятие проведения');
@@ -322,6 +326,7 @@ export class DocumentsService {
       if (doc.status === 'POSTED') {
         await this.assertNotStornoed(tx, ctx, id);
         await this.periods.assertOpen(tx, ctx, [doc.date], opts.override, 'пометка на удаление');
+        await ruleFor(doc.docType).guard?.(doc as any, tx, ctx.organizationId);
         await this.posting.cancelSource(tx, ctx.organizationId, SOURCE, id);
       }
       const d = await tx.accDocument.update({ where: { id }, data: { status: 'CANCELLED', postedVersion: null, updatedById: ctx.userId } });

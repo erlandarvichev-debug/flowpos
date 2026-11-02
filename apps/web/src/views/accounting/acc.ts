@@ -68,6 +68,7 @@ export const DOC_TYPE_LABELS: Record<string, string> = {
   MANUAL_OPERATION: 'Операция (вручную)', OPENING_BALANCE: 'Ввод начальных остатков', STORNO: 'Сторно',
   BANK_IN: 'Поступление на расчётный счёт', BANK_OUT: 'Списание с расчётного счёта',
   CASH_IN: 'Приходный кассовый ордер', CASH_OUT: 'Расходный кассовый ордер',
+  ASSET_ACCEPT: 'Принятие к учёту ОС / НМА', ASSET_DISPOSE: 'Выбытие ОС / НМА',
 }
 
 export const MONEY_DOC_TYPES = ['BANK_IN', 'BANK_OUT', 'CASH_IN', 'CASH_OUT']

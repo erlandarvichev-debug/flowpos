@@ -2892,6 +2892,55 @@ model PrintSettings {
   @@map("print_settings")
 }
 
+/// FP-041: объект основных средств или НМА. Стоимость, срок и счета меняются только до принятия к учёту
+/// (документ ASSET_ACCEPT); принятие и выбытие — документы учёта; амортизация — регистр asset_depreciation.
+model FixedAsset {
+  id               String    @id @default(uuid())
+  organizationId   String    @map("organization_id")
+  kind             String    @default("FIXED") // FIXED — основное средство | INTANGIBLE — НМА
+  inventoryNumber  String    @map("inventory_number")
+  name             String
+  assetAccount     String    @map("asset_account")   // 2410 | 2730
+  deprAccount      String    @map("depr_account")    // 2420 | 2740
+  expenseAccount   String    @map("expense_account") // 7030 | 7020 | 8xxx
+  departmentId     String?   @map("department_id")
+  employeeId       String?   @map("employee_id")
+  cost             Decimal   @default(0) @db.Decimal(18, 2) // первоначальная стоимость (без НДС к зачёту)
+  salvage          Decimal   @default(0) @db.Decimal(18, 2) // ликвидационная стоимость
+  usefulLifeMonths Int       @map("useful_life_months")
+  method           String    @default("STRAIGHT_LINE")
+  serialNumber     String?   @map("serial_number")
+  note             String?
+  createdBy        String    @map("created_by")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  depreciation AssetDepreciation[]
+
+  @@unique([organizationId, inventoryNumber])
+  @@map("fixed_assets")
+}
+
+/// FP-041: начисленная амортизация объекта за месяц (одна строка на объект и месяц).
+model AssetDepreciation {
+  id             String   @id @default(uuid())
+  organizationId String   @map("organization_id")
+  assetId        String   @map("asset_id")
+  period         String   // YYYY-MM
+  amount         Decimal  @db.Decimal(18, 2)
+  accumulated    Decimal  @db.Decimal(18, 2) // накоплено после начисления
+  bookValue      Decimal  @map("book_value") @db.Decimal(18, 2) // остаточная стоимость после начисления
+  runVersion     Int      @map("run_version")
+  createdBy      String   @map("created_by")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  asset FixedAsset @relation(fields: [assetId], references: [id], onDelete: Restrict)
+
+  @@unique([assetId, period])
+  @@index([organizationId, period])
+  @@map("asset_depreciation")
+}
+
 model VatCreditAllocation {
   id             String    @id @default(uuid())
   organizationId String    @map("organization_id")

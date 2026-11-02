@@ -67,6 +67,15 @@
           <el-menu-item index="/warehouse/inventories">Инвентаризации</el-menu-item>
         </el-sub-menu>
 
+        <el-sub-menu index="assets">
+          <template #title>
+            <el-icon><OfficeBuilding /></el-icon>
+            <span>Основные средства</span>
+          </template>
+          <el-menu-item index="/assets">ОС и НМА</el-menu-item>
+          <el-menu-item index="/assets/depreciation">Амортизация</el-menu-item>
+        </el-sub-menu>
+
         <el-sub-menu index="pos">
           <template #title>
             <el-icon><Monitor /></el-icon>
