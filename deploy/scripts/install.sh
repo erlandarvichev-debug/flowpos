@@ -35,7 +35,10 @@ echo "   node $(node -v), $(psql --version)"
 
 echo "== Пользователь и каталоги"
 id flowpos >/dev/null 2>&1 || useradd --system --home $ROOT --shell /usr/sbin/nologin flowpos
-install -d -o flowpos -g flowpos -m 750 $ROOT $ROOT/releases $SHARED $SHARED/data $SHARED/backups
+# Корень и релизы — только проход (711): nginx (www-data) отдаёт собранный веб из current/apps/web/dist, но не видит
+# список каталогов. Настройки, состояние и бэкапы (shared) — закрыты (750).
+install -d -o flowpos -g flowpos -m 711 $ROOT $ROOT/releases
+install -d -o flowpos -g flowpos -m 750 $SHARED $SHARED/data $SHARED/backups
 install -d -m 755 /var/www/certbot
 
 echo "== База данных"

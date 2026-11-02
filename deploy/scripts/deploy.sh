@@ -16,13 +16,18 @@ as_app() { sudo -u flowpos -H bash -c "cd '$REL' && set -a && . $SHARED/api.env 
 [ "$(id -u)" = 0 ] || { echo "Нужен root (sudo)"; exit 1; }
 [ -f $SHARED/api.env ] || { echo "Нет $SHARED/api.env — сначала install.sh"; exit 1; }
 
+# nginx должен пройти к current/apps/web/dist (без списка каталогов); shared остаётся закрытым.
+chmod 711 $ROOT $ROOT/releases
 echo "== Распаковка в $REL"
 install -d -o flowpos -g flowpos "$REL"
 tar -xzf "$ARCHIVE" -C "$REL"
 chown -R flowpos:flowpos "$REL"
 
 echo "== Зависимости и сборка"
-as_app "npm ci --no-audit --no-fund"
+# api.env задаёт NODE_ENV=production — без --include=dev npm пропустит сборщики (nest, vite, prisma CLI).
+as_app "npm ci --include=dev --no-audit --no-fund"
+# lock-файл сделан на macOS — докачать сборки rollup/esbuild/… для этой платформы (версии из lock-файла).
+as_app "node deploy/scripts/ensure-native-deps.mjs"
 as_app "npm run generate --workspace=packages/db"
 for w in api web mcp; do as_app "npm run build --workspace=apps/$w"; done
 for w in sync-worker moysklad-worker push-worker analytics-worker; do

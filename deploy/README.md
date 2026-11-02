@@ -42,6 +42,12 @@ cd /opt/flowpos/current && sudo -u flowpos bash -c 'set -a; . /opt/flowpos/share
 ```
 Демо-seed (`admin@flowpos.kz / admin123`) на бою **не запускать**.
 
+## Тестовый стенд в локальной сети (без домена и TLS)
+`sudo bash deploy/scripts/lan-stand.sh` — штатный `install.sh` плюс nginx по HTTP на адресе сервера, фоновая обработка ЭСФ
+выключена, второй фактор не обязателен, mDNS (`http://<hostname>.local` — адрес из DHCP может меняться), firewall:
+SSH/веб только из локальной сети. Затем `deploy.sh` и `create-admin.mjs`, как ниже. **Не для прода и не для доступа
+из интернета** (HTTP без шифрования; для удалённого доступа — VPN до роутера, а не проброс портов).
+
 ## Обновление
 ```bash
 bash deploy/scripts/make-release.sh && scp flowpos-release-*.tar.gz root@SERVER:/tmp/

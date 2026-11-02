@@ -3,6 +3,8 @@
 #   flowpos-backup [метка]       — ставится в /usr/local/bin install.sh'ем, запускается cron'ом от flowpos
 # Восстановление: pg_restore --clean --if-exists -d flowpos <файл.dump> (остановив flowpos-api).
 set -euo pipefail
+# Не зависеть от каталога вызова: из deploy.sh (cwd администратора) пользователь flowpos его не видит — find падал.
+cd /
 SHARED=${FLOWPOS_SHARED:-/opt/flowpos/shared}
 DIR=$SHARED/backups
 TAG="${1:-daily}"

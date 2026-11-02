@@ -5,8 +5,11 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 OUT="flowpos-release-$(date +%Y%m%d-%H%M).tar.gz"
-tar -czf "$OUT" \
-  --exclude='./node_modules' --exclude='*/node_modules' \
+# macOS: без расширенных атрибутов и ._-файлов (иначе на сервере tar предупреждает о LIBARCHIVE.xattr).
+export COPYFILE_DISABLE=1
+XATTR=$(tar --version 2>/dev/null | grep -q bsdtar && echo --no-xattrs || true)
+tar $XATTR -czf "$OUT" \
+  --exclude='./.git' --exclude='./node_modules' --exclude='*/node_modules' \
   --exclude='*/dist' --exclude='*/coverage' --exclude='*.tsbuildinfo' \
   --exclude='.env' --exclude='*/.env' --exclude='*/.env.*' \
   --exclude='./flowpos-release-*.tar.gz' --exclude='*/data/mcp-oauth.json' \

@@ -24,7 +24,9 @@ if (miss.length) {
 if (!/^\d{12}$/.test(args.bin)) { console.error('БИН/ИИН — 12 цифр'); process.exit(1); }
 const email = args.email.trim().toLowerCase();
 
-const prisma = new PrismaClient();
+// Первичная настройка — под владельцем БД (как миграции и бэкап): рабочая роль (FP-009, RLS) не может создать клиента.
+const url = process.env.MIGRATION_DATABASE_URL || process.env.DATABASE_URL;
+const prisma = new PrismaClient({ datasources: { db: { url } } });
 try {
   const exists = await prisma.user.findUnique({ where: { email } });
   if (exists) {
