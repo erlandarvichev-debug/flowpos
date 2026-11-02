@@ -2,8 +2,7 @@
   <div class="login-page">
     <div class="login-card">
       <div class="login-header">
-        <span class="logo">⚡</span>
-        <h1>FlowPOS</h1>
+        <img src="/brand/flowpos-wordmark.png" alt="FlowPOS" class="logo-wordmark" />
         <p>Платформа управления торговлей и персоналом</p>
       </div>
 
@@ -108,6 +107,7 @@ async function handleLogin() {
   display: block;
   margin-bottom: 8px;
 }
+.logo-wordmark { width: 220px; max-width: 80%; height: auto; display: block; margin: 0 auto 10px; }
 
 h1 {
   font-size: 28px;

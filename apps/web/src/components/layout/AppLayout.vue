@@ -2,8 +2,8 @@
   <el-container class="app-layout" style="height: 100vh;">
     <el-aside :width="`${sidebarWidth}px`" class="sidebar">
       <div class="sidebar-logo">
-        <span class="logo-icon">⚡</span>
-        <span class="logo-text" v-if="!collapsed">FlowPOS</span>
+        <img v-if="collapsed" src="/brand/flowpos-icon-64.png" alt="FlowPOS" class="logo-icon-img" />
+        <img v-else src="/brand/flowpos-wordmark.png" alt="FlowPOS" class="logo-wordmark" />
       </div>
       <el-menu
         :default-active="activeMenu"
@@ -287,6 +287,8 @@ onMounted(() => {
 }
 
 .logo-icon { font-size: 20px; }
+.logo-wordmark { height: 30px; width: auto; display: block; }
+.logo-icon-img { height: 28px; width: 28px; display: block; }
 .logo-text {
   font-size: 18px;
   font-weight: 700;
