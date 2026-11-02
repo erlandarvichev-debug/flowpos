@@ -164,7 +164,7 @@ describe('FP-033: партии и сроки годности', () => {
     const mv = await s.trade.create(ctx, { docType: 'MOVE', date: '2026-11-02', storeId: t.s1.id, storeToId: t.s2.id, status: 'POSTED', lines: [{ productId: t.goods.id, qty: '2' }] });
     expect(await lotsOf(mv.id)).toEqual(['TRANSFER_OUT:L1:-2', 'TRANSFER_IN:L1:2']);
     const rep = await ledger.lots(ctx, { on: '2026-11-02' });
-    expect(rep.items.map((i: any) => [i.storeId === t.s1.id ? 's1' : 's2', i.lotNumber, i.qty, i.daysLeft])).toEqual([['s1', 'L1', '1', 59], ['s2', 'L1', '2', 59]]);
+    expect(rep.items.map((i: any) => [i.storeId === t.s1.id ? 's1' : 's2', i.lotNumber, i.qty, i.daysLeft]).sort()).toEqual([['s1', 'L1', '1', 59], ['s2', 'L1', '2', 59]]);
     expect((await ledger.lots(ctx, { on: '2026-11-02', expiringInDays: '30' })).items).toEqual([]);
     // Снятие реализации возвращает партии; снять поступление, чья партия продана, — нельзя.
     await s.trade.unpost(ctx, d1.id);

@@ -121,7 +121,7 @@ export class StockLedgerService {
         AND (${q.productId ?? null}::text IS NULL OR product_id = ${q.productId ?? null})
         AND (${q.storeId ?? null}::text IS NULL OR store_id = ${q.storeId ?? null})
       GROUP BY product_id, store_id, lot_number HAVING sum(qty) > 0
-      ORDER BY max(expiry_date) NULLS LAST, lot_number`;
+      ORDER BY max(expiry_date) NULLS LAST, lot_number, product_id, store_id`; // порядок однозначен
     const limit = q.expiringInDays !== undefined && q.expiringInDays !== '' ? Number(q.expiringInDays) : null;
     const items = rows
       .map((r) => {

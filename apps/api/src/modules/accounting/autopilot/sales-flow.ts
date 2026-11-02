@@ -14,16 +14,21 @@ type Dec = Prisma.Decimal;
 const D = Prisma.Decimal;
 
 /** Документ-основание → какие документы по нему исполняются (для лимитов и цен). */
-export const BASIS: Record<string, { base: string[]; what: string }> = {
-  DEMAND: { base: ['CUSTOMER_ORDER'], what: 'заказ покупателя' },
-  SALES_RETURN: { base: ['DEMAND'], what: 'реализация' },
-  RETAIL_RETURN: { base: ['RETAIL_DEMAND'], what: 'розничный чек' },
+export const BASIS: Record<string, { base: string[]; what: string; prices: boolean; strictStore: boolean }> = {
+  DEMAND: { base: ['CUSTOMER_ORDER'], what: 'заказ покупателя', prices: true, strictStore: true },
+  SALES_RETURN: { base: ['DEMAND'], what: 'реализация', prices: true, strictStore: false },
+  RETAIL_RETURN: { base: ['RETAIL_DEMAND'], what: 'розничный чек', prices: true, strictStore: false },
+  // FP-035: поступление по заказу поставщику — поставщик и товары заказа; цены — по накладной (могут отличаться).
+  SUPPLY: { base: ['PURCHASE_ORDER'], what: 'заказ поставщику', prices: false, strictStore: false },
+  PURCHASE_RETURN: { base: ['SUPPLY'], what: 'поступление', prices: true, strictStore: false },
 };
-export const RETURNS = ['SALES_RETURN', 'RETAIL_RETURN'];
+export const RETURNS = ['SALES_RETURN', 'RETAIL_RETURN', 'PURCHASE_RETURN'];
+/** Возврат поставщику — приход основания (партии прихода); возврат покупателя — расход основания. */
+const lotsSign = (docType: string) => (docType === 'PURCHASE_RETURN' ? 1 : -1);
 
 interface LineIn { productId: string; qty: string | number; price?: string | number; discount?: string | number; vatRate?: string | number | null; lotNumber?: string | null; expiryDate?: string | null }
 interface DocIn {
-  docType: string; date: string; storeId?: string; counterpartyId?: string; baseId?: string; lines?: LineIn[];
+  docType: string; date: string; storeId?: string; counterpartyId?: string; baseId?: string; lines?: LineIn[]; comment?: string;
   vatIncluded?: boolean; noBasis?: boolean; returnReason?: string; pricing?: any;
 }
 
@@ -82,7 +87,7 @@ export async function applyBasis(tx: Tx, input: DocIn) {
   const base = await tx.document.findUnique({ where: { id: input.baseId }, include: { lines: { orderBy: { lineNo: 'asc' } } } });
   if (!base || !rule.base.includes(base.docType)) {
     // Основание другого вида (например, возврат поставщику по поступлению) — не по этой цепочке.
-    if (RETURNS.includes(input.docType) || input.docType === 'DEMAND') throw new AccError('BASIS_WRONG', `Основание должно быть: ${rule.what}`);
+    if (RETURNS.includes(input.docType) || input.docType === 'DEMAND' || input.docType === 'SUPPLY') throw new AccError('BASIS_WRONG', `Основание должно быть: ${rule.what}`);
     return;
   }
   const a = (base.attributes ?? {}) as any;
@@ -93,20 +98,22 @@ export async function applyBasis(tx: Tx, input: DocIn) {
     throw new AccError('BASIS_COUNTERPARTY', `Покупатель отличается от покупателя основания ${base.number}`);
   }
   input.counterpartyId = base.counterpartyId ?? input.counterpartyId;
-  if (input.docType === 'DEMAND') {
+  if (rule.strictStore) {
     if (base.storeId && input.storeId && input.storeId !== base.storeId) {
       throw new AccError('ORDER_STORE', `Отгрузка по заказу ${base.number} — со склада заказа`, { fix: 'Смените склад в заказе (резерв перерезервируется) или отгрузите без основания.' });
     }
     input.storeId = base.storeId ?? input.storeId;
   } else if (!input.storeId) input.storeId = base.storeId ?? undefined;
   if (a.vatIncluded !== undefined) input.vatIncluded = a.vatIncluded;
-  const lots = RETURNS.includes(input.docType) ? await shippedLots(tx, base.id) : new Map<string, { lotNumber: string; expiryDate: Date | null }[]>();
+  const lots = RETURNS.includes(input.docType) ? await shippedLots(tx, base.id, lotsSign(input.docType)) : new Map<string, { lotNumber: string; expiryDate: Date | null }[]>();
   for (const [i, l] of (input.lines ?? []).entries()) {
     const b = base.lines.find((x) => x.productId === l.productId);
     if (!b) throw new AccError('BASIS_PRODUCT', `Строка ${i + 1}: товара нет в основании ${base.number}`);
-    l.price = b.price?.toString() ?? '0';
-    l.discount = b.discount?.toString() ?? undefined;
-    l.vatRate = b.vatRate?.toString() ?? null;
+    if (rule.prices) {
+      l.price = b.price?.toString() ?? '0';
+      l.discount = b.discount?.toString() ?? undefined;
+      l.vatRate = b.vatRate?.toString() ?? null;
+    }
     // Возврат партионного товара — той партией, что отгружали: одна — подставляется, несколько — указать.
     const shipped = lots.get(l.productId) ?? [];
     if (shipped.length && RETURNS.includes(input.docType)) {
@@ -125,10 +132,10 @@ export async function applyBasis(tx: Tx, input: DocIn) {
 }
 
 /** Партии, отгруженные документом (действующие движения расхода), по товару. */
-export async function shippedLots(tx: Tx, docId: string) {
+export async function shippedLots(tx: Tx, docId: string, sign: 1 | -1 = -1) {
   const rows = await tx.$queryRaw<{ product_id: string; lot: string; expiry: Date | null }[]>`
     SELECT m.product_id, m.lot_number AS lot, max(m.expiry_date) AS expiry FROM stock_movements m
-    WHERE m.source_id = ${docId} AND m.qty < 0 AND m.lot_number IS NOT NULL AND m.reverses_id IS NULL
+    WHERE m.source_id = ${docId} AND sign(m.qty) = ${sign} AND m.lot_number IS NOT NULL AND m.reverses_id IS NULL
       AND NOT EXISTS (SELECT 1 FROM stock_movements r WHERE r.reverses_id = m.id)
     GROUP BY m.product_id, m.lot_number ORDER BY m.product_id, m.lot_number`;
   const out = new Map<string, { lotNumber: string; expiryDate: Date | null }[]>();
@@ -150,7 +157,18 @@ const byProduct = (lines: { productId: string; qty: any }[]) => {
 export async function assertBasisLimits(tx: Tx, doc: { id: string; docType: string; attributes: any; lines: { productId: string; qty: any }[] }) {
   const rule = BASIS[doc.docType];
   const baseId = doc.attributes?.baseId;
-  if (!rule || !baseId) return;
+  // FP-035: возврат поставщику проводится только с причиной (брак, пересорт, излишек…); черновик — можно без неё.
+  if (doc.docType === 'PURCHASE_RETURN' && String(doc.attributes?.returnReason ?? '').trim().length < 5) {
+    throw new AccError('RETURN_REASON_REQUIRED', 'Укажите причину возврата поставщику (не короче 5 символов)', { fix: 'Например: брак, пересорт, просрочка, излишек по поставке.' });
+  }
+  // FP-035: заказ поставщику проводится с ценами (иначе бюджет закупок не контролируется).
+  if (doc.docType === 'PURCHASE_ORDER') {
+    const bad = (doc.lines as any[]).findIndex((l) => !l.price || new D(l.price).lte(0));
+    if (bad >= 0) throw new AccError('PRICE_REQUIRED', `Заказ поставщику, строка ${bad + 1}: укажите цену — без неё не проверить бюджет закупок`);
+    return;
+  }
+  // Поступление сверх заказа — излишек: фиксируется расхождением приёмки (FP-030), не запрещается.
+  if (!rule || !baseId || doc.docType === 'SUPPLY') return;
   await tx.$queryRaw`SELECT id FROM documents WHERE id = ${baseId} FOR UPDATE`;
   const base = await tx.document.findUnique({ where: { id: baseId }, include: { lines: true } });
   if (!base || !rule.base.includes(base.docType)) return;

@@ -524,6 +524,7 @@ model Product {
   stocks     Stock[]
   stockMovements StockMovement[]
   reservations StockReservation[]
+  replenishmentRules ReplenishmentRule[]
 
   @@unique([tenantId, onecBase, onecGuid])
   @@unique([tenantId, msAccountId, msId])
@@ -781,6 +782,7 @@ model Store {
   stocks       Stock[]
   stockMovements StockMovement[]
   reservations StockReservation[]
+  replenishmentRules ReplenishmentRule[]
   posTerminals POSTerminal[]
   documents    Document[]   @relation("DocumentStore")
   docTransfers Document[]   @relation("DocumentStoreTo")
@@ -834,6 +836,46 @@ model Stock {
   @@index([productId])
   @@index([storeId])
   @@map("stock")
+}
+
+/// FP-035: правило пополнения склада — точка заказа (min) и уровень пополнения (max), предпочтительный поставщик.
+/// Потребность = max − (свободно + в заказах поставщикам), когда свободно + в заказах < min.
+model ReplenishmentRule {
+  id             String   @id @default(uuid())
+  tenantId       String   @default(dbgenerated("NULLIF(current_setting('flowpos.tenant_id', true), '')")) @map("tenant_id")
+  organizationId String   @map("organization_id")
+  storeId        String   @map("store_id")
+  productId      String   @map("product_id")
+  minQty         Decimal  @map("min_qty") @db.Decimal(18,3)
+  maxQty         Decimal  @map("max_qty") @db.Decimal(18,3)
+  supplierId     String?  @map("supplier_id")
+  updatedBy      String?  @map("updated_by")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  product Product @relation(fields: [tenantId, productId], references: [tenantId, id])
+  store   Store   @relation(fields: [organizationId, storeId], references: [organizationId, id])
+
+  @@unique([storeId, productId])
+  @@index([organizationId])
+  @@map("replenishment_rules")
+}
+
+/// FP-035: бюджет закупок организации на месяц. Заказы поставщикам месяца сверх бюджета проводятся только после
+/// согласования (FP-029).
+model PurchaseBudget {
+  id             String   @id @default(uuid())
+  tenantId       String   @default(dbgenerated("NULLIF(current_setting('flowpos.tenant_id', true), '')")) @map("tenant_id")
+  organizationId String   @map("organization_id")
+  period         String   // ГГГГ-ММ
+  amount         Decimal  @db.Decimal(18,2)
+  note           String?
+  updatedBy      String?  @map("updated_by")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@unique([organizationId, period])
+  @@map("purchase_budgets")
 }
 
 /// FP-032: резерв товара на складе под строку документа (заказ покупателя). Резервируется только свободный остаток

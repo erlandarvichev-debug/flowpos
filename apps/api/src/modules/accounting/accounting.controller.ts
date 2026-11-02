@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Put, Query, Res, UseGuards, UseInterceptors } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Put, Query, Res, UseGuards, UseInterceptors } from '@nestjs/common';
 import type { Response } from 'express';
 import { ApiBearerAuth, ApiHeader, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -9,6 +9,7 @@ import { DocumentsService } from './documents/documents.service';
 import { DocumentGraphService } from './documents/graph.service';
 import { ApprovalsService } from './approvals/approvals.service';
 import { StockLedgerService } from './inventory/stock-ledger.service';
+import { PurchasingService } from './purchasing/purchasing.service';
 import { ReportsService } from './reports/reports.service';
 import { ChartService } from './chart/chart.service';
 import { RefsService } from './refs/refs.service';
@@ -42,6 +43,7 @@ export class AccountingController {
     private graph: DocumentGraphService,
     private approvals: ApprovalsService,
     private ledger: StockLedgerService,
+    private purchasing: PurchasingService,
     private reports: ReportsService,
     private chart: ChartService,
     private refs: RefsService,
@@ -267,6 +269,31 @@ export class AccountingController {
 
   @Post('trade-documents/:id/receive') @RequirePermission('acc.doc.post') @ApiHeader(IDEMP_HEADER)
   tradeReceive(@Org() ctx: OrgContext, @Param('id') id: string, @Body() b: any) { return this.trade.receive(ctx, id, b ?? {}); }
+
+  // ── FP-035: потребность, бюджет закупок ──
+  @Get('replenishment-rules') @RequirePermission('stock.read')
+  replenishmentRules(@Org() ctx: OrgContext, @Query() q: any) { return this.purchasing.rules(ctx, q); }
+
+  @Put('replenishment-rules') @RequirePermission('catalog.manage')
+  replenishmentRuleSet(@Org() ctx: OrgContext, @Body() b: any) { return this.purchasing.setRule(ctx, b ?? {}); }
+
+  @Delete('replenishment-rules/:id') @RequirePermission('catalog.manage')
+  replenishmentRuleDelete(@Org() ctx: OrgContext, @Param('id') id: string) { return this.purchasing.deleteRule(ctx, id); }
+
+  @Get('purchase-needs') @RequirePermission('stock.read')
+  purchaseNeeds(@Org() ctx: OrgContext, @Query() q: any) { return this.purchasing.needs(ctx, q); }
+
+  @Post('purchase-needs/orders') @RequirePermission('acc.doc.write') @ApiHeader(IDEMP_HEADER)
+  purchaseNeedsOrders(@Org() ctx: OrgContext, @Body() b: any) { return this.purchasing.createOrders(ctx, b ?? {}); }
+
+  @Get('purchase-budgets') @RequirePermission('acc.doc.read')
+  purchaseBudgets(@Org() ctx: OrgContext) { return this.purchasing.budgets(ctx); }
+
+  @Put('purchase-budgets') @RequirePermission('acc.policy.manage') @RequireMfa()
+  purchaseBudgetSet(@Org() ctx: OrgContext, @Body() b: any) { return this.purchasing.setBudget(ctx, b ?? {}); }
+
+  @Get('trade-documents/:id/budget') @RequirePermission('acc.doc.read')
+  tradeBudget(@Org() ctx: OrgContext, @Param('id') id: string) { return this.purchasing.budgetFor(ctx, id); }
 
   // ── FP-034: закрытие остатка заказа ──
   @Post('trade-documents/:id/close') @RequirePermission('acc.doc.write') @ApiHeader(IDEMP_HEADER)

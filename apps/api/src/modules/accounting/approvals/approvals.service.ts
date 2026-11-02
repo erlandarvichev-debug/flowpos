@@ -7,6 +7,7 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { AccError } from '../common/acc-error';
 import { OrgContext } from '../access/org-context';
 import { accHash, tradeHash } from '../documents/content-hash';
+import { budgetUsage } from '../purchasing/budget';
 
 type Tx = Prisma.TransactionClient | PrismaService;
 export type DocKind = 'TRADE' | 'ACC';
@@ -15,6 +16,7 @@ const D = Prisma.Decimal;
 const NOTE_MIN = 5;
 const TTL_MAX = 168; // неделя
 /** FP-033: встроенное правило согласования расхождений инвентаризации. */
+const BUILTIN_BUDGET = { id: 'builtin:PURCHASE_BUDGET', docKind: 'TRADE', docType: 'PURCHASE_ORDER', action: 'POST', minAmount: new Prisma.Decimal('0.01'), ttlHours: 72, enabled: true };
 const BUILTIN_INVENTORY = { id: 'builtin:INVENTORY', docKind: 'TRADE', docType: 'INVENTORY', action: 'POST', minAmount: new Prisma.Decimal('0.01'), ttlHours: 72, enabled: true };
 
 /** Состояние документа, к которому привязывается согласование. */
@@ -28,6 +30,9 @@ export interface DocState {
   hash: string;
   amount: Prisma.Decimal;
   currency: string;
+  /** Дата и организация документа (FP-035: бюджет закупок месяца). */
+  date?: Date;
+  organizationId?: string;
 }
 
 @Injectable()
@@ -41,7 +46,7 @@ export class ApprovalsService {
       const doc = await db.document.findUnique({ where: { id }, include: { lines: true } });
       const org = doc?.organizationId ?? (doc?.storeId ? (await db.store.findUnique({ where: { id: doc.storeId } }))?.organizationId : null);
       if (!doc || org !== ctx.organizationId) throw new AccError('DOC_NOT_FOUND', 'Документ не найден', { status: 404 });
-      return { kind: 'TRADE', id, docType: doc.docType, number: doc.number, status: doc.status, version: doc.version, hash: tradeHash(doc), amount: new D(doc.total ?? 0), currency: 'KZT' };
+      return { kind: 'TRADE', id, docType: doc.docType, number: doc.number, status: doc.status, version: doc.version, hash: tradeHash(doc), amount: new D(doc.total ?? 0), currency: 'KZT', date: doc.date, organizationId: org ?? undefined };
     }
     const doc = await db.accDocument.findFirst({ where: { id, organizationId: ctx.organizationId } });
     if (!doc) throw new AccError('DOC_NOT_FOUND', 'Документ не найден', { status: 404 });
@@ -57,6 +62,11 @@ export class ApprovalsService {
     // FP-033: расхождения инвентаризации согласуются всегда («четыре глаза»), даже без правил организации: встроенное
     // правило «от 0,01, 72 ч». Правило организации на INVENTORY (порог, срок) — приоритетнее.
     if (!rules[0] && st.kind === 'TRADE' && st.docType === 'INVENTORY' && st.amount.abs().gte(BUILTIN_INVENTORY.minAmount)) return BUILTIN_INVENTORY as any;
+    // FP-035: заказ поставщику сверх бюджета закупок месяца — только после согласования.
+    if (!rules[0] && st.kind === 'TRADE' && st.docType === 'PURCHASE_ORDER' && (st as DocState).date) {
+      const u = await budgetUsage(db as any, organizationId, (st as DocState).date!, (st as DocState).id);
+      if (u && u.committed.plus(st.amount).gt(u.budget)) return BUILTIN_BUDGET as any;
+    }
     return rules[0] ?? null;
   }
 

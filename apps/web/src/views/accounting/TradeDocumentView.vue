@@ -56,6 +56,8 @@
     <el-alert v-if="doc.fulfillment && doc.fulfillment.state !== 'OPEN' && doc.fulfillment.state !== 'CLOSED'" :type="doc.fulfillment.state === 'FULFILLED' ? 'success' : 'info'" :closable="false" show-icon style="margin-bottom: 12px;"
       :title="doc.fulfillment.state === 'FULFILLED' ? 'Заказ исполнен полностью' : `Заказ исполнен частично: документов ${doc.fulfillment.documents.length}, остаток по строкам — на вкладке «Исполнение»`" />
 
+    <el-alert v-if="budget && budget.budget" :type="budget.overBudget ? 'warning' : 'success'" :closable="false" show-icon style="margin-bottom: 12px;"
+      :title="`Бюджет закупок ${budget.period}: ${fmtMoney(budget.budget)} ₸, уже заказано ${fmtMoney(budget.committed)} ₸, этот заказ ${fmtMoney(budget.amount)} ₸${budget.overBudget ? ' — сверх бюджета: проведение после согласования' : ''}`" />
     <el-alert v-if="doc.attributes?.closed" type="info" :closable="false" show-icon style="margin-bottom: 12px;"
       :title="`Заказ закрыт ${fmtDate(doc.attributes.closed.at)}: ${doc.attributes.closed.reason}. Остаток больше не исполняется.`" />
     <el-alert v-if="priceLocked" type="info" :closable="false" show-icon style="margin-bottom: 12px;"
@@ -108,6 +110,9 @@
             <el-radio-button value="CASH">{{ t('cashPay') }}</el-radio-button>
             <el-radio-button value="CARD">{{ t('cardPay') }}</el-radio-button>
           </el-radio-group>
+        </el-form-item>
+        <el-form-item v-if="docType === 'PURCHASE_RETURN'" label="Причина возврата" required>
+          <el-input v-model="form.returnReason" :disabled="readonly" placeholder="Брак, пересорт, просрочка, излишек…" style="max-width: 420px;" />
         </el-form-item>
         <el-form-item v-if="isReturn && !doc.attributes?.baseId && !route.query.baseId" label="Без основания">
           <el-checkbox v-model="form.noBasis" :disabled="readonly">возврат без реализации (чек/накладная утеряны)</el-checkbox>
@@ -434,8 +439,15 @@ function emptyLine() { return { key: ++keySeq, productId: undefined, productName
 /** FP-030: приёмка с расхождениями (поступление) — включается сама, если у строк есть «по документу». */
 const receiptMode = ref(false)
 /** FP-034: цены документа по основанию (реализация по заказу, возврат по реализации) — из основания, не редактируются. */
-const isReturn = computed(() => docType.value === 'SALES_RETURN' || docType.value === 'RETAIL_RETURN')
+const isReturn = computed(() => docType.value === 'SALES_RETURN' || docType.value === 'RETAIL_RETURN' || docType.value === 'PURCHASE_RETURN')
+/** FP-035: бюджет закупок месяца для заказа поставщику. */
+const budget = ref<any>(null)
 const priceLocked = computed(() => !!(doc.value.attributes?.baseId || route.query.baseId) && (docType.value === 'DEMAND' || isReturn.value))
+async function loadBudget() {
+  budget.value = null
+  if (docType.value !== 'PURCHASE_ORDER' || !doc.value.id) return
+  try { budget.value = await api.get(`/accounting/trade-documents/${doc.value.id}/budget`) } catch { /* без бюджета */ }
+}
 /** FP-033: колонки партии и срока; приходные документы (партия обязательна у партионного товара). */
 const lotMode = ref(false)
 const lotCapable = computed(() => ['SUPPLY', 'ENTER', 'SALES_RETURN', 'RETAIL_RETURN', 'DEMAND', 'RETAIL_DEMAND', 'LOSS', 'MOVE', 'PURCHASE_RETURN', 'INVENTORY'].includes(docType.value))
@@ -521,6 +533,7 @@ function payload() {
   if (isRetail.value) p.paymentType = form.value.paymentType
   if (docType.value === 'LOSS') { p.lossAccount = form.value.lossAccount; p.lossReason = form.value.lossReason || undefined }
   if (isReturn.value && form.value.noBasis) { p.noBasis = true; p.returnReason = form.value.returnReason }
+  if (docType.value === 'PURCHASE_RETURN') p.returnReason = form.value.returnReason || undefined
   if (docType.value === 'LANDED_COST') { p.baseId = form.value.baseId; p.allocation = form.value.allocation; delete p.storeId }
   return p
 }
@@ -561,6 +574,7 @@ async function load() {
     doc.value = (await api.get(`/accounting/trade-documents/${id}`)) as any
     fillForm(doc.value)
     await loadLandedBase()
+    await loadBudget()
   } catch (e) { showError(e) }
   loading.value = false
 }

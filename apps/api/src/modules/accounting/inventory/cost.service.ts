@@ -175,8 +175,8 @@ export class CostService {
         const diff = m.knownCost.minus(cost);
         if (!diff.isZero()) {
           push(m, diff.isPositive()
-            ? [{ side: 'D', account: m.account, amount: diff.toFixed(2), dims: { PRODUCT: productId, STORE: m.storeId }, memo: 'Разница стоимости возврата' }, { side: 'C', account: '6190', amount: diff.toFixed(2), memo: 'Разница стоимости возврата' }]
-            : [{ side: 'D', account: '7170', amount: diff.neg().toFixed(2), memo: 'Разница стоимости возврата' }, { side: 'C', account: m.account, amount: diff.neg().toFixed(2), dims: { PRODUCT: productId, STORE: m.storeId }, memo: 'Разница стоимости возврата' }]);
+            ? [{ side: 'D', account: m.account, amount: diff.toFixed(2), quantity: '0.000', dims: { PRODUCT: productId, STORE: m.storeId }, memo: 'Разница стоимости возврата' }, { side: 'C', account: '6190', amount: diff.toFixed(2), memo: 'Разница стоимости возврата' }]
+            : [{ side: 'D', account: '7170', amount: diff.neg().toFixed(2), memo: 'Разница стоимости возврата' }, { side: 'C', account: m.account, amount: diff.neg().toFixed(2), quantity: '0.000', dims: { PRODUCT: productId, STORE: m.storeId }, memo: 'Разница стоимости возврата' }]);
         }
         continue;
       }

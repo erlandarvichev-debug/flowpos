@@ -139,7 +139,7 @@ Sales | P1 | Backend/Frontend | L | DONE_LOCAL — см. `FP-034-SALES-ORDER-SHI
 Зависимости: FP-027,FP-028,FP-032. Приёмка: Partial fulfilment; return by basis; prices/tax snapshot; правильный склад/стоимость.
 
 ## FP-035 · Потребность заказ поставщику и приёмка
-Purchases | P1 | Backend/Frontend | L | PLANNED
+Purchases | P1 | Backend/Frontend | L | DONE_LOCAL — см. `FP-035-PURCHASING.md` (не выкладывалось)
 Зависимости: FP-026,FP-030,FP-029. Приёмка: Budget approval; qty expected/received; расхождения и возврат поставщику.
 
 ## FP-036 · Банк касса авансы и разнесение

@@ -634,17 +634,22 @@ export class TradeDocumentsService {
     if (!lines.length) throw new AccError('BASE_FULFILLED', `По документу ${base.number} всё уже исполнено`);
     // FP-034: возврат партионного товара — строками по отгруженным партиям (за вычетом уже возвращённого по партии).
     if (targetType.endsWith('_RETURN')) {
+      // Возврат покупателя: основание расходовало (−), возвраты приходуют (+); возврат поставщику — наоборот.
+      const sgn = targetType === 'PURCHASE_RETURN' ? -1 : 1;
       const rows = await this.prisma.$queryRaw<{ product_id: string; lot: string; expiry: Date | null; q: string }[]>`
-        SELECT m.product_id, m.lot_number AS lot, max(m.expiry_date) AS expiry, sum(-m.qty)::text AS q FROM stock_movements m
+        SELECT m.product_id, m.lot_number AS lot, max(m.expiry_date) AS expiry, sum(${-sgn}::int * m.qty)::text AS q FROM stock_movements m
         WHERE m.lot_number IS NOT NULL AND (
-          (m.source_id = ${baseId} AND m.qty < 0)
-          OR (m.qty > 0 AND m.source_id IN (SELECT id FROM documents WHERE attributes->>'baseId' = ${baseId} AND status = 'POSTED' AND deleted = false)))
+          (m.source_id = ${baseId} AND sign(m.qty) = ${-sgn}::int)
+          OR (sign(m.qty) = ${sgn}::int AND m.source_id IN (SELECT id FROM documents WHERE attributes->>'baseId' = ${baseId} AND status = 'POSTED' AND deleted = false)))
           AND NOT EXISTS (SELECT 1 FROM stock_movements r WHERE r.reverses_id = m.id) AND m.reverses_id IS NULL
-        GROUP BY m.product_id, m.lot_number HAVING sum(-m.qty) > 0 ORDER BY m.product_id, max(m.expiry_date) NULLS LAST, m.lot_number`;
+        GROUP BY m.product_id, m.lot_number HAVING sum(${-sgn}::int * m.qty) > 0 ORDER BY m.product_id, max(m.expiry_date) NULLS LAST, m.lot_number`;
       const split: TradeLineInput[] = [];
+      const done = new Set<string>(); // строки одного товара (по строке на партию в основании) — раскладка один раз
       for (const l of lines) {
         const byLot = rows.filter((r) => r.product_id === l.productId);
         if (byLot.length <= 1) { split.push(l); continue; }
+        if (done.has(l.productId)) continue;
+        done.add(l.productId);
         for (const r of byLot) split.push({ ...l, qty: new D(r.q).toFixed(3), lotNumber: r.lot, expiryDate: r.expiry ? r.expiry.toISOString().slice(0, 10) : null });
       }
       lines.splice(0, lines.length, ...split);
