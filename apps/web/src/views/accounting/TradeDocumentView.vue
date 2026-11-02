@@ -24,6 +24,7 @@
               <el-dropdown-item v-for="tt in baseTargets" :key="tt" :command="`based:${tt}`">{{ t('createBased') }}: {{ tl(tt) }}</el-dropdown-item>
               <el-dropdown-item v-if="docType === 'SUPPLY' && doc.status === 'POSTED' && org.can('acc.doc.write')" command="landed">Доп. расходы (доставка, таможня…)</el-dropdown-item>
               <el-dropdown-item v-if="docType === 'INVENTORY' && doc.status === 'DRAFT' && org.can('acc.doc.write')" command="fill" divided>Заполнить по остаткам склада</el-dropdown-item>
+              <el-dropdown-item v-if="docType.endsWith('_ORDER') && !doc.attributes?.closed && doc.fulfillment?.state !== 'FULFILLED' && org.can('acc.doc.write')" command="close" divided>Закрыть остаток заказа</el-dropdown-item>
               <template v-if="docType === 'CUSTOMER_ORDER' && org.can('acc.doc.write') && doc.status !== 'CANCELLED'">
                 <el-dropdown-item command="reserve" divided>Зарезервировать на складе</el-dropdown-item>
                 <el-dropdown-item v-if="activeReserves.length" command="release">Снять резерв</el-dropdown-item>
@@ -52,8 +53,15 @@
       :title="`Расхождения при приёмке: строк ${doc.receipt.lines.length}${Number(doc.receipt.claimAmount) ? `, претензия поставщику ${fmtMoney(doc.receipt.claimAmount)} ₸` : ''}${Number(doc.receipt.surplusAmount) ? `, излишек на ${fmtMoney(doc.receipt.surplusAmount)} ₸` : ''}`">
       <div>В остаток и учёт попадает только принятое количество. Недостача и отказ остаются в заказе к поставке.</div>
     </el-alert>
-    <el-alert v-if="doc.fulfillment && doc.fulfillment.state !== 'OPEN'" :type="doc.fulfillment.state === 'FULFILLED' ? 'success' : 'info'" :closable="false" show-icon style="margin-bottom: 12px;"
+    <el-alert v-if="doc.fulfillment && doc.fulfillment.state !== 'OPEN' && doc.fulfillment.state !== 'CLOSED'" :type="doc.fulfillment.state === 'FULFILLED' ? 'success' : 'info'" :closable="false" show-icon style="margin-bottom: 12px;"
       :title="doc.fulfillment.state === 'FULFILLED' ? 'Заказ исполнен полностью' : `Заказ исполнен частично: документов ${doc.fulfillment.documents.length}, остаток по строкам — на вкладке «Исполнение»`" />
+
+    <el-alert v-if="doc.attributes?.closed" type="info" :closable="false" show-icon style="margin-bottom: 12px;"
+      :title="`Заказ закрыт ${fmtDate(doc.attributes.closed.at)}: ${doc.attributes.closed.reason}. Остаток больше не исполняется.`" />
+    <el-alert v-if="priceLocked" type="info" :closable="false" show-icon style="margin-bottom: 12px;"
+      :title="`Цены и НДС — из основания (${doc.docType === 'DEMAND' ? 'заказ покупателя' : 'реализация'}) и не меняются; количество — не больше ${doc.docType === 'DEMAND' ? 'остатка заказа' : 'отгруженного за вычетом прежних возвратов'}.`" />
+    <el-alert v-if="docType === 'CUSTOMER_ORDER' && doc.attributes?.pricing" type="success" :closable="false" show-icon style="margin-bottom: 12px;"
+      :title="`Цены заказа зафиксированы на ${fmtDate(doc.attributes.pricing.at)} по прайс-листам: ${[...new Set(doc.attributes.pricing.lines.map((x: any) => x.priceListName))].join(', ')}. Отгрузки по заказу идут по этим ценам.`" />
 
     <el-card style="margin-bottom: 12px;">
       <el-form label-width="150px" class="head-form">
@@ -100,6 +108,11 @@
             <el-radio-button value="CASH">{{ t('cashPay') }}</el-radio-button>
             <el-radio-button value="CARD">{{ t('cardPay') }}</el-radio-button>
           </el-radio-group>
+        </el-form-item>
+        <el-form-item v-if="isReturn && !doc.attributes?.baseId && !route.query.baseId" label="Без основания">
+          <el-checkbox v-model="form.noBasis" :disabled="readonly">возврат без реализации (чек/накладная утеряны)</el-checkbox>
+          <el-input v-if="form.noBasis" v-model="form.returnReason" :disabled="readonly" placeholder="Причина (обязательно)" style="max-width: 420px; margin-left: 12px;" />
+          <div v-if="!form.noBasis" class="hint">Возврат оформляется на основании реализации: откройте её и выберите «Создать на основании».</div>
         </el-form-item>
         <el-form-item v-if="docType === 'LOSS'" label="Причина списания">
           <el-select v-model="form.lossReason" clearable :disabled="readonly" placeholder="по строкам" style="width: 260px;">
@@ -193,9 +206,9 @@
             <el-select v-model="l.binToId" size="small" clearable :disabled="readonly" placeholder="без ячейки"><el-option v-for="b in binsTo" :key="b.id" :label="b.code || b.name" :value="b.id" /></el-select>
           </div>
           <template v-if="hasPrices">
-            <div class="c-num"><el-input v-model="l.price" size="small" class="nav-field num-in" :disabled="readonly" placeholder="0.00" /></div>
-            <div class="c-pct"><el-input v-model="l.discount" size="small" class="nav-field num-in" :disabled="readonly" /></div>
-            <div class="c-pct"><el-input v-model="l.vatRate" size="small" class="nav-field num-in" :disabled="readonly" :placeholder="t('vatDefault')" /></div>
+            <div class="c-num"><el-input v-model="l.price" size="small" class="nav-field num-in" :disabled="readonly || priceLocked" :placeholder="docType === 'CUSTOMER_ORDER' ? 'по прайсу' : '0.00'" /></div>
+            <div class="c-pct"><el-input v-model="l.discount" size="small" class="nav-field num-in" :disabled="readonly || priceLocked" /></div>
+            <div class="c-pct"><el-input v-model="l.vatRate" size="small" class="nav-field num-in" :disabled="readonly || priceLocked" :placeholder="t('vatDefault')" /></div>
             <div class="c-sum">{{ fmtMoney(lineTotal(l.qty, l.price, l.discount)) }}</div>
           </template>
           <div class="c-del"><el-button v-if="!readonly" link type="danger" :icon="Delete" @click="form.lines.splice(i, 1)" /></div>
@@ -266,7 +279,17 @@
           </el-table>
           <div v-if="doc.transit.receipts.length" class="hint0" style="margin-top: 6px;">Приёмки: <span v-for="r in doc.transit.receipts" :key="r.id"><el-link type="primary" @click="router.push(`/accounting/trade/${r.id}`)">{{ r.number }}</el-link> </span></div>
         </el-tab-pane>
+        <el-tab-pane v-if="doc.returns" :label="`Возвраты (${doc.returns.documents.length})`">
+          <el-table :data="doc.returns.lines" size="small">
+            <el-table-column label="Товар" min-width="200" show-overflow-tooltip><template #default="{ row }">{{ productName(row.productId) }}</template></el-table-column>
+            <el-table-column label="Отгружено" width="110" align="right" prop="shipped" />
+            <el-table-column label="Возвращено" width="120" align="right" prop="returned" />
+            <el-table-column label="Можно вернуть" width="130" align="right"><template #default="{ row }"><b>{{ row.left }}</b></template></el-table-column>
+          </el-table>
+          <div v-if="doc.returns.documents.length" class="hint0" style="margin-top: 6px;">Возвраты: <span v-for="r in doc.returns.documents" :key="r.id"><el-link type="primary" @click="router.push(`/accounting/trade/${r.id}`)">{{ r.number }}</el-link> </span></div>
+        </el-tab-pane>
         <el-tab-pane v-if="doc.fulfillment" label="Исполнение">
+          <div v-if="doc.fulfillment.closed" class="hint0" style="margin-bottom: 6px;">Заказ закрыт: {{ doc.fulfillment.closed.reason }}</div>
           <el-table :data="doc.fulfillment.lines" size="small">
             <el-table-column label="Строка" width="70" prop="lineNo" />
             <el-table-column label="Товар" min-width="200" show-overflow-tooltip><template #default="{ row }">{{ productName(row.productId) }}</template></el-table-column>
@@ -356,6 +379,7 @@ const emptyForm = () => ({
   date: dayjs().format('YYYY-MM-DD'), counterpartyId: undefined as string | undefined, storeId: undefined as string | undefined,
   storeToId: undefined as string | undefined, vatIncluded: true, paymentType: 'CASH', lossAccount: '7170', comment: '', reason: '',
   allocation: 'AMOUNT', baseId: undefined as string | undefined, twoStage: false, lossReason: undefined as string | undefined,
+  noBasis: false, returnReason: '',
   lines: [] as any[],
 })
 /** FP-032: ячейки складов (по складу), приёмка перемещения в два этапа, резерв заказа. */
@@ -409,6 +433,9 @@ function emptyLine() { return { key: ++keySeq, productId: undefined, productName
 
 /** FP-030: приёмка с расхождениями (поступление) — включается сама, если у строк есть «по документу». */
 const receiptMode = ref(false)
+/** FP-034: цены документа по основанию (реализация по заказу, возврат по реализации) — из основания, не редактируются. */
+const isReturn = computed(() => docType.value === 'SALES_RETURN' || docType.value === 'RETAIL_RETURN')
+const priceLocked = computed(() => !!(doc.value.attributes?.baseId || route.query.baseId) && (docType.value === 'DEMAND' || isReturn.value))
 /** FP-033: колонки партии и срока; приходные документы (партия обязательна у партионного товара). */
 const lotMode = ref(false)
 const lotCapable = computed(() => ['SUPPLY', 'ENTER', 'SALES_RETURN', 'RETAIL_RETURN', 'DEMAND', 'RETAIL_DEMAND', 'LOSS', 'MOVE', 'PURCHASE_RETURN', 'INVENTORY'].includes(docType.value))
@@ -451,6 +478,7 @@ function fillForm(d: any) {
     storeToId: (a.twoStage ? a.destinationStoreId : d.storeToId) || undefined, vatIncluded: a.vatIncluded !== false, paymentType: a.paymentType || 'CASH',
     lossAccount: a.lossAccount || '7170', comment: d.comment || a.comment || '', reason: '',
     allocation: a.allocation || 'AMOUNT', baseId: a.baseId, twoStage: !!a.twoStage, lossReason: a.lossReason || undefined,
+    noBasis: !!a.noBasis, returnReason: a.returnReason || '',
     lines: (d.lines || []).map((l: any) => ({
       key: ++keySeq, productId: l.productId, productName: l.product ? `${l.product.code ? l.product.code + ' ' : ''}${l.product.name}` : '',
       qty: s(l.qty), price: s(l.price), discount: s(l.discount), vatRate: s(l.vatRate),
@@ -475,7 +503,8 @@ function payload() {
       o.discrepancyNote = (l.discrepancyNote || '').trim() || null
     }
     if (hasPrices.value) {
-      o.price = normAmount(l.price) || '0'
+      // FP-034: пустая цена заказа — по прайс-листам на дату заказа (сервер фиксирует снимок)
+      o.price = normAmount(l.price) || (docType.value === 'CUSTOMER_ORDER' ? undefined : '0')
       if (normAmount(l.discount)) o.discount = normAmount(l.discount)
       o.vatRate = normAmount(l.vatRate) || null
     }
@@ -491,6 +520,7 @@ function payload() {
   if (hasPrices.value) p.vatIncluded = form.value.vatIncluded
   if (isRetail.value) p.paymentType = form.value.paymentType
   if (docType.value === 'LOSS') { p.lossAccount = form.value.lossAccount; p.lossReason = form.value.lossReason || undefined }
+  if (isReturn.value && form.value.noBasis) { p.noBasis = true; p.returnReason = form.value.returnReason }
   if (docType.value === 'LANDED_COST') { p.baseId = form.value.baseId; p.allocation = form.value.allocation; delete p.storeId }
   return p
 }
@@ -616,6 +646,20 @@ async function retry() {
 
 async function onCommand(cmd: string) {
   if (cmd === 'unpost') return action('unpost', 'Проведение отменено')
+  if (cmd === 'close') {
+    let reason: string
+    try {
+      reason = (await ElMessageBox.prompt('Остаток заказа больше не будет исполняться, резерв снимется.', 'Закрыть остаток заказа', { confirmButtonText: 'Закрыть', cancelButtonText: 'Отмена', inputPlaceholder: 'Причина (например, покупатель отказался)', inputValidator: (v: string) => (String(v ?? '').trim().length >= 5 ? true : 'Не короче 5 символов') })).value
+    } catch { return }
+    busy.value = true
+    try {
+      doc.value = (await api.post(`/accounting/trade-documents/${doc.value.id}/close`, { reason, expectedVersion: doc.value.version }, idem())) as any
+      fillForm(doc.value)
+      ElMessage.success('Заказ закрыт')
+    } catch (e) { showError(e) }
+    busy.value = false
+    return
+  }
   if (cmd === 'fill') {
     busy.value = true
     try {

@@ -139,6 +139,8 @@ export class CostService {
     const inv = (m: Move, side: 'D' | 'C', amount: Dec, qty: Dec, store: string): PostingInput =>
       ({ side, account: m.account, amount: amount.toFixed(2), quantity: qty.toFixed(3), dims: { PRODUCT: productId, STORE: store }, memo: 'Себестоимость' });
 
+    // FP-034: себестоимость расходов (продаж) по документу и товару — для возврата на основании.
+    const issued = new Map<string, { qty: Dec; cost: Dec }>();
     for (const m of moves) {
       if (m.kind === 'MOVE_IN') continue; // обрабатывается вместе с MOVE_OUT
       if (m.kind === 'LANDED_COST') {
@@ -148,10 +150,12 @@ export class CostService {
       if (m.direction === 'IN') {
         let cost = m.knownCost;
         if (cost === null) {
-          // возврат от покупателя: по средней текущей себестоимости склада
+          // возврат от покупателя: на основании — по себестоимости единицы исходной отгрузки; иначе — по средней склада
           const ls = lotsOf(m.storeId);
           const q = qtyOf(ls), c = costOf(ls);
-          cost = q.gt(0) ? round(c.div(q).times(m.quantity)) : new D(m.meta?.fallbackCost ?? 0);
+          const base = m.meta?.baseSourceId ? issued.get(`${m.meta.baseSourceId}:${productId}`) : undefined;
+          cost = base && base.qty.gt(0) ? round(base.cost.div(base.qty).times(m.quantity))
+            : q.gt(0) ? round(c.div(q).times(m.quantity)) : new D(m.meta?.fallbackCost ?? 0);
           if (!cost.isZero()) push(m, [inv(m, 'D', cost, m.quantity, m.storeId), { side: 'C', account: m.costAccount ?? '7010', amount: cost.toFixed(2), dims: { PRODUCT: productId }, memo: 'Возврат себестоимости' }]);
         }
         addLot(m.storeId, m.quantity, cost, ['PURCHASE', 'ENTER', 'OPENING', 'INVENTORY_SURPLUS'].includes(m.kind) ? `${m.sourceId}:${m.lineNo}` : null);
@@ -177,6 +181,11 @@ export class CostService {
         continue;
       }
       // продажа / списание: Дт счёт затрат — Кт запасы (с количеством)
+      if (m.kind === 'SALE') {
+        const k = `${m.sourceId}:${productId}`;
+        const prev = issued.get(k) ?? { qty: new D(0), cost: new D(0) };
+        issued.set(k, { qty: prev.qty.plus(m.quantity), cost: prev.cost.plus(cost) });
+      }
       const costAcc = m.costAccount ?? '7010';
       const dims: any = costAcc === '7010' ? { PRODUCT: productId } : {};
       if (m.meta?.departmentId && costAcc !== '7010') dims.DEPARTMENT = m.meta.departmentId;

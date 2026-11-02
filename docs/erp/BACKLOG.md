@@ -135,7 +135,7 @@ Inventory | P1 | Backend/Frontend | M | DONE_LOCAL — см. `FP-033-INVENTORY-L
 Зависимости: FP-030,FP-031. Приёмка: Сверка с фактами; причины; lot/expiry; approved discrepancy.
 
 ## FP-034 · Заказ клиента отгрузка возврат
-Sales | P1 | Backend/Frontend | L | PLANNED
+Sales | P1 | Backend/Frontend | L | DONE_LOCAL — см. `FP-034-SALES-ORDER-SHIP-RETURN.md` (не выкладывалось)
 Зависимости: FP-027,FP-028,FP-032. Приёмка: Partial fulfilment; return by basis; prices/tax snapshot; правильный склад/стоимость.
 
 ## FP-035 · Потребность заказ поставщику и приёмка

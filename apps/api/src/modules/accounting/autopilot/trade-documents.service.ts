@@ -12,6 +12,7 @@ import { tradeContent, tradeHash } from '../documents/content-hash';
 import { ApprovalsService } from '../approvals/approvals.service';
 import { plannedMoves, recordDocumentMoves, reverseDocumentMoves, serviceIds } from '../../inventory/stock-ledger';
 import { LotError, checkLotLine } from '../../inventory/lots';
+import { applyBasis, assertBasisLimits, snapshotOrder } from './sales-flow';
 import { CountError, bookQty, checkInventoryLine, checkLossLine, inventoryValue, stockPositions } from '../../inventory/count';
 import { ReserveError, activeReservations, assertReservesCovered, consumeForShipment, releaseReservations, reserveOrder } from '../../inventory/reservations';
 import { ReceiptError, checkReceiptLine, receiptSummary } from '../../inventory/receipt';
@@ -23,7 +24,7 @@ const PREFIX: Record<string, string> = {
   ENTER: 'ОПР', LOSS: 'СП', MOVE: 'ПМ', INVENTORY: 'ИНВ', PAYMENT_IN: 'ПВ', PAYMENT_OUT: 'ИП', RETAIL_DEMAND: 'ЧЕК', RETAIL_RETURN: 'ВЧ',
 };
 const EDITABLE = Object.keys(PREFIX);
-const BASE_TARGETS: Record<string, string[]> = { CUSTOMER_ORDER: ['DEMAND'], PURCHASE_ORDER: ['SUPPLY'], DEMAND: ['SALES_RETURN'], SUPPLY: ['PURCHASE_RETURN'] };
+const BASE_TARGETS: Record<string, string[]> = { CUSTOMER_ORDER: ['DEMAND'], PURCHASE_ORDER: ['SUPPLY'], DEMAND: ['SALES_RETURN'], SUPPLY: ['PURCHASE_RETURN'], RETAIL_DEMAND: ['RETAIL_RETURN'] };
 
 export interface TradeLineInput {
   productId: string; qty: string | number; price?: string | number; discount?: string | number; vatRate?: string | number | null;
@@ -54,6 +55,11 @@ export interface TradeDocInput {
   twoStage?: boolean;
   /** FP-033, списание: причина по умолчанию для строк без своей причины. */
   lossReason?: string;
+  /** FP-034, возврат без основания (реализации) — только явно и с причиной. */
+  noBasis?: boolean;
+  returnReason?: string;
+  /** FP-034: источник цен заказа (снимок прайс-листов и скидок) — заполняет сервер. */
+  pricing?: any;
   baseId?: string;
   lines?: TradeLineInput[];
   status?: 'DRAFT' | 'POSTED';
@@ -299,7 +305,7 @@ export class TradeDocumentsService {
 
   private attrs(input: TradeDocInput, prev: any = {}) {
     const a: any = { ...prev };
-    for (const k of ['vatIncluded', 'paymentType', 'bankAccountId', 'departmentId', 'lossAccount', 'baseId', 'comment', 'allocation', 'twoStage', 'destinationStoreId', 'transferStage', 'lossReason'] as const) if ((input as any)[k] !== undefined) a[k] = (input as any)[k];
+    for (const k of ['vatIncluded', 'paymentType', 'bankAccountId', 'departmentId', 'lossAccount', 'baseId', 'comment', 'allocation', 'twoStage', 'destinationStoreId', 'transferStage', 'lossReason', 'noBasis', 'returnReason', 'pricing'] as const) if ((input as any)[k] !== undefined) a[k] = (input as any)[k];
     return a;
   }
 
@@ -361,6 +367,9 @@ export class TradeDocumentsService {
         throw new AccError('BAD_TWO_STAGE', 'В два этапа оформляется только перемещение');
       }
       await this.validateRefs(tx, ctx, input, internal);
+      // FP-034: цены и НДС — из основания (заказа / реализации); заказ — снимок цен на дату.
+      await applyBasis(tx, input);
+      await snapshotOrder(tx, ctx, input);
       await this.prepareLines(tx, input);
       const lines = this.buildLines(input);
       const total = this.totalOf(input.docType, lines, input.amount);
@@ -392,6 +401,7 @@ export class TradeDocumentsService {
         throw new AccError('VERSION_CONFLICT', 'Документ уже изменён другим пользователем или обменом', { status: 409, fix: 'Обновите документ и внесите изменения повторно.', details: { currentVersion: doc.version } });
       }
       if (doc.deleted || doc.status === 'CANCELLED') throw new AccError('DOC_CANCELLED', 'Документ помечен на удаление — сначала восстановите его');
+      if ((doc.attributes as any)?.closed) throw new AccError('ORDER_CLOSED', `Заказ ${doc.number ?? ''} закрыт — изменять его нельзя`);
       if (doc.status === 'POSTED' && !input.reason) throw new AccError('REASON_REQUIRED', 'Изменение проведённого документа требует указать причину');
       const merged: TradeDocInput = {
         docType: doc.docType, date: input.date ?? doc.date.toISOString(), counterpartyId: input.counterpartyId ?? doc.counterpartyId ?? undefined,
@@ -405,6 +415,10 @@ export class TradeDocumentsService {
       } as TradeDocInput;
       for (const k of ['comment', 'vatIncluded', 'paymentType', 'bankAccountId', 'departmentId', 'lossAccount', 'allocation', 'lossReason'] as const) if ((input as any)[k] !== undefined) (merged as any)[k] = (input as any)[k];
       if (merged.lossReason === undefined && (doc.attributes as any)?.lossReason) merged.lossReason = (doc.attributes as any).lossReason;
+      // FP-034: основание не меняется; цены — снова из основания / снимка.
+      for (const k of ['baseId', 'noBasis', 'returnReason'] as const) if ((merged as any)[k] === undefined && (doc.attributes as any)?.[k] !== undefined) (merged as any)[k] = (doc.attributes as any)[k];
+      if ((input as any).noBasis !== undefined) merged.noBasis = (input as any).noBasis;
+      if ((input as any).returnReason !== undefined) merged.returnReason = (input as any).returnReason;
       if (doc.docType === 'LANDED_COST') merged.baseId = (doc.attributes as any)?.baseId;
       // FP-032: отгрузка в два этапа — склад «В пути» не меняется; новый склад-получатель — в реквизитах; приёмка с
       // «В пути» — служебная (склады те же).
@@ -420,6 +434,10 @@ export class TradeDocumentsService {
       }
       if (da.transferStage === 'RECEIPT') { merged.storeId = doc.storeId ?? undefined; merged.storeToId = doc.storeToId ?? undefined; }
       await this.validateRefs(tx, ctx, merged, internal);
+      await applyBasis(tx, merged);
+      await snapshotOrder(tx, ctx, merged);
+      if (merged.pricing) (input as any).pricing = merged.pricing;
+      if (merged.storeId !== doc.storeId && merged.storeId) (input as any).storeId = merged.storeId;
       await this.prepareLines(tx, merged, id);
       // FP-029: сохранение без изменения содержимого — не новая версия (иначе «Провести» на экране, которое сначала
       // сохраняет, отменяло бы согласование этой же версии).
@@ -459,6 +477,7 @@ export class TradeDocumentsService {
       if (wasPosted) {
         const fresh = await tx.document.findUnique({ where: { id }, include: { lines: true } });
         await tx.document.update({ where: { id }, data: { status: 'POSTED', postedVersion: fresh!.version } });
+        await assertBasisLimits(tx, fresh! as any);
         await this.autopilot.syncTradeDocument(tx, id, { userId: ctx.userId, override, organizationId: ctx.organizationId });
         await this.moveStock(tx, ctx, fresh!, input.reason);
         await this.writeVersion(tx, ctx, id, 'POST', input.reason);
@@ -480,6 +499,7 @@ export class TradeDocumentsService {
       throw new AccError('DOC_ALREADY_POSTED', `Документ ${doc.number ?? ''} уже проведён (версия ${doc.postedVersion ?? doc.version})`, { status: 409, details: { postedVersion: doc.postedVersion ?? doc.version } });
     }
     await this.assertBookCurrent(tx, doc);
+    await assertBasisLimits(tx, doc);
     // FP-029: если правило требует согласования — нужно действующее согласование этой версии (расходуется).
     await this.approvals.consumeForPost(tx, ctx, await this.approvals.docState(tx, ctx, 'TRADE', id));
     await tx.document.update({ where: { id }, data: { status: 'POSTED', postedVersion: doc.version, updatedBy: ctx.userId } });
@@ -511,6 +531,7 @@ export class TradeDocumentsService {
         else if (doc.deleted) error = { code: 'DOC_CANCELLED', message: 'Документ помечен на удаление' };
         else {
           try {
+            await assertBasisLimits(tx, doc);
             await tx.document.update({ where: { id }, data: { status: 'POSTED', postedVersion: doc.version } });
             await this.autopilot.syncTradeDocument(tx, id, { userId: ctx.userId, organizationId: ctx.organizationId });
             await this.moveStock(tx, ctx, doc);
@@ -611,6 +632,23 @@ export class TradeDocumentsService {
       }
     }
     if (!lines.length) throw new AccError('BASE_FULFILLED', `По документу ${base.number} всё уже исполнено`);
+    // FP-034: возврат партионного товара — строками по отгруженным партиям (за вычетом уже возвращённого по партии).
+    if (targetType.endsWith('_RETURN')) {
+      const rows = await this.prisma.$queryRaw<{ product_id: string; lot: string; expiry: Date | null; q: string }[]>`
+        SELECT m.product_id, m.lot_number AS lot, max(m.expiry_date) AS expiry, sum(-m.qty)::text AS q FROM stock_movements m
+        WHERE m.lot_number IS NOT NULL AND (
+          (m.source_id = ${baseId} AND m.qty < 0)
+          OR (m.qty > 0 AND m.source_id IN (SELECT id FROM documents WHERE attributes->>'baseId' = ${baseId} AND status = 'POSTED' AND deleted = false)))
+          AND NOT EXISTS (SELECT 1 FROM stock_movements r WHERE r.reverses_id = m.id) AND m.reverses_id IS NULL
+        GROUP BY m.product_id, m.lot_number HAVING sum(-m.qty) > 0 ORDER BY m.product_id, max(m.expiry_date) NULLS LAST, m.lot_number`;
+      const split: TradeLineInput[] = [];
+      for (const l of lines) {
+        const byLot = rows.filter((r) => r.product_id === l.productId);
+        if (byLot.length <= 1) { split.push(l); continue; }
+        for (const r of byLot) split.push({ ...l, qty: new D(r.q).toFixed(3), lotNumber: r.lot, expiryDate: r.expiry ? r.expiry.toISOString().slice(0, 10) : null });
+      }
+      lines.splice(0, lines.length, ...split);
+    }
     return this.create(ctx, {
       docType: targetType, date: date ?? new Date().toISOString().slice(0, 10), counterpartyId: base.counterpartyId ?? undefined,
       contractId: base.contractId ?? undefined, storeId: base.storeId ?? undefined, vatIncluded: (base.attributes as any)?.vatIncluded,
@@ -624,6 +662,7 @@ export class TradeDocumentsService {
   reserve(ctx: OrgContext, id: string) {
     return this.prisma.$transaction(async (tx) => {
       const doc = await this.scoped(tx, ctx, id);
+      if ((doc.attributes as any)?.closed) throw new AccError('ORDER_CLOSED', `Заказ ${doc.number ?? ''} закрыт — резервировать нечего`);
       let lines;
       try { lines = await reserveOrder(tx, doc as any, ctx.userId); } catch (e) { this.reserveErr(e); }
       await tx.auditLog.create({ data: { userId: ctx.userId, organizationId: ctx.organizationId, action: 'STOCK_RESERVE', entity: 'document', entityId: id, after: { lines } as any } });
@@ -637,6 +676,30 @@ export class TradeDocumentsService {
       await this.scoped(tx, ctx, id);
       const n = await releaseReservations(tx, id, 'RELEASED');
       await tx.auditLog.create({ data: { userId: ctx.userId, organizationId: ctx.organizationId, action: 'STOCK_RESERVE_RELEASE', entity: 'document', entityId: id, after: { released: n } } });
+      return this.view(tx, id);
+    });
+  }
+
+  // ── FP-034: закрытие остатка заказа ──
+
+  /**
+   * Закрыть заказ: остаток больше не исполняется (покупатель отказался, поставщик не довезёт). Резервы снимаются,
+   * новые реализации/поступления по заказу — нельзя. Причина обязательна; новая версия документа.
+   */
+  closeOrder(ctx: OrgContext, id: string, b: { reason?: string; expectedVersion?: unknown } = {}) {
+    return this.prisma.$transaction(async (tx) => {
+      const doc = await this.scoped(tx, ctx, id);
+      this.checkVersion(doc, b.expectedVersion);
+      if (!doc.docType.endsWith('_ORDER')) throw new AccError('NOT_ORDER', 'Закрыть можно только заказ');
+      const reason = String(b.reason ?? '').trim();
+      if (reason.length < 5) throw new AccError('REASON_REQUIRED', 'Укажите причину закрытия заказа (не короче 5 символов)');
+      const a = (doc.attributes ?? {}) as any;
+      if (a.closed) return this.view(tx, id);
+      if (doc.deleted || doc.status === 'CANCELLED') throw new AccError('DOC_CANCELLED', 'Заказ помечен на удаление');
+      await tx.document.update({ where: { id }, data: { attributes: { ...a, closed: { at: new Date().toISOString(), by: ctx.userId, reason } }, version: { increment: 1 }, updatedBy: ctx.userId } });
+      if (doc.docType === 'CUSTOMER_ORDER') await releaseReservations(tx, id, 'RELEASED');
+      await tx.auditLog.create({ data: { userId: ctx.userId, organizationId: ctx.organizationId, action: 'ORDER_CLOSE', entity: 'document', entityId: id, reason } });
+      await this.writeVersion(tx, ctx, id, 'CLOSE', reason);
       return this.view(tx, id);
     });
   }
@@ -782,17 +845,31 @@ export class TradeDocumentsService {
     const movements = await tx.stockMovement.findMany({ where: { sourceType: TRADE_SOURCE, sourceId: id }, orderBy: [{ createdAt: 'asc' }, { sourceLine: 'asc' }, { qty: 'asc' }] });
     const receipt = doc!.docType === 'SUPPLY' ? receiptSummary(doc!.lines) : null;
     const fulfillment = doc!.docType.endsWith('_ORDER') ? await this.fulfillmentOf(tx, doc!) : null;
+    // FP-034: возвраты по реализации / чеку — отгружено, возвращено, можно вернуть.
+    const returns = BASE_TARGETS[doc!.docType]?.some((x) => x.endsWith('_RETURN')) && doc!.docType !== 'SUPPLY' ? await this.returnsOf(tx, doc!) : null;
     // FP-032: резервы заказа покупателя, состояние перемещения в два этапа.
     const reservations = doc!.docType === 'CUSTOMER_ORDER' ? await tx.stockReservation.findMany({ where: { sourceType: TRADE_SOURCE, sourceId: id }, orderBy: [{ createdAt: 'asc' }] }) : [];
     const transit = doc!.docType === 'MOVE' && (doc!.attributes as any)?.twoStage ? await this.transitOf(tx, doc!) : null;
-    return { ...doc!, entry, costEntries, issue, related: [...(base ? [base] : []), ...children], movements, receipt, fulfillment, reservations, transit };
+    return { ...doc!, entry, costEntries, issue, related: [...(base ? [base] : []), ...children], movements, receipt, fulfillment, reservations, transit, returns };
+  }
+
+  private async returnsOf(tx: Tx, doc: { id: string; docType: string; lines: { productId: string; qty: any }[] }) {
+    const target = BASE_TARGETS[doc.docType][0];
+    const rets = await tx.document.findMany({ where: { docType: target as any, status: 'POSTED', deleted: false, attributes: { path: ['baseId'], equals: doc.id } }, include: { lines: true }, orderBy: { date: 'asc' } });
+    const shipped = new Map<string, Prisma.Decimal>(), returned = new Map<string, Prisma.Decimal>();
+    for (const l of doc.lines) shipped.set(l.productId, (shipped.get(l.productId) ?? new D(0)).plus(l.qty));
+    for (const r of rets) for (const l of r.lines) returned.set(l.productId, (returned.get(l.productId) ?? new D(0)).plus(l.qty));
+    return {
+      lines: [...shipped.entries()].map(([productId, q]) => ({ productId, shipped: q.toString(), returned: (returned.get(productId) ?? new D(0)).toString(), left: q.minus(returned.get(productId) ?? 0).toString() })),
+      documents: rets.map((r) => ({ id: r.id, number: r.number, date: r.date, total: r.total })),
+    };
   }
 
   /**
    * FP-030: исполнение заказа по проведённым документам на его основании: заказано, исполнено (принято / отгружено),
    * отказ при приёмке, остаток. Частичная приёмка — несколько поступлений по одному заказу.
    */
-  private async fulfillmentOf(tx: Tx, order: { id: string; docType: string; lines: { lineNo: number; productId: string; qty: any }[] }) {
+  private async fulfillmentOf(tx: Tx, order: { id: string; docType: string; attributes?: any; lines: { lineNo: number; productId: string; qty: any }[] }) {
     const target = BASE_TARGETS[order.docType]?.[0];
     const children = target ? await tx.document.findMany({
       where: { docType: target as any, status: 'POSTED', deleted: false, attributes: { path: ['baseId'], equals: order.id } },
@@ -813,9 +890,10 @@ export class TradeDocumentsService {
       return { lineNo: l.lineNo, productId: l.productId, ordered: ordered.toString(), fulfilled: take.toString(), remaining: ordered.minus(take).toString() };
     });
     const extra = [...done.entries()].filter(([, q]) => q.gt(0)).map(([productId, q]) => ({ productId, qty: q.toString() }));
-    const state = lines.every((l) => new D(l.remaining).isZero()) ? 'FULFILLED' : lines.some((l) => new D(l.fulfilled).gt(0)) ? 'PARTIAL' : 'OPEN';
+    const closed = (order as any).attributes?.closed ?? null;
+    const state = lines.every((l) => new D(l.remaining).isZero()) ? 'FULFILLED' : closed ? 'CLOSED' : lines.some((l) => new D(l.fulfilled).gt(0)) ? 'PARTIAL' : 'OPEN';
     return {
-      state, lines, overDelivered: extra,
+      state, closed, lines, overDelivered: extra,
       rejected: [...rejected.entries()].map(([productId, q]) => ({ productId, qty: q.toString() })),
       documents: children.map((c) => ({ id: c.id, number: c.number, date: c.date, total: c.total })),
     };

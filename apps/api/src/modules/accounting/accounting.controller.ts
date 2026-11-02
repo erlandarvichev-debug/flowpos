@@ -268,6 +268,10 @@ export class AccountingController {
   @Post('trade-documents/:id/receive') @RequirePermission('acc.doc.post') @ApiHeader(IDEMP_HEADER)
   tradeReceive(@Org() ctx: OrgContext, @Param('id') id: string, @Body() b: any) { return this.trade.receive(ctx, id, b ?? {}); }
 
+  // ── FP-034: закрытие остатка заказа ──
+  @Post('trade-documents/:id/close') @RequirePermission('acc.doc.write') @ApiHeader(IDEMP_HEADER)
+  tradeCloseOrder(@Org() ctx: OrgContext, @Param('id') id: string, @Body() b: any) { return this.trade.closeOrder(ctx, id, b ?? {}); }
+
   // ── FP-033: инвентаризация и партии ──
   @Post('trade-documents/:id/fill-from-stock') @RequirePermission('acc.doc.write') @ApiHeader(IDEMP_HEADER)
   tradeFillFromStock(@Org() ctx: OrgContext, @Param('id') id: string, @Body() b: any) { return this.trade.fillFromStock(ctx, id, b ?? {}); }

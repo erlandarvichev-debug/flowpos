@@ -319,7 +319,7 @@ describe('ЭСФ: возврат (дополнительный ЭСФ) и отз
   it('возврат на основании реализации → дополнительный ЭСФ: ссылка на основной, разница со знаком «минус», XSD', async () => {
     const { ctx, t, sale, inv } = await registeredSale();
     // без основания — понятная ошибка
-    const orphan = await s.trade.create(ctx, { docType: 'SALES_RETURN', date: '2026-10-08', counterpartyId: t.customer.id, storeId: t.s1.id, status: 'POSTED', lines: [{ productId: t.goods.id, qty: '1', price: '2320' }] });
+    const orphan = await s.trade.create(ctx, { docType: 'SALES_RETURN', date: '2026-10-08', counterpartyId: t.customer.id, storeId: t.s1.id, status: 'POSTED', noBasis: true, returnReason: 'чек утерян, возврат по акту', lines: [{ productId: t.goods.id, qty: '1', price: '2320' }] });
     await expectCode(esf.prepare(ctx, orphan.id), 'ESF_RETURN_NO_BASE');
 
     const ret = await s.trade.create(ctx, { docType: 'SALES_RETURN', date: '2026-10-09', counterpartyId: t.customer.id, storeId: t.s1.id, status: 'POSTED', baseId: sale.id, lines: [{ productId: t.goods.id, qty: '1', price: '2320' }] });
@@ -338,7 +338,11 @@ describe('ЭСФ: возврат (дополнительный ЭСФ) и отз
     const vatBack = ret.entry!.postings.filter((x: any) => x.account.code === '3130').reduce((a: number, x: any) => a + Number(x.amount), 0);
     expect(-Number(add.totalNds)).toBe(vatBack);
     // возвраты не могут превысить сумму основного ЭСФ (8120)
-    const big = await s.trade.create(ctx, { docType: 'SALES_RETURN', date: '2026-10-09', counterpartyId: t.customer.id, storeId: t.s1.id, status: 'POSTED', baseId: sale.id, lines: [{ productId: t.goods.id, qty: '3', price: '2320' }] });
+    // Документ учёта такой возврат не проведёт (FP-034, RETURN_EXCEEDS_SHIPPED); из обмена он может прийти — ЭСФ
+    // проверяет сумму сам.
+    expect(await s.trade.create(ctx, { docType: 'SALES_RETURN', date: '2026-10-09', counterpartyId: t.customer.id, storeId: t.s1.id, status: 'POSTED', baseId: sale.id, lines: [{ productId: t.goods.id, qty: '3', price: '2320' }] }).then(() => 'OK', (e: any) => e?.response?.code)).toBe('RETURN_EXCEEDS_SHIPPED');
+    const big = await prisma.document.create({ data: { docType: 'SALES_RETURN', number: `ВК-ОБМЕН-${Date.now() % 100000}`, date: new Date('2026-10-09'), status: 'POSTED', organizationId: ctx.organizationId, counterpartyId: t.customer.id, storeId: t.s1.id, total: 6960, owner: 'PLATFORM', attributes: { baseId: sale.id, vatIncluded: true }, lines: { create: [{ lineNo: 1, productId: t.goods.id, qty: 3, price: 2320, amount: 6960 }] } } });
+    await prisma.$transaction((tx) => s.autopilot.syncTradeDocument(tx, big.id, { organizationId: ctx.organizationId }));
     await expectCode(esf.prepare(ctx, big.id), 'ESF_RETURN_EXCEEDS');
     // возврат по реализации без зарегистрированного ЭСФ
     const sale2 = await s.trade.create(ctx, { docType: 'DEMAND', date: '2026-10-07', counterpartyId: t.customer.id, storeId: t.s1.id, status: 'POSTED', lines: [{ productId: t.goods.id, qty: '1', price: '2320' }] });

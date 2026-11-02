@@ -45,8 +45,8 @@ describe('Сквозной сценарий: покупка → оплата →
     const incPosted = await s.docs.post(ctx, inc.id);
     expect(incPosted.entry!.postings.map((p: any) => `${p.side}${p.account.code}:${p.amount}`).sort()).toEqual(['D1030:10000', 'C1210:9280', 'C3510:720'].sort());
 
-    // 6. Возврат 1 шт от покупателя
-    const ret = await s.trade.create(ctx, { docType: 'SALES_RETURN', date: '2026-10-07', counterpartyId: t.customer.id, storeId: t.s1.id, lines: [{ productId: t.goods.id, qty: '1', price: '2320' }], status: 'POSTED' });
+    // 6. Возврат 1 шт от покупателя — на основании реализации (FP-034: цены и себестоимость — из неё)
+    const ret = await s.trade.create(ctx, { docType: 'SALES_RETURN', date: '2026-10-07', counterpartyId: t.customer.id, storeId: t.s1.id, baseId: sale.id, lines: [{ productId: t.goods.id, qty: '1', price: '2320' }], status: 'POSTED' });
     expect(ret.costEntries.flatMap((e: any) => e.postings.map((p: any) => `${p.side}${p.account.code}:${p.amount}`)).sort()).toEqual(['D1330:1000', 'C7010:1000'].sort());
 
     // 7. Закрытие месяца

@@ -161,7 +161,8 @@ export async function buildTradeEntry(doc: TradeDoc, rc: TradeRuleCtx): Promise<
         total = total.plus(gross);
         P.push({ side: 'D', account: a.salesReturn, amount: net.toFixed(2), dims: { PRODUCT: l.productId, DEPARTMENT: dept }, memo: `Возврат: ${l.product.name}` });
         if (!vat.isZero()) P.push({ side: 'D', account: a.vatOut, amount: vat.toFixed(2), dims: { COUNTERPARTY: doc.counterpartyId ?? undefined, SETTLEMENT_DOC: doc.id }, memo: 'Уменьшение НДС по возврату' });
-        if (!isService(l)) M.push({ lineNo: l.lineNo, productId: l.productId, storeId: st, account: a.inventory, direction: 'IN', kind: 'SALES_RETURN', quantity: new D(l.qty).toFixed(3), knownCost: null, costAccount: a.cogs });
+        // FP-034: возврат на основании — по себестоимости исходной отгрузки (CostService), без основания — по средней склада.
+        if (!isService(l)) M.push({ lineNo: l.lineNo, productId: l.productId, storeId: st, account: a.inventory, direction: 'IN', kind: 'SALES_RETURN', quantity: new D(l.qty).toFixed(3), knownCost: null, costAccount: a.cogs, meta: doc.attributes?.baseId ? { baseSourceId: doc.attributes.baseId } : undefined });
       }
       if (retail) {
         const pay = doc.attributes?.paymentType === 'CARD' ? 'CARD' : 'CASH';
