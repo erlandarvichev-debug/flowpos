@@ -161,10 +161,12 @@ async function main() {
       create: { productId: product.id, priceTypeId: priceType.id, price: prodData.price },
     });
 
+    // FP-030: остаток — движением журнала (источник SEED), если строки остатка ещё нет.
     await prisma.$executeRaw`
-      INSERT INTO stock (id, product_id, store_id, bin_id, qty, reserved, updated_at)
-      VALUES (gen_random_uuid()::text, ${product.id}, ${mainStore.id}, NULL, 100, 0, NOW())
-      ON CONFLICT (product_id, store_id, bin_id) DO NOTHING
+      INSERT INTO stock_movements (id, organization_id, product_id, store_id, qty, kind, source_type, source_id, reason, occurred_at, created_at)
+      SELECT gen_random_uuid()::text, s.organization_id, ${product.id}, s.id, 100, 'OPENING', 'SEED', 'seed', 'Демо-данные', NOW(), NOW()
+      FROM stores s WHERE s.id = ${mainStore.id}
+        AND NOT EXISTS (SELECT 1 FROM stock WHERE product_id = ${product.id} AND store_id = ${mainStore.id} AND bin_id IS NULL)
     `;
   }
 

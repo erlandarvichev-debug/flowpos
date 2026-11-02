@@ -38,6 +38,7 @@
           <el-menu-item index="/trade/purchases">Закупки</el-menu-item>
           <el-menu-item index="/trade/sales">Продажи</el-menu-item>
           <el-menu-item index="/trade/stocks">Остатки</el-menu-item>
+          <el-menu-item v-if="org.can('stock.read')" index="/accounting/stock-movements">Движения товаров</el-menu-item>
           <el-menu-item index="/trade/transfers">Перемещения</el-menu-item>
           <el-menu-item index="/trade/inventories">Инвентаризации</el-menu-item>
         </el-sub-menu>

@@ -8,6 +8,7 @@ import { IdempotencyInterceptor } from './common/idempotency.interceptor';
 import { DocumentsService } from './documents/documents.service';
 import { DocumentGraphService } from './documents/graph.service';
 import { ApprovalsService } from './approvals/approvals.service';
+import { StockLedgerService } from './inventory/stock-ledger.service';
 import { ReportsService } from './reports/reports.service';
 import { ChartService } from './chart/chart.service';
 import { RefsService } from './refs/refs.service';
@@ -40,6 +41,7 @@ export class AccountingController {
     private docs: DocumentsService,
     private graph: DocumentGraphService,
     private approvals: ApprovalsService,
+    private ledger: StockLedgerService,
     private reports: ReportsService,
     private chart: ChartService,
     private refs: RefsService,
@@ -303,6 +305,17 @@ export class AccountingController {
   }
 
   // ── Отчёты: склад и расчёты ──
+  // ── FP-030: журнал складских движений и приёмка ──
+  // Количества — всем со складским чтением (кладовщик); стоимость — только с правом бухгалтерских отчётов.
+  @Get('stock-movements') @RequirePermission('stock.read')
+  stockMovements(@Org() ctx: OrgContext, @Query() q: any) { return this.ledger.movements(ctx, q, ctx.can('acc.reports.read')); }
+
+  @Get('stock-movements/check') @RequirePermission('stock.read')
+  stockMovementsCheck(@Org() ctx: OrgContext) { return this.ledger.check(ctx); }
+
+  @Get('receipt-discrepancies') @RequirePermission('stock.read')
+  receiptDiscrepancies(@Org() ctx: OrgContext, @Query() q: any) { return this.ledger.discrepancies(ctx, q, ctx.can('acc.reports.read')); }
+
   @Get('reports/stock') @RequirePermission('acc.reports.read')
   stock(@Org() ctx: OrgContext, @Query() q: any) { return this.reports.stock(ctx, q); }
 

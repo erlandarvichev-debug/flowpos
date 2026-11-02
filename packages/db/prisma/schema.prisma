@@ -518,6 +518,7 @@ model Product {
   prices     Price[]
   docLines   DocumentLine[]
   stocks     Stock[]
+  stockMovements StockMovement[]
 
   @@unique([tenantId, onecBase, onecGuid])
   @@unique([tenantId, msAccountId, msId])
@@ -771,6 +772,7 @@ model Store {
   organization Organization @relation(fields: [tenantId, organizationId], references: [tenantId, id])
   bins         Bin[]
   stocks       Stock[]
+  stockMovements StockMovement[]
   posTerminals POSTerminal[]
   documents    Document[]   @relation("DocumentStore")
   docTransfers Document[]   @relation("DocumentStoreTo")
@@ -819,6 +821,38 @@ model Stock {
   @@index([productId])
   @@index([storeId])
   @@map("stock")
+}
+
+/// FP-030: журнал складских движений — единственный источник изменения остатка (stock.qty меняется только
+/// триггером на вставку сюда). Строка неизменяема; отмена — встречное движение (reversesId). У каждого движения —
+/// источник (документ, строка, версия), количество со знаком и стоимость, если она известна при движении.
+model StockMovement {
+  id             String   @id @default(uuid())
+  tenantId       String   @default(dbgenerated("NULLIF(current_setting('flowpos.tenant_id', true), '')")) @map("tenant_id")
+  organizationId String   @map("organization_id")
+  productId      String   @map("product_id")
+  storeId        String   @map("store_id")
+  binId          String?  @map("bin_id")
+  qty            Decimal  @db.Decimal(18,3) // + приход, − расход
+  value          Decimal? @db.Decimal(18,2) // стоимость со знаком, если известна при движении; расход — по себестоимости (отчёт)
+  valueBasis     String?  @map("value_basis") // ACCOUNTING | DOCUMENT | REVERSAL | OPENING | PRE_LEDGER (отмена документа, проведённого до журнала)
+  kind           String   // RECEIPT | SHIPMENT | SALES_RETURN | PURCHASE_RETURN | ENTER | WRITE_OFF | TRANSFER_OUT | TRANSFER_IN | RETAIL_SALE | RETAIL_RETURN | OPENING
+  sourceType     String   @map("source_type") // TRADE_DOCUMENT | BACKFILL | SEED
+  sourceId       String   @map("source_id")
+  sourceLine     Int?     @map("source_line")
+  sourceVersion  Int?     @map("source_version")
+  reversesId     String?  @unique @map("reverses_id") // встречное движение: одно на исходное
+  reason         String?
+  occurredAt     DateTime @map("occurred_at") // дата документа
+  createdBy      String?  @map("created_by")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  product Product @relation(fields: [tenantId, productId], references: [tenantId, id])
+  store   Store   @relation(fields: [organizationId, storeId], references: [organizationId, id])
+
+  @@index([organizationId, productId, storeId, occurredAt])
+  @@index([sourceType, sourceId])
+  @@map("stock_movements")
 }
 
 model Counterparty {
@@ -1160,6 +1194,12 @@ model DocumentLine {
   vatRate    Decimal? @map("vat_rate") @db.Decimal(5,2)
   amount     Decimal? @db.Decimal(18,2)
   attributes Json?
+  /// FP-030: приёмка — количество по документу поставщика (заказу), отказ (брак, пересорт) и причина расхождения.
+  /// qty — принятое количество (оно идёт в остаток и учёт).
+  expectedQty       Decimal? @map("expected_qty") @db.Decimal(18,3)
+  rejectedQty       Decimal? @map("rejected_qty") @db.Decimal(18,3)
+  discrepancyReason String?  @map("discrepancy_reason") // SHORTAGE | SURPLUS | DAMAGED | WRONG_ITEM | OTHER
+  discrepancyNote   String?  @map("discrepancy_note")
 
   document Document @relation(fields: [tenantId, documentId], references: [tenantId, id], onDelete: Cascade)
   product  Product  @relation(fields: [tenantId, productId], references: [tenantId, id])

@@ -88,6 +88,8 @@ async function availableAdvance(rc: TradeRuleCtx, doc: TradeDoc, account: string
 }
 
 export async function buildTradeEntry(doc: TradeDoc, rc: TradeRuleCtx): Promise<RuleResult> {
+  // FP-030: строка поступления, где ничего не принято (не пришло или всё в отказе), — без проводок и движений.
+  doc = { ...doc, lines: doc.lines.filter((l) => !new D(l.qty).isZero()) };
   const a = rc.accounts;
   const P: PostingInput[] = [];
   const M: StockMoveInput[] = [];

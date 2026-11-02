@@ -97,4 +97,29 @@ describe('FP-028 документы через HTTP', () => {
     expect(await runAsTenant(t2, () => runtime.approval.count({ where: { id: req.body.id } }))).toBe(0);
     await prisma.approvalPolicy.deleteMany({ where: { organizationId: A.orgId } });
   });
+
+  it('FP-030: журнал движений — кладовщик видит количества без стоимости, бухгалтер — со стоимостью; чужой клиент и RLS — нет', async () => {
+    const t = await tradeA();
+    const d = await call(h, 'POST', '/accounting/trade-documents', { token: A.token, body: { docType: 'SUPPLY', date: '2026-10-01', counterpartyId: t.supplier.id, storeId: t.s1.id, status: 'POSTED', lines: [{ productId: t.goods2.id, qty: '3', price: '10', expectedQty: '4', discrepancyReason: 'SHORTAGE' }] } });
+    expect(d.status).toBe(201);
+    const keeper = await makeUser(h, DEFAULT_TENANT, A.orgId, { role: 'storekeeper', name: 'DocKeeper' });
+    const keeperTok = (await login(h, keeper.email)).token;
+    const asOwner = await call(h, 'GET', `/accounting/stock-movements?sourceId=${d.body.id}`, { token: A.token });
+    expect(asOwner.body.items.map((m: any) => [m.kind, m.qty, m.value, m.valueBasis])).toEqual([['RECEIPT', '3', '30.00', 'ACCOUNTING']]);
+    const asKeeper = await call(h, 'GET', `/accounting/stock-movements?sourceId=${d.body.id}`, { token: keeperTok });
+    expect(asKeeper.status).toBe(200);
+    expect(asKeeper.body.items[0]).toMatchObject({ kind: 'RECEIPT', qty: '3', source: { id: d.body.id } });
+    expect('value' in asKeeper.body.items[0]).toBe(false);
+    const disc = await call(h, 'GET', '/accounting/receipt-discrepancies?from=2026-10-01&to=2026-10-01', { token: keeperTok });
+    expect(disc.body.items.find((x: any) => x.id === d.body.id)).toMatchObject({ lines: [{ shortage: '1' }] });
+    expect(disc.body.items.find((x: any) => x.id === d.body.id).claimAmount).toBeUndefined();
+    expect((await call(h, 'GET', '/accounting/receipt-discrepancies?from=2026-10-01&to=2026-10-01', { token: A.token })).body.items.find((x: any) => x.id === d.body.id).claimAmount).toBe('10.00');
+    expect((await call(h, 'GET', '/accounting/stock-movements/check', { token: keeperTok })).body).toMatchObject({ ok: true });
+    expect((await call(h, 'GET', `/accounting/stock-movements?sourceId=${d.body.id}`, { token: B.token })).body.items).toEqual([]);
+    const hr = await makeUser(h, DEFAULT_TENANT, A.orgId, { role: 'hr', name: 'DocHr' });
+    expect((await call(h, 'GET', '/accounting/stock-movements', { token: (await login(h, hr.email)).token })).status).toBe(403);
+    const runtime = h.app.get(PrismaService);
+    expect(await runAsTenant(t2, () => runtime.stockMovement.count({ where: { sourceId: d.body.id } }))).toBe(0);
+    expect(await runAsTenant(DEFAULT_TENANT, () => runtime.stockMovement.count({ where: { sourceId: d.body.id } }))).toBe(1);
+  });
 });

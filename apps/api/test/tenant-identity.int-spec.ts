@@ -112,8 +112,11 @@ describe('FP-007: клиент над организацией', () => {
   it('остатки, цены, штрихкоды, ячейки и договоры — в пределах одного клиента', async () => {
     await inRolledBackTx(async (tx) => {
       const w = await world(tx);
-      await tx.stock.create({ data: { productId: w.t1c.product.id, storeId: w.t1c.store.id, qty: 1 } });
-      await rejected(tx, () => tx.stock.create({ data: { productId: w.t1c.product.id, storeId: w.t2c.store.id, qty: 1 } }));
+      // FP-030: строка остатка создаётся с нулём (количество — только движением журнала).
+      await tx.stock.create({ data: { productId: w.t1c.product.id, storeId: w.t1c.store.id, qty: 0 } });
+      await rejected(tx, () => tx.stock.create({ data: { productId: w.t1c.product.id, storeId: w.t2c.store.id, qty: 0 } }));
+      // Движение чужого товара на склад — тоже нет (составной ключ клиента).
+      await rejected(tx, () => tx.stockMovement.create({ data: { organizationId: w.t2c.store.organizationId, productId: w.t1c.product.id, storeId: w.t2c.store.id, qty: 1, kind: 'ENTER', sourceType: 'TEST', sourceId: 't', occurredAt: new Date() } }));
       await rejected(tx, () => tx.price.create({ data: { productId: w.t1c.product.id, priceTypeId: w.t2c.priceType.id, price: 10 } }));
       const bin = await tx.bin.create({ data: { storeId: w.t2c.store.id, name: 'B-1' } });
       await rejected(tx, () => tx.stock.create({ data: { productId: w.t2c.product.id, storeId: w.t2c.store.id, binId: bin.id, tenantId: DEFAULT_TENANT } }));

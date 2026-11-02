@@ -61,6 +61,8 @@ BEGIN
     ['prices',              'tenant_id',       'product_id',        'products',             'tenant_id'],
     ['bins',                'tenant_id',       'store_id',          'stores',               'tenant_id'],
     ['stock',               'tenant_id',       'store_id',          'stores',               'tenant_id'],
+    ['stock_movements',     'tenant_id',       'store_id',          'stores',               'tenant_id'],
+    ['stock_movements',     'organization_id', 'store_id',          'stores',               'organization_id'],
     ['contracts',           'tenant_id',       'counterparty_id',   'counterparties',       'tenant_id'],
     ['counterparty_addresses', 'tenant_id',    'counterparty_id',   'counterparties',       'tenant_id'],
     ['counterparty_bank_accounts', 'tenant_id', 'counterparty_id',   'counterparties',       'tenant_id'],

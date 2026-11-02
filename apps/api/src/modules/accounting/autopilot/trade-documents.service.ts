@@ -10,6 +10,8 @@ import { TRADE_SOURCE } from './trade-rules';
 import { contractPeriodProblem } from '../../catalog/requisites';
 import { tradeContent, tradeHash } from '../documents/content-hash';
 import { ApprovalsService } from '../approvals/approvals.service';
+import { recordDocumentMoves, reverseDocumentMoves } from '../../inventory/stock-ledger';
+import { ReceiptError, checkReceiptLine, receiptSummary } from '../../inventory/receipt';
 
 type Tx = Prisma.TransactionClient;
 
@@ -18,11 +20,13 @@ const PREFIX: Record<string, string> = {
   ENTER: 'ОПР', LOSS: 'СП', MOVE: 'ПМ', PAYMENT_IN: 'ПВ', PAYMENT_OUT: 'ИП', RETAIL_DEMAND: 'ЧЕК', RETAIL_RETURN: 'ВЧ',
 };
 const EDITABLE = Object.keys(PREFIX);
-/** Влияние на оперативный остаток (таблица stock FlowPOS): +1 приход, −1 расход. */
-const STOCK_SIGN: Record<string, number> = { SUPPLY: 1, SALES_RETURN: 1, ENTER: 1, RETAIL_RETURN: 1, DEMAND: -1, PURCHASE_RETURN: -1, LOSS: -1, RETAIL_DEMAND: -1 };
 const BASE_TARGETS: Record<string, string[]> = { CUSTOMER_ORDER: ['DEMAND'], PURCHASE_ORDER: ['SUPPLY'], DEMAND: ['SALES_RETURN'], SUPPLY: ['PURCHASE_RETURN'] };
 
-export interface TradeLineInput { productId: string; qty: string | number; price?: string | number; discount?: string | number; vatRate?: string | number | null }
+export interface TradeLineInput {
+  productId: string; qty: string | number; price?: string | number; discount?: string | number; vatRate?: string | number | null;
+  /** FP-030, поступление: по документу поставщика (заказу), отказ при приёмке, причина и пояснение расхождения. */
+  expectedQty?: string | number | null; rejectedQty?: string | number | null; discrepancyReason?: string | null; discrepancyNote?: string | null;
+}
 export interface TradeDocInput {
   docType: string;
   date: string;
@@ -103,9 +107,20 @@ export class TradeDocumentsService {
   }
 
   private buildLines(input: TradeDocInput) {
-    return (input.lines || []).map((l, i) => {
+    const opt = (v: unknown, what: string) => (v === undefined || v === null || v === '' ? null : money(v as any, 3, what));
+    const lines = (input.lines || []).map((l, i) => {
       const qty = money(l.qty, 3, `количество (строка ${i + 1})`);
-      if (qty.lte(0)) throw new AccError('BAD_QTY', `Строка ${i + 1}: количество должно быть больше нуля`);
+      // FP-030: приёмка — принятое, по документу, отказ, причина (поля только у поступления).
+      const receipt = {
+        expectedQty: opt(l.expectedQty, `количество по документу (строка ${i + 1})`), rejectedQty: opt(l.rejectedQty, `отказ (строка ${i + 1})`),
+        discrepancyReason: l.discrepancyReason || null, discrepancyNote: (l.discrepancyNote ?? '').trim() || null,
+      };
+      try {
+        checkReceiptLine(input.docType, i + 1, { qty, ...receipt });
+      } catch (e) {
+        if (e instanceof ReceiptError) throw new AccError(e.code, e.message, e.fix ? { fix: e.fix } : undefined);
+        throw e;
+      }
       const price = l.price !== undefined && l.price !== '' ? money(l.price, 2, `цена (строка ${i + 1})`) : null;
       const discount = l.discount !== undefined && l.discount !== '' ? money(l.discount, 2, 'скидка %') : null;
       const gross = price ? price.times(qty) : new D(0);
@@ -113,32 +128,27 @@ export class TradeDocumentsService {
       return {
         lineNo: i + 1, productId: l.productId, qty, price, discount, amount,
         vatRate: l.vatRate !== undefined && l.vatRate !== null && l.vatRate !== '' ? new D(String(l.vatRate)) : null,
+        ...receipt,
       };
     });
+    if (input.docType === 'SUPPLY' && lines.length && lines.every((l) => l.qty.isZero())) {
+      throw new AccError('NOTHING_ACCEPTED', 'Ничего не принято: во всех строках принятое количество 0', { fix: 'Если поставка не пришла, не создавайте поступление — заказ останется открытым.' });
+    }
+    return lines;
+  }
+
+  /** Строка для записи в БД. */
+  private lineData(l: ReturnType<TradeDocumentsService['buildLines']>[number]) {
+    return {
+      lineNo: l.lineNo, productId: l.productId, qty: l.qty, price: l.price, discount: l.discount, amount: l.amount, vatRate: l.vatRate,
+      expectedQty: l.expectedQty, rejectedQty: l.rejectedQty, discrepancyReason: l.discrepancyReason, discrepancyNote: l.discrepancyNote,
+    };
   }
 
   private attrs(input: TradeDocInput, prev: any = {}) {
     const a: any = { ...prev };
     for (const k of ['vatIncluded', 'paymentType', 'bankAccountId', 'departmentId', 'lossAccount', 'baseId', 'comment'] as const) if ((input as any)[k] !== undefined) a[k] = (input as any)[k];
     return a;
-  }
-
-  private async applyStock(tx: Tx, doc: { docType: string; storeId: string | null; storeToId: string | null; lines: { productId: string; qty: any }[] }, sign: 1 | -1) {
-    const apply = async (storeId: string, productId: string, delta: Prisma.Decimal) => {
-      const row = await tx.stock.findFirst({ where: { productId, storeId, binId: null } });
-      if (row) await tx.stock.update({ where: { id: row.id }, data: { qty: { increment: delta } } });
-      else await tx.stock.create({ data: { productId, storeId, qty: delta } });
-    };
-    if (doc.docType === 'MOVE') {
-      for (const l of doc.lines) {
-        await apply(doc.storeId!, l.productId, new D(l.qty).times(-sign));
-        await apply(doc.storeToId!, l.productId, new D(l.qty).times(sign));
-      }
-      return;
-    }
-    const s = STOCK_SIGN[doc.docType];
-    if (!s || !doc.storeId) return;
-    for (const l of doc.lines) await apply(doc.storeId, l.productId, new D(l.qty).times(s * sign));
   }
 
   // ── FP-028: версии ──
@@ -180,7 +190,7 @@ export class TradeDocumentsService {
           docType: input.docType as any, number, date, status: 'DRAFT', organizationId: ctx.organizationId,
           counterpartyId: input.counterpartyId, contractId: input.contractId, storeId: input.storeId, storeToId: input.storeToId,
           total, comment: input.comment, attributes: this.attrs(input), owner: 'PLATFORM', syncStatus: 'SYNCED', updatedBy: ctx.userId,
-          lines: { create: lines.map((l) => ({ lineNo: l.lineNo, productId: l.productId, qty: l.qty, price: l.price, discount: l.discount, amount: l.amount, vatRate: l.vatRate })) },
+          lines: { create: lines.map((l) => this.lineData(l)) },
         },
       });
       await tx.auditLog.create({ data: { userId: ctx.userId, organizationId: ctx.organizationId, action: 'TRADE_DOC_CREATE', entity: 'document', entityId: doc.id, after: { docType: doc.docType, number, total: total.toFixed(2) } } });
@@ -206,7 +216,10 @@ export class TradeDocumentsService {
       const merged: TradeDocInput = {
         docType: doc.docType, date: input.date ?? doc.date.toISOString(), counterpartyId: input.counterpartyId ?? doc.counterpartyId ?? undefined,
         contractId: input.contractId ?? doc.contractId ?? undefined, storeId: input.storeId ?? doc.storeId ?? undefined, storeToId: input.storeToId ?? doc.storeToId ?? undefined,
-        lines: input.lines ?? doc.lines.map((l) => ({ productId: l.productId, qty: l.qty.toString(), price: l.price?.toString(), discount: l.discount?.toString(), vatRate: l.vatRate?.toString() ?? null })),
+        lines: input.lines ?? doc.lines.map((l) => ({
+          productId: l.productId, qty: l.qty.toString(), price: l.price?.toString(), discount: l.discount?.toString(), vatRate: l.vatRate?.toString() ?? null,
+          expectedQty: l.expectedQty?.toString() ?? null, rejectedQty: l.rejectedQty?.toString() ?? null, discrepancyReason: l.discrepancyReason, discrepancyNote: l.discrepancyNote,
+        })),
         amount: input.amount ?? doc.total?.toString(),
       } as TradeDocInput;
       for (const k of ['comment', 'vatIncluded', 'paymentType', 'bankAccountId', 'departmentId', 'lossAccount'] as const) if ((input as any)[k] !== undefined) (merged as any)[k] = (input as any)[k];
@@ -223,7 +236,7 @@ export class TradeDocumentsService {
       const wasPosted = doc.status === 'POSTED';
       // Проведённая версия неизменяема: снимаем проведение, меняем, проводим новую версию (всё в одной транзакции).
       if (wasPosted) {
-        await this.applyStock(tx, doc, -1);
+        await reverseDocumentMoves(tx, doc, { userId: ctx.userId, reason: input.reason });
         await tx.document.update({ where: { id }, data: { status: 'DRAFT' } });
       }
       const lines = this.buildLines(merged);
@@ -235,7 +248,7 @@ export class TradeDocumentsService {
         data: {
           date: new Date(merged.date), counterpartyId: merged.counterpartyId, contractId: merged.contractId, storeId: merged.storeId, storeToId: merged.storeToId,
           total, comment: merged.comment ?? doc.comment, attributes: this.attrs(input as TradeDocInput, doc.attributes ?? {}), updatedBy: ctx.userId, version: { increment: 1 },
-          lines: { create: lines.map((l) => ({ lineNo: l.lineNo, productId: l.productId, qty: l.qty, price: l.price, discount: l.discount, amount: l.amount, vatRate: l.vatRate })) },
+          lines: { create: lines.map((l) => this.lineData(l)) },
         },
       });
       await tx.auditLog.create({ data: { userId: ctx.userId, organizationId: ctx.organizationId, action: 'TRADE_DOC_UPDATE', entity: 'document', entityId: id, reason: input.reason, before: { total: doc.total, date: doc.date } as any, after: { total: total.toFixed(2), date: merged.date } } });
@@ -245,8 +258,8 @@ export class TradeDocumentsService {
       if (wasPosted) {
         const fresh = await tx.document.findUnique({ where: { id }, include: { lines: true } });
         await tx.document.update({ where: { id }, data: { status: 'POSTED', postedVersion: fresh!.version } });
-        await this.applyStock(tx, fresh!, 1);
         await this.autopilot.syncTradeDocument(tx, id, { userId: ctx.userId, override, organizationId: ctx.organizationId });
+        await recordDocumentMoves(tx, fresh!, { userId: ctx.userId, reason: input.reason });
         await this.writeVersion(tx, ctx, id, 'POST', input.reason);
       }
       return this.view(tx, id);
@@ -268,8 +281,9 @@ export class TradeDocumentsService {
     // FP-029: если правило требует согласования — нужно действующее согласование этой версии (расходуется).
     await this.approvals.consumeForPost(tx, ctx, await this.approvals.docState(tx, ctx, 'TRADE', id));
     await tx.document.update({ where: { id }, data: { status: 'POSTED', postedVersion: doc.version, updatedBy: ctx.userId } });
-    await this.applyStock(tx, doc, 1);
+    // FP-030: сначала учёт (стоимость прихода — из него), затем движения склада с источником.
     await this.autopilot.syncTradeDocument(tx, id, { userId: ctx.userId, override, organizationId: ctx.organizationId });
+    await recordDocumentMoves(tx, doc, { userId: ctx.userId });
     await this.writeVersion(tx, ctx, id, 'POST');
     return this.view(tx, id);
   }
@@ -296,8 +310,8 @@ export class TradeDocumentsService {
         else {
           try {
             await tx.document.update({ where: { id }, data: { status: 'POSTED', postedVersion: doc.version } });
-            await this.applyStock(tx, doc, 1);
             await this.autopilot.syncTradeDocument(tx, id, { userId: ctx.userId, organizationId: ctx.organizationId });
+            await recordDocumentMoves(tx, doc, { userId: ctx.userId });
           } catch (e: any) {
             error = { code: e?.getResponse?.()?.code ?? 'ERROR', message: e?.getResponse?.()?.message ?? e?.message };
           }
@@ -335,7 +349,7 @@ export class TradeDocumentsService {
       this.checkVersion(doc, expectedVersion);
       if (doc.status !== 'POSTED') return this.view(tx, id);
       await tx.document.update({ where: { id }, data: { status: 'DRAFT', postedVersion: null, updatedBy: ctx.userId } });
-      await this.applyStock(tx, doc, -1);
+      await reverseDocumentMoves(tx, doc, { userId: ctx.userId, reason: 'Снятие проведения' });
       await this.autopilot.syncTradeDocument(tx, id, { userId: ctx.userId, override, organizationId: ctx.organizationId });
       await this.writeVersion(tx, ctx, id, 'UNPOST');
       return this.view(tx, id);
@@ -347,7 +361,7 @@ export class TradeDocumentsService {
       const doc = await this.scoped(tx, ctx, id);
       this.checkVersion(doc, expectedVersion);
       if (doc.deleted && doc.status === 'CANCELLED') return this.view(tx, id);
-      if (doc.status === 'POSTED') await this.applyStock(tx, doc, -1);
+      if (doc.status === 'POSTED') await reverseDocumentMoves(tx, doc, { userId: ctx.userId, reason: 'Пометка на удаление' });
       await tx.document.update({ where: { id }, data: { status: 'CANCELLED', deleted: true, postedVersion: null, updatedBy: ctx.userId } });
       await this.autopilot.syncTradeDocument(tx, id, { userId: ctx.userId, override, organizationId: ctx.organizationId });
       await this.writeVersion(tx, ctx, id, 'CANCEL');
@@ -383,7 +397,11 @@ export class TradeDocumentsService {
     for (const l of base.lines) {
       const left = new D(l.qty).minus(done.get(l.productId) ?? 0);
       if (left.gt(0)) {
-        lines.push({ productId: l.productId, qty: left.toFixed(3), price: l.price?.toString(), discount: l.discount?.toString(), vatRate: l.vatRate?.toString() ?? null });
+        // FP-030: поступление по заказу — ожидается остаток заказа; принятое по умолчанию = ожидаемому (правится при приёмке).
+        lines.push({
+          productId: l.productId, qty: left.toFixed(3), price: l.price?.toString(), discount: l.discount?.toString(), vatRate: l.vatRate?.toString() ?? null,
+          ...(targetType === 'SUPPLY' ? { expectedQty: left.toFixed(3) } : {}),
+        });
         done.set(l.productId, new D(0));
       }
     }
@@ -447,6 +465,43 @@ export class TradeDocumentsService {
     const children = await tx.document.findMany({ where: { attributes: { path: ['baseId'], equals: id } }, select: { id: true, number: true, docType: true, status: true, date: true, total: true } });
     const baseId = (doc!.attributes as any)?.baseId;
     const base = baseId ? await tx.document.findUnique({ where: { id: baseId }, select: { id: true, number: true, docType: true, status: true, date: true, total: true } }) : null;
-    return { ...doc!, entry, costEntries, issue, related: [...(base ? [base] : []), ...children] };
+    // FP-030: движения склада документа (с источником, количеством и стоимостью), приёмка и исполнение заказа.
+    const movements = await tx.stockMovement.findMany({ where: { sourceType: TRADE_SOURCE, sourceId: id }, orderBy: [{ createdAt: 'asc' }, { sourceLine: 'asc' }, { qty: 'asc' }] });
+    const receipt = doc!.docType === 'SUPPLY' ? receiptSummary(doc!.lines) : null;
+    const fulfillment = doc!.docType.endsWith('_ORDER') ? await this.fulfillmentOf(tx, doc!) : null;
+    return { ...doc!, entry, costEntries, issue, related: [...(base ? [base] : []), ...children], movements, receipt, fulfillment };
+  }
+
+  /**
+   * FP-030: исполнение заказа по проведённым документам на его основании: заказано, исполнено (принято / отгружено),
+   * отказ при приёмке, остаток. Частичная приёмка — несколько поступлений по одному заказу.
+   */
+  private async fulfillmentOf(tx: Tx, order: { id: string; docType: string; lines: { lineNo: number; productId: string; qty: any }[] }) {
+    const target = BASE_TARGETS[order.docType]?.[0];
+    const children = target ? await tx.document.findMany({
+      where: { docType: target as any, status: 'POSTED', deleted: false, attributes: { path: ['baseId'], equals: order.id } },
+      include: { lines: true }, orderBy: { date: 'asc' },
+    }) : [];
+    const done = new Map<string, Prisma.Decimal>();
+    const rejected = new Map<string, Prisma.Decimal>();
+    for (const c of children) for (const l of c.lines) {
+      done.set(l.productId, (done.get(l.productId) ?? new D(0)).plus(l.qty));
+      if (l.rejectedQty) rejected.set(l.productId, (rejected.get(l.productId) ?? new D(0)).plus(l.rejectedQty));
+    }
+    // Исполненное распределяется по строкам заказа одного товара по порядку (как при «создать на основании»).
+    const lines = order.lines.map((l) => {
+      const ordered = new D(l.qty);
+      const avail = done.get(l.productId) ?? new D(0);
+      const take = D.min(avail, ordered);
+      done.set(l.productId, avail.minus(take));
+      return { lineNo: l.lineNo, productId: l.productId, ordered: ordered.toString(), fulfilled: take.toString(), remaining: ordered.minus(take).toString() };
+    });
+    const extra = [...done.entries()].filter(([, q]) => q.gt(0)).map(([productId, q]) => ({ productId, qty: q.toString() }));
+    const state = lines.every((l) => new D(l.remaining).isZero()) ? 'FULFILLED' : lines.some((l) => new D(l.fulfilled).gt(0)) ? 'PARTIAL' : 'OPEN';
+    return {
+      state, lines, overDelivered: extra,
+      rejected: [...rejected.entries()].map(([productId, q]) => ({ productId, qty: q.toString() })),
+      documents: children.map((c) => ({ id: c.id, number: c.number, date: c.date, total: c.total })),
+    };
   }
 }

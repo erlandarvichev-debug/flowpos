@@ -149,3 +149,17 @@ export async function loadDimOptions(dim: string, search = ''): Promise<{ value:
     default: return []
   }
 }
+
+/** FP-030: виды складских движений, причины расхождений приёмки, основание стоимости движения. */
+export const MOVE_KINDS: Record<string, string> = {
+  RECEIPT: 'Поступление', SHIPMENT: 'Отгрузка', SALES_RETURN: 'Возврат покупателя', PURCHASE_RETURN: 'Возврат поставщику',
+  ENTER: 'Оприходование', WRITE_OFF: 'Списание', TRANSFER_OUT: 'Перемещение (расход)', TRANSFER_IN: 'Перемещение (приход)',
+  RETAIL_SALE: 'Розничная продажа', RETAIL_RETURN: 'Возврат в рознице', OPENING: 'Начальный остаток',
+}
+export const DISCREPANCY_REASONS: Record<string, string> = {
+  SHORTAGE: 'Недостача', SURPLUS: 'Излишек', DAMAGED: 'Брак / повреждение', WRONG_ITEM: 'Пересорт', OTHER: 'Другое',
+}
+export const VALUE_BASIS: Record<string, string> = {
+  ACCOUNTING: 'из учёта (без НДС)', DOCUMENT: 'по документу', COST: 'себестоимость', REVERSAL: 'встречное', OPENING: 'начальный остаток',
+  PRE_LEDGER: 'отмена проведения до журнала',
+}

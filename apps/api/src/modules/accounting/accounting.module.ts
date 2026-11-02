@@ -21,10 +21,11 @@ import { VatCreditService } from './vat/vat-credit.service';
 import { StatementsService } from './statements/statements.service';
 import { ClosingService } from './closing/closing.service';
 import { PayrollService } from './payroll/payroll.service';
+import { StockLedgerService } from './inventory/stock-ledger.service';
 
 @Module({
   controllers: [AccountingController, OpsMetricsController],
-  providers: [OrgGuard, IdempotencyInterceptor, DocumentsService, DocumentGraphService, ApprovalsService, ReportsService, ChartService, RefsService, PeriodsService, PostingService, CostService, AutopilotService, TradeDocumentsService, BankImportService, EsfService, EsfMonitorService, StatementsService, ClosingService, PayrollService, VatCreditService],
+  providers: [OrgGuard, IdempotencyInterceptor, StockLedgerService, DocumentsService, DocumentGraphService, ApprovalsService, ReportsService, ChartService, RefsService, PeriodsService, PostingService, CostService, AutopilotService, TradeDocumentsService, BankImportService, EsfService, EsfMonitorService, StatementsService, ClosingService, PayrollService, VatCreditService],
   exports: [ApprovalsService, PayrollService, StatementsService, ClosingService, EsfService, AutopilotService, TradeDocumentsService, CostService, DocumentsService, ReportsService, ChartService, RefsService, PeriodsService, PostingService, OrgGuard],
 })
 export class AccountingModule {}

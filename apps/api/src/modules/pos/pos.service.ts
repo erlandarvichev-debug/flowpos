@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { Scope, scopeError, writable } from '../../common/scope';
 import { assertTradeRefs, docHeader, nextNumber, orgDocs } from '../trade/trade-scope';
+import { recordLegacyPosted } from '../inventory/stock-ledger';
 
 /** Кассы, смены и чеки — только своей организации (FP-007). */
 @Injectable()
@@ -163,7 +164,7 @@ export class PosService {
 
     return this.prisma.$transaction(async (tx) => {
       await assertTradeRefs(tx, s, { counterpartyId: rest.counterpartyId, storeIds: [rest.storeId], productIds: items?.map((i) => i.productId) });
-      return tx.document.create({
+      const doc = await tx.document.create({
         data: {
           docType: 'RETAIL_DEMAND',
           date: new Date(),
@@ -183,6 +184,9 @@ export class PosService {
             : undefined,
         } as Prisma.DocumentUncheckedCreateInput,
       });
+      // FP-030: проведённый чек списывает остаток движением журнала.
+      await recordLegacyPosted(tx, doc.id, s.userId);
+      return doc;
     });
   }
 }

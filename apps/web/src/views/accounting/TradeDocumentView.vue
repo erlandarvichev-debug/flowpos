@@ -41,6 +41,13 @@
     <el-alert v-if="isExternal" type="info" :closable="false" show-icon style="margin-bottom: 12px;"
       :title="`Документ получен из обмена (${doc.owner}). Изменяйте его в системе-источнике — здесь только просмотр и отражение в учёте.`" />
 
+    <el-alert v-if="doc.receipt?.hasDiscrepancy" type="warning" :closable="false" show-icon style="margin-bottom: 12px;"
+      :title="`Расхождения при приёмке: строк ${doc.receipt.lines.length}${Number(doc.receipt.claimAmount) ? `, претензия поставщику ${fmtMoney(doc.receipt.claimAmount)} ₸` : ''}${Number(doc.receipt.surplusAmount) ? `, излишек на ${fmtMoney(doc.receipt.surplusAmount)} ₸` : ''}`">
+      <div>В остаток и учёт попадает только принятое количество. Недостача и отказ остаются в заказе к поставке.</div>
+    </el-alert>
+    <el-alert v-if="doc.fulfillment && doc.fulfillment.state !== 'OPEN'" :type="doc.fulfillment.state === 'FULFILLED' ? 'success' : 'info'" :closable="false" show-icon style="margin-bottom: 12px;"
+      :title="doc.fulfillment.state === 'FULFILLED' ? 'Заказ исполнен полностью' : `Заказ исполнен частично: документов ${doc.fulfillment.documents.length}, остаток по строкам — на вкладке «Исполнение»`" />
+
     <el-card style="margin-bottom: 12px;">
       <el-form label-width="150px" class="head-form">
         <el-form-item :label="t('date')">
@@ -85,18 +92,22 @@
       <template #header>
         <div class="card-head">
           <span>{{ t('lines') }}</span>
+          <el-checkbox v-if="docType === 'SUPPLY'" v-model="receiptMode" :disabled="readonly">Приёмка с расхождениями (по документу поставщика, отказ, причина)</el-checkbox>
           <span class="totals" v-if="hasPrices">{{ t('total') }}: <b>{{ fmtMoney(total) }}</b> ₸</span>
         </div>
       </template>
       <div class="lines" ref="linesEl">
         <div class="line head">
-          <div class="c-no">№</div><div class="c-prod">{{ t('product') }}</div><div class="c-num">{{ t('qty') }}</div>
+          <div class="c-no">№</div><div class="c-prod">{{ t('product') }}</div>
+          <template v-if="receiptMode"><div class="c-num">По документу</div><div class="c-num">Принято</div><div class="c-pct">Отказ</div><div class="c-reason">Причина</div></template>
+          <div v-else class="c-num">{{ t('qty') }}</div>
           <template v-if="hasPrices">
             <div class="c-num">{{ t('price') }}</div><div class="c-pct">{{ t('discount') }}</div><div class="c-pct">{{ t('vatRate') }}</div><div class="c-sum">{{ t('amount') }}</div>
           </template>
           <div class="c-del"></div>
         </div>
-        <div v-for="(l, i) in form.lines" :key="l.key" class="line">
+        <template v-for="(l, i) in form.lines" :key="l.key">
+        <div class="line">
           <div class="c-no">{{ i + 1 }}</div>
           <div class="c-prod">
             <el-select v-model="l.productId" filterable remote clearable :remote-method="searchProducts" :loading="prodLoading"
@@ -104,7 +115,17 @@
               <el-option v-for="p in mergedProducts(l)" :key="p.value" :label="p.label" :value="p.value" />
             </el-select>
           </div>
-          <div class="c-num"><el-input v-model="l.qty" size="small" class="nav-field num-in" :disabled="readonly" placeholder="0" /></div>
+          <template v-if="receiptMode">
+            <div class="c-num"><el-input v-model="l.expectedQty" size="small" class="nav-field num-in" :disabled="readonly" placeholder="—" /></div>
+            <div class="c-num"><el-input v-model="l.qty" size="small" class="nav-field num-in" :disabled="readonly" placeholder="0" /></div>
+            <div class="c-pct"><el-input v-model="l.rejectedQty" size="small" class="nav-field num-in" :disabled="readonly" /></div>
+            <div class="c-reason">
+              <el-select v-model="l.discrepancyReason" size="small" clearable :disabled="readonly" :placeholder="diffOf(l).has ? 'укажите' : '—'" :class="{ 'need-reason': diffOf(l).has && !l.discrepancyReason }">
+                <el-option v-for="(label, k) in DISCREPANCY_REASONS" :key="k" :label="label" :value="k" />
+              </el-select>
+            </div>
+          </template>
+          <div v-else class="c-num"><el-input v-model="l.qty" size="small" class="nav-field num-in" :disabled="readonly" placeholder="0" /></div>
           <template v-if="hasPrices">
             <div class="c-num"><el-input v-model="l.price" size="small" class="nav-field num-in" :disabled="readonly" placeholder="0.00" /></div>
             <div class="c-pct"><el-input v-model="l.discount" size="small" class="nav-field num-in" :disabled="readonly" /></div>
@@ -113,6 +134,16 @@
           </template>
           <div class="c-del"><el-button v-if="!readonly" link type="danger" :icon="Delete" @click="form.lines.splice(i, 1)" /></div>
         </div>
+        <div v-if="receiptMode && (diffOf(l).has || l.discrepancyReason)" class="line sub">
+          <div class="c-no"></div>
+          <span class="diff">
+            <span v-if="diffOf(l).shortage" class="neg">недостача {{ diffOf(l).shortage }}</span>
+            <span v-if="diffOf(l).surplus" class="pos">излишек {{ diffOf(l).surplus }}</span>
+            <span v-if="diffOf(l).rejected" class="neg">отказ {{ diffOf(l).rejected }}</span>
+          </span>
+          <el-input v-model="l.discrepancyNote" size="small" :disabled="readonly" placeholder="Пояснение (обязательно для «Другое»)" style="max-width: 420px;" />
+        </div>
+        </template>
       </div>
       <div style="margin-top: 10px;" v-if="!readonly">
         <el-button :icon="Plus" size="small" @click="addLine">{{ t('addLine') }}</el-button>
@@ -128,6 +159,34 @@
         </el-tab-pane>
         <el-tab-pane :label="`${t('cost')} (${costPostings.length})`">
           <PostingsTable :postings="costPostings" empty="Себестоимость не рассчитывалась (нет складских расходов)" />
+        </el-tab-pane>
+        <el-tab-pane :label="`Движения склада (${doc.movements?.length || 0})`">
+          <el-table :data="doc.movements || []" size="small" empty-text="Движений нет (документ не проведён или не меняет остаток)">
+            <el-table-column label="Вид" width="200">
+              <template #default="{ row }">{{ MOVE_KINDS[row.kind] ?? row.kind }} <el-tag v-if="row.reversesId" size="small" type="info">встречное</el-tag></template>
+            </el-table-column>
+            <el-table-column label="Строка" width="70" prop="sourceLine" />
+            <el-table-column label="Версия" width="70" prop="sourceVersion" />
+            <el-table-column label="Товар" min-width="180" show-overflow-tooltip><template #default="{ row }">{{ productName(row.productId) }}</template></el-table-column>
+            <el-table-column label="Склад" width="150" show-overflow-tooltip><template #default="{ row }">{{ stores.find((x) => x.id === row.storeId)?.name ?? row.storeId }}</template></el-table-column>
+            <el-table-column label="Количество" width="110" align="right"><template #default="{ row }">{{ Number(row.qty) > 0 ? '+' : '' }}{{ row.qty }}</template></el-table-column>
+            <el-table-column v-if="org.can('acc.reports.read')" label="Стоимость" width="150" align="right">
+              <template #default="{ row }">{{ row.value == null ? '—' : fmtMoney(row.value) }}<div v-if="row.valueBasis" class="hint0">{{ VALUE_BASIS[row.valueBasis] ?? row.valueBasis }}</div></template>
+            </el-table-column>
+            <el-table-column label="Когда" width="140"><template #default="{ row }">{{ dayjs(row.createdAt).format('DD.MM.YYYY HH:mm') }}</template></el-table-column>
+          </el-table>
+          <div class="hint0" style="margin-top: 6px;">Стоимость расхода — по себестоимости (журнал «Движения товаров»).</div>
+        </el-tab-pane>
+        <el-tab-pane v-if="doc.fulfillment" label="Исполнение">
+          <el-table :data="doc.fulfillment.lines" size="small">
+            <el-table-column label="Строка" width="70" prop="lineNo" />
+            <el-table-column label="Товар" min-width="200" show-overflow-tooltip><template #default="{ row }">{{ productName(row.productId) }}</template></el-table-column>
+            <el-table-column label="Заказано" width="110" align="right" prop="ordered" />
+            <el-table-column :label="docType === 'PURCHASE_ORDER' ? 'Принято' : 'Отгружено'" width="110" align="right" prop="fulfilled" />
+            <el-table-column label="Осталось" width="110" align="right"><template #default="{ row }"><b>{{ row.remaining }}</b></template></el-table-column>
+          </el-table>
+          <div v-if="doc.fulfillment.rejected.length" class="hint0" style="margin-top: 6px;">Отказ при приёмке: {{ doc.fulfillment.rejected.map((r: any) => `${productName(r.productId)} — ${r.qty}`).join('; ') }} (остаётся к поставке).</div>
+          <div v-if="doc.fulfillment.overDelivered.length" class="hint0">Сверх заказа: {{ doc.fulfillment.overDelivered.map((r: any) => `${productName(r.productId)} — ${r.qty}`).join('; ') }}.</div>
         </el-tab-pane>
         <el-tab-pane :label="`${t('related')} (${doc.related?.length || 0})`">
           <el-table :data="doc.related || []" size="small" empty-text="Нет связанных документов" @row-click="(r: any) => router.push(`/accounting/trade/${r.id}`)" style="cursor: pointer;">
@@ -156,7 +215,7 @@ import PostingPreview from '@/components/accounting/PostingPreview.vue'
 import { useI18n } from '@/composables/useI18n'
 import AccountSelect from '@/components/accounting/AccountSelect.vue'
 import DimSelect from '@/components/accounting/DimSelect.vue'
-import { BASE_TARGETS, STATUS_TYPES, TRADE_TYPES, addMoney, fmtDate, fmtMoney, idem, lineTotal, loadDimOptions, normAmount, showError } from './acc'
+import { BASE_TARGETS, DISCREPANCY_REASONS, MOVE_KINDS, STATUS_TYPES, TRADE_TYPES, VALUE_BASIS, addMoney, fmtDate, fmtMoney, idem, lineTotal, loadDimOptions, normAmount, showError } from './acc'
 
 const route = useRoute()
 const router = useRouter()
@@ -211,7 +270,21 @@ const costPostings = computed(() => (doc.value.costEntries || []).flatMap((e: an
 
 const tl = (k: string) => (TRADE_TYPES[k] ? TRADE_TYPES[k][lang.value] : k)
 
-function emptyLine() { return { key: ++keySeq, productId: undefined, productName: '', qty: '', price: '', discount: '', vatRate: '' } }
+function emptyLine() { return { key: ++keySeq, productId: undefined, productName: '', qty: '', price: '', discount: '', vatRate: '', expectedQty: '', rejectedQty: '', discrepancyReason: undefined, discrepancyNote: '' } }
+
+/** FP-030: приёмка с расхождениями (поступление) — включается сама, если у строк есть «по документу». */
+const receiptMode = ref(false)
+const num = (v: any) => Number(normAmount(v) || 0)
+/** Расхождение строки (как на сервере): недостача = по документу − принято − отказ, излишек — наоборот. */
+function diffOf(l: any) {
+  if (normAmount(l.expectedQty) === '') return { has: num(l.rejectedQty) > 0, shortage: 0, surplus: 0, rejected: num(l.rejectedQty) }
+  const d = Math.round((num(l.expectedQty) - num(l.qty) - num(l.rejectedQty)) * 1000) / 1000
+  return { has: d !== 0 || num(l.rejectedQty) > 0, shortage: d > 0 ? d : 0, surplus: d < 0 ? -d : 0, rejected: num(l.rejectedQty) }
+}
+const productName = (id: string) => {
+  const l = (doc.value.lines || []).find((x: any) => x.productId === id)
+  return l?.product?.name ?? id
+}
 
 /** Варианты номенклатуры строки: найденные + текущий товар строки (чтобы показывалось название). */
 function mergedProducts(l: any) {
@@ -237,13 +310,21 @@ function fillForm(d: any) {
     lines: (d.lines || []).map((l: any) => ({
       key: ++keySeq, productId: l.productId, productName: l.product ? `${l.product.code ? l.product.code + ' ' : ''}${l.product.name}` : '',
       qty: s(l.qty), price: s(l.price), discount: s(l.discount), vatRate: s(l.vatRate),
+      expectedQty: s(l.expectedQty), rejectedQty: s(l.rejectedQty), discrepancyReason: l.discrepancyReason || undefined, discrepancyNote: l.discrepancyNote || '',
     })),
   }
+  receiptMode.value = d.docType === 'SUPPLY' && (d.lines || []).some((l: any) => l.expectedQty != null || l.rejectedQty != null)
 }
 
 function payload() {
   const lines = form.value.lines.filter((l: any) => l.productId).map((l: any) => {
     const o: any = { productId: l.productId, qty: normAmount(l.qty) }
+    if (receiptMode.value && docType.value === 'SUPPLY') {
+      o.expectedQty = normAmount(l.expectedQty) || null
+      o.rejectedQty = normAmount(l.rejectedQty) || null
+      o.discrepancyReason = l.discrepancyReason || null
+      o.discrepancyNote = (l.discrepancyNote || '').trim() || null
+    }
     if (hasPrices.value) {
       o.price = normAmount(l.price) || '0'
       if (normAmount(l.discount)) o.discount = normAmount(l.discount)
@@ -418,5 +499,12 @@ onMounted(async () => {
 .c-del { width: 32px; }
 .num-in :deep(input) { text-align: right; }
 .hint { color: #909399; font-size: 12px; margin-left: 10px; }
+.hint0 { color: #909399; font-size: 12px; }
+.c-reason { width: 150px; }
+.line.sub { padding-top: 0; border-bottom: 1px dashed #f0f0f0; font-size: 12px; }
+.diff { display: inline-flex; gap: 10px; min-width: 200px; }
+.neg { color: var(--el-color-danger); }
+.pos { color: var(--el-color-success); }
+.need-reason :deep(.el-select__wrapper) { box-shadow: 0 0 0 1px var(--el-color-warning) inset; }
 .entry-meta { color: #909399; font-size: 12px; margin-bottom: 6px; }
 </style>

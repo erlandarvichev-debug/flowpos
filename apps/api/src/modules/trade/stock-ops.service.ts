@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { Scope } from '../../common/scope';
 import { assertTradeRefs, docHeader, nextNumber, orgDocs } from './trade-scope';
+import { recordLegacyPosted } from '../inventory/stock-ledger';
 
 /** Складские операции — только склады своей организации и товары своего клиента (FP-007). */
 @Injectable()
@@ -46,19 +47,8 @@ export class StockOpsService {
         include: { store: true, storeTo: true, lines: { include: { product: true } } },
       });
 
-      if (rest.status === 'POSTED' && rest.storeId && rest.storeToId) {
-        for (const item of items) {
-          await tx.stock.updateMany({
-            where: { productId: item.productId, storeId: rest.storeId },
-            data: { qty: { decrement: item.qty } },
-          });
-          await tx.$executeRaw`
-            INSERT INTO stock (id, product_id, store_id, bin_id, qty, reserved, updated_at)
-            VALUES (gen_random_uuid()::text, ${item.productId}, ${rest.storeToId}, NULL, ${item.qty}, 0, NOW())
-            ON CONFLICT (product_id, store_id, bin_id) DO UPDATE SET qty = stock.qty + ${item.qty}, updated_at = NOW()
-          `;
-        }
-      }
+      // FP-030: перемещение — два движения журнала (расход со склада, приход на склад-получатель).
+      await recordLegacyPosted(tx, transfer.id, s.userId);
       return transfer;
     });
   }

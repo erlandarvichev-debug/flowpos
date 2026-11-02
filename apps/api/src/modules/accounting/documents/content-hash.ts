@@ -15,7 +15,17 @@ export function tradeContent(doc: any) {
     lines: [...(doc.lines ?? [])].sort((a: any, b: any) => a.lineNo - b.lineNo).map((l: any) => ({
       lineNo: l.lineNo, productId: l.productId, qty: new D(l.qty).toString(), price: l.price == null ? null : new D(l.price).toFixed(2),
       discount: l.discount == null ? null : new D(l.discount).toString(), amount: l.amount == null ? null : new D(l.amount).toFixed(2), vatRate: l.vatRate == null ? null : new D(l.vatRate).toString(),
+      ...receiptContent(l),
     })),
+  };
+}
+
+/** FP-030: поля приёмки строки — только если заданы (хэш документов без них не меняется). */
+function receiptContent(l: any) {
+  if (l.expectedQty == null && l.rejectedQty == null && !l.discrepancyReason && !l.discrepancyNote) return {};
+  return {
+    expectedQty: l.expectedQty == null ? null : new D(l.expectedQty).toString(), rejectedQty: l.rejectedQty == null ? null : new D(l.rejectedQty).toString(),
+    discrepancyReason: l.discrepancyReason ?? null, discrepancyNote: l.discrepancyNote ?? null,
   };
 }
 

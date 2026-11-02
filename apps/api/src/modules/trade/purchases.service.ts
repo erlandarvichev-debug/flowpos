@@ -4,6 +4,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { OutboxService } from '../../common/outbox/outbox.service';
 import { Scope } from '../../common/scope';
 import { assertTradeRefs, docHeader, nextNumber, orgDocs } from './trade-scope';
+import { recordLegacyPosted } from '../inventory/stock-ledger';
 
 @Injectable()
 export class PurchasesService {
@@ -153,15 +154,8 @@ export class PurchasesService {
         include: { lines: { include: { product: true } } },
       });
 
-      if (rest.status === 'POSTED' && rest.storeId) {
-        for (const item of items) {
-          await tx.$executeRaw`
-            INSERT INTO stock (id, product_id, store_id, bin_id, qty, reserved, updated_at)
-            VALUES (gen_random_uuid()::text, ${item.productId}, ${rest.storeId}, NULL, ${item.qty}, 0, NOW())
-            ON CONFLICT (product_id, store_id, bin_id) DO UPDATE SET qty = stock.qty + ${item.qty}, updated_at = NOW()
-          `;
-        }
-      }
+      // FP-030: остаток — движениями журнала с источником (документ, строка), а не прямой записью.
+      await recordLegacyPosted(tx, receipt.id, s.userId);
 
       await this.outbox.enqueueInTx(tx, {
         tenantId: s.tenantId,

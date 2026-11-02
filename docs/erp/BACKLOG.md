@@ -119,7 +119,7 @@ Documents | P0 | Backend/Frontend | M | DONE_LOCAL — см. `FP-029-APPROVALS-S
 Зависимости: FP-028,FP-008. Приёмка: Hash/scope/sum/TTL bound; изменение отменяет approval; UI показывает эффект.
 
 ## FP-030 · Поступление и складские движения
-Inventory | P1 | Backend | L | PLANNED
+Inventory | P1 | Backend | L | DONE_LOCAL — см. `FP-030-STOCK-LEDGER-RECEIPT.md` (не выкладывалось)
 Зависимости: FP-025,FP-028. Приёмка: Частичная приёмка/расхождения; qty и value; источник каждого movement.
 
 ## FP-031 · Себестоимость и дополнительные расходы

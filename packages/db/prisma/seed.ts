@@ -148,13 +148,12 @@ async function main() {
     createdProducts.push(product);
 
     // Stock
-    await prisma.stock.upsert({
-      where: { productId_storeId_binId: { productId: product.id, storeId: mainStore.id, binId: null as any } },
-      create: { productId: product.id, storeId: mainStore.id, qty: 100, reserved: 0 },
-      update: {},
-    }).catch(() => {
-      // fallback if null binId causes issues
-    });
+    // FP-030: остаток — движением журнала (источник SEED), один раз на товар и склад.
+    if (!(await prisma.stockMovement.findFirst({ where: { productId: product.id, storeId: mainStore.id, sourceType: 'SEED' } }))) {
+      await prisma.stockMovement.create({
+        data: { organizationId: mainStore.organizationId, productId: product.id, storeId: mainStore.id, qty: 100, kind: 'OPENING', sourceType: 'SEED', sourceId: 'seed', occurredAt: new Date(), reason: 'Демо-данные' },
+      });
+    }
 
     // Price
     await prisma.price.upsert({

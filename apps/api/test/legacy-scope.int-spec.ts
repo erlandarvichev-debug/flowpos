@@ -22,6 +22,7 @@ import { SyncService } from '../src/modules/sync/sync.service';
 import { OnecAdapter } from '../src/modules/sync/onec.adapter';
 import { PullService as OnecPullService } from '../../sync-worker/src/modules/pull/pull.service';
 import { DEFAULT_TENANT, defaultTenant } from './accounting-helpers';
+import { purgeStock, stockIn } from './stock-helpers';
 
 const prisma = new PrismaService();
 const items = new ItemsService(prisma);
@@ -77,7 +78,7 @@ afterAll(async () => {
   await prisma.pOSCashOp.deleteMany({ where: { shift: { terminal: { tenantId: t2 } } } });
   await prisma.pOSShift.deleteMany({ where: { terminal: { tenantId: t2 } } });
   await prisma.pOSTerminal.deleteMany({ where: { tenantId: t2 } });
-  await prisma.stock.deleteMany({ where: { tenantId: t2 } });
+  await purgeStock(prisma, { tenantId: t2 });
   await prisma.productBarcode.deleteMany({ where: { tenantId: t2 } });
   await prisma.product.deleteMany({ where: { tenantId: t2 } });
   await prisma.counterparty.deleteMany({ where: { tenantId: t2 } });
@@ -150,7 +151,7 @@ describe('FP-007: каталог', () => {
 
     const p = await items.create(A, { name: `Товар со склада ${uid()}`, uomId: uomA });
     const sA2 = await stores.create(A2, { name: `Склад A2 ${uid()}` });
-    await prisma.stock.createMany({ data: [{ productId: p.id, storeId: sA.id, qty: 3 }, { productId: p.id, storeId: sA2.id, qty: 4 }] });
+    await stockIn(prisma, [{ productId: p.id, storeId: sA.id, qty: 3 }, { productId: p.id, storeId: sA2.id, qty: 4 }]);
     expect((await items.getStock(A, p.id)).map((x) => x.storeId)).toEqual([sA.id]);
   });
 });
@@ -181,7 +182,7 @@ describe('FP-007: аналитика', () => {
     const storeB = await stores.create(B, { name: `Склад B ${uid()}` });
     const productB = await items.create(B, { name: `Товар B ${uid()}`, uomId: uomB });
     await prisma.document.create({ data: { docType: 'DEMAND', date: day, status: 'POSTED', total: 1_000_000, organizationId: B.organizationId, storeId: storeB.id } });
-    await prisma.stock.create({ data: { productId: productB.id, storeId: storeB.id, qty: 1 } });
+    await stockIn(prisma, [{ productId: productB.id, storeId: storeB.id, qty: 1 }]);
     const period = { from: new Date(day.getTime() - 86_400_000).toISOString(), to: new Date(day.getTime() + 86_400_000).toISOString() };
 
     const a = await analytics.getDashboard(A, period);

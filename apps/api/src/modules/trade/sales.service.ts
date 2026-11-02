@@ -5,6 +5,7 @@ import { OutboxService } from '../../common/outbox/outbox.service';
 import { resolveBarcode } from '../catalog/barcodes.service';
 import { Scope } from '../../common/scope';
 import { assertTradeRefs, docHeader, nextNumber, orgDocs } from './trade-scope';
+import { recordLegacyPosted } from '../inventory/stock-ledger';
 
 @Injectable()
 export class SalesService {
@@ -135,14 +136,8 @@ export class SalesService {
         include: { lines: { include: { product: true } } },
       });
 
-      if (rest.status === 'POSTED' && rest.storeId) {
-        for (const item of items) {
-          await tx.stock.updateMany({
-            where: { productId: item.productId, storeId: rest.storeId },
-            data: { qty: { decrement: item.qty } },
-          });
-        }
-      }
+      // FP-030: остаток — движениями журнала с источником (документ, строка).
+      await recordLegacyPosted(tx, created.id, s.userId);
 
       await this.outbox.enqueueInTx(tx, {
         tenantId: s.tenantId,
@@ -207,6 +202,8 @@ export class SalesService {
         operation: 'CREATE',
         payload: { docType: 'RETAIL_DEMAND', number, shiftId, storeId, items: resolvedItems },
       });
+      // FP-030: проведённый чек списывает остаток движением журнала (раньше остаток не менялся).
+      await recordLegacyPosted(tx, created.id, s.userId);
 
       return created;
     });
