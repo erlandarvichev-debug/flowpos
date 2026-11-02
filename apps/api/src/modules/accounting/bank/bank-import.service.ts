@@ -150,7 +150,8 @@ export class BankImportService {
       });
       result.created++;
       await this.prisma.accBankStatementLine.update({ where: { id: line.id }, data: { status: 'DOCUMENT_CREATED', documentId: doc.id } });
-      if (operation !== 'OTHER' && input.autoPost !== false) {
+      if (doc.status === 'POSTED') result.posted++; // документ из прошлой загрузки уже проведён
+      else if (operation !== 'OTHER' && input.autoPost !== false) {
         try { await this.docs.post(ctx, doc.id); result.posted++; } catch (e: any) { result.drafts++; result.errors.push({ row: r.row, message: e?.getResponse?.()?.message ?? e.message }); }
       } else result.drafts++;
     }

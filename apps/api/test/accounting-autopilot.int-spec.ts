@@ -171,7 +171,7 @@ describe('Розница, НДС-режимы, авансы', () => {
     expect(advP.entry!.postings.map((p: any) => `${p.side}${p.account.code}:${p.amount}`).sort()).toEqual(['D1710:500', 'C1030:500'].sort());
     const order = await s.trade.create(ctx, { docType: 'PURCHASE_ORDER', date: '2026-10-01', counterpartyId: t.supplier.id, storeId: t.s1.id, lines: [{ productId: t.goods.id, qty: '10', price: '100' }], status: 'POSTED' });
     const part1 = await s.trade.fromBase(ctx, order.id, 'SUPPLY', '2026-10-02');
-    await s.trade.update(ctx, part1.id, { lines: [{ productId: t.goods.id, qty: '3', price: '100' }] });
+    await s.trade.update(ctx, part1.id, { expectedVersion: part1.version, lines: [{ productId: t.goods.id, qty: '3', price: '100' }] });
     const p1 = await s.trade.post(ctx, part1.id);
     expect(p1.entry!.postings.map((p: any) => `${p.side}${p.account.code}:${p.amount}`).sort()).toEqual(['D1330:300', 'C3310:300', 'D3310:300', 'C1710:300'].sort());
     const part2 = await s.trade.fromBase(ctx, order.id, 'SUPPLY', '2026-10-03');
@@ -212,8 +212,10 @@ describe('Банк и автопилот', () => {
     expect(okEntry).toBeTruthy();
     const issues = await s.autopilot.issues(ctx);
     expect(issues.find((i: any) => i.sourceId === bad.id)).toMatchObject({ code: 'COUNTERPARTY_REQUIRED' });
-    // исправили документ в обмене → проблема решается
-    await prisma.document.update({ where: { id: bad.id }, data: { counterpartyId: t.customer.id } });
+    // исправили документ в обмене → проблема решается. FP-028: проведённое содержимое меняется только новой версией —
+    // правка «на месте» отклоняется БД; обмен записывает исправление новой версией.
+    await expect(prisma.document.update({ where: { id: bad.id }, data: { counterpartyId: t.customer.id } })).rejects.toThrow(/DOC_POSTED_IMMUTABLE/);
+    await prisma.document.update({ where: { id: bad.id }, data: { counterpartyId: t.customer.id, version: { increment: 1 } } });
     const r = await s.autopilot.process(bad.id);
     expect(r.status).toBe('POSTED');
     expect((await s.autopilot.issues(ctx)).length).toBe(0);

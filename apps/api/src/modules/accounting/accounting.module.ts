@@ -3,6 +3,7 @@ import { AccountingController } from './accounting.controller';
 import { OrgGuard } from './access/org-context';
 import { IdempotencyInterceptor } from './common/idempotency.interceptor';
 import { DocumentsService } from './documents/documents.service';
+import { DocumentGraphService } from './documents/graph.service';
 import { ReportsService } from './reports/reports.service';
 import { ChartService } from './chart/chart.service';
 import { RefsService } from './refs/refs.service';
@@ -22,7 +23,7 @@ import { PayrollService } from './payroll/payroll.service';
 
 @Module({
   controllers: [AccountingController, OpsMetricsController],
-  providers: [OrgGuard, IdempotencyInterceptor, DocumentsService, ReportsService, ChartService, RefsService, PeriodsService, PostingService, CostService, AutopilotService, TradeDocumentsService, BankImportService, EsfService, EsfMonitorService, StatementsService, ClosingService, PayrollService, VatCreditService],
+  providers: [OrgGuard, IdempotencyInterceptor, DocumentsService, DocumentGraphService, ReportsService, ChartService, RefsService, PeriodsService, PostingService, CostService, AutopilotService, TradeDocumentsService, BankImportService, EsfService, EsfMonitorService, StatementsService, ClosingService, PayrollService, VatCreditService],
   exports: [PayrollService, StatementsService, ClosingService, EsfService, AutopilotService, TradeDocumentsService, CostService, DocumentsService, ReportsService, ChartService, RefsService, PeriodsService, PostingService, OrgGuard],
 })
 export class AccountingModule {}

@@ -987,6 +987,9 @@ model Document {
   onecGuid       String?     @map("onec_guid")
   onecBase       String      @default("default") @map("onec_base")
   onecVersion    String?     @map("onec_version")
+  /// FP-028: версия документа (растёт при каждом изменении) и версия, которая сейчас проведена
+  version        Int         @default(1)
+  postedVersion  Int?        @map("posted_version")
   syncStatus     SyncStatus  @default(SYNCED) @map("sync_status")
   owner          Owner       @default(PLATFORM) @map("owner")
   deleted        Boolean     @default(false)
@@ -1008,6 +1011,42 @@ model Document {
   @@unique([tenantId, id])
   @@index([tenantId])
   @@map("documents")
+}
+
+/// FP-028: неизменяемая история версий торгового документа (шапка и строки), с хэшем содержимого.
+model DocumentVersion {
+  id             String   @id @default(uuid())
+  tenantId       String   @default(dbgenerated("NULLIF(current_setting('flowpos.tenant_id', true), '')")) @map("tenant_id")
+  organizationId String?  @map("organization_id")
+  documentId     String   @map("document_id")
+  version        Int
+  action         String   // CREATE | UPDATE | POST | UNPOST | CANCEL | RESTORE
+  snapshot       Json
+  hash           String   // sha256 канонического содержимого (без статуса)
+  changedBy      String?  @map("changed_by")
+  reason         String?
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@index([documentId, version])
+  @@map("document_versions")
+}
+
+/// FP-028: граф документов — «создан на основании», «сторно», «ЭСФ по документу», «исправленный ЭСФ».
+/// Ведётся триггерами БД по ссылкам самих документов (кто бы их ни писал); связи только внутри организации.
+model DocumentLink {
+  id             String   @id @default(uuid())
+  organizationId String   @map("organization_id")
+  fromType       String   @map("from_type") // TRADE | ACC | ESF
+  fromId         String   @map("from_id")
+  toType         String   @map("to_type")
+  toId           String   @map("to_id")
+  kind           String   // BASED_ON | REVERSAL_OF | ESF_FOR | CORRECTION_OF
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@unique([fromType, fromId, toType, toId, kind])
+  @@index([toType, toId])
+  @@index([organizationId])
+  @@map("document_links")
 }
 
 enum DocType {
@@ -2030,6 +2069,7 @@ model AccDocument {
   body           Json      // содержимое документа (строки и реквизиты по типу)
   baseDocumentId String?   @map("base_document_id") // создан на основании
   reversalOfId   String?   @map("reversal_of_id")   // сторно документа
+  postedVersion  Int?      @map("posted_version")   // FP-028: какая версия проведена
   authorId       String?   @map("author_id")
   updatedById    String?   @map("updated_by_id")
   postedAt       DateTime? @map("posted_at")
@@ -2054,6 +2094,7 @@ model AccDocumentVersion {
   version     Int
   action      String   // CREATE | UPDATE | POST | UNPOST | CANCEL | RESTORE
   snapshot    Json
+  hash        String?  // FP-028: sha256 канонического содержимого (у старых версий — нет)
   changedById String?  @map("changed_by_id")
   reason      String?
   createdAt   DateTime @default(now()) @map("created_at")

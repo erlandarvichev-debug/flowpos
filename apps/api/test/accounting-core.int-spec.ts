@@ -72,12 +72,13 @@ describe('Бухгалтерское ядро: двойная запись', () 
 });
 
 describe('Идемпотентность и конкуренция', () => {
-  it('повторное проведение не создаёт дублей, параллельные проведения дают одну активную запись', async () => {
+  it('FP-028: параллельные проведения — одно успешное, остальные 409 DOC_ALREADY_POSTED; одна активная запись', async () => {
     const ctx = await makeOrg(prisma);
     const d = await s.docs.create(ctx, { docType: 'MANUAL_OPERATION', date: '2026-10-03', body: manual([{ amount: '777.77', dr: '7170', cr: '5030' }]) });
     const results = await Promise.allSettled(Array.from({ length: 8 }, () => s.docs.post(ctx, d.id)));
-    expect(results.some((r) => r.status === 'fulfilled')).toBe(true);
-    await s.docs.post(ctx, d.id);
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter((r) => r.status === 'rejected').map((r: any) => r.reason?.response?.code)).toEqual(Array(7).fill('DOC_ALREADY_POSTED'));
+    await expect(s.docs.post(ctx, d.id)).rejects.toMatchObject({ response: { code: 'DOC_ALREADY_POSTED', details: { postedVersion: 1 } } });
     const active = await prisma.accEntry.count({ where: { organizationId: ctx.organizationId, status: 'ACTIVE' } });
     const all = await prisma.accEntry.count({ where: { organizationId: ctx.organizationId } });
     expect(active).toBe(1);

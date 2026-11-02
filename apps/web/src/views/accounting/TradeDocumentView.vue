@@ -319,7 +319,7 @@ async function save(silent = false): Promise<boolean> {
       fillForm(created)
     } else {
       doc.value = (await api.put(`/accounting/trade-documents/${doc.value.id}`, {
-        ...payload(), expectedUpdatedAt: doc.value.updatedAt, reason: form.value.reason || undefined,
+        ...payload(), expectedVersion: doc.value.version, reason: form.value.reason || undefined,
       }, idem())) as any
       fillForm(doc.value)
       if (!silent) ElMessage.success('Сохранено')
@@ -337,7 +337,7 @@ async function post() {
   if (!(await save(true))) return
   busy.value = true
   try {
-    doc.value = (await api.post(`/accounting/trade-documents/${doc.value.id}/post`, {}, idem())) as any
+    doc.value = (await api.post(`/accounting/trade-documents/${doc.value.id}/post`, { expectedVersion: doc.value.version }, idem())) as any
     fillForm(doc.value)
     ElMessage.success('Документ проведён и отражён в учёте')
   } catch (e: any) {
@@ -350,7 +350,7 @@ async function post() {
 async function action(path: string, msg: string) {
   busy.value = true
   try {
-    doc.value = (await api.post(`/accounting/trade-documents/${doc.value.id}/${path}`, {}, idem())) as any
+    doc.value = (await api.post(`/accounting/trade-documents/${doc.value.id}/${path}`, { expectedVersion: doc.value.version }, idem())) as any
     fillForm(doc.value)
     ElMessage.success(msg)
   } catch (e) { showError(e) }

@@ -6,6 +6,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Org, OrgContext, OrgGuard, RequirePermission, RequireMfa } from './access/org-context';
 import { IdempotencyInterceptor } from './common/idempotency.interceptor';
 import { DocumentsService } from './documents/documents.service';
+import { DocumentGraphService } from './documents/graph.service';
 import { ReportsService } from './reports/reports.service';
 import { ChartService } from './chart/chart.service';
 import { RefsService } from './refs/refs.service';
@@ -36,6 +37,7 @@ const IDEMP_HEADER = { name: 'Idempotency-Key', required: false, description: '�
 export class AccountingController {
   constructor(
     private docs: DocumentsService,
+    private graph: DocumentGraphService,
     private reports: ReportsService,
     private chart: ChartService,
     private refs: RefsService,
@@ -250,13 +252,16 @@ export class AccountingController {
   tradeUpdate(@Org() ctx: OrgContext, @Param('id') id: string, @Body() b: any) { return this.trade.update(ctx, id, b, b?.override); }
 
   @Post('trade-documents/:id/post') @RequirePermission('acc.doc.post') @ApiHeader(IDEMP_HEADER)
-  tradePost(@Org() ctx: OrgContext, @Param('id') id: string, @Body() b: any) { return this.trade.post(ctx, id, b?.override); }
+  tradePost(@Org() ctx: OrgContext, @Param('id') id: string, @Body() b: any) { return this.trade.post(ctx, id, b?.override, b?.expectedVersion); }
 
   @Post('trade-documents/:id/unpost') @RequirePermission('acc.doc.post') @ApiHeader(IDEMP_HEADER)
-  tradeUnpost(@Org() ctx: OrgContext, @Param('id') id: string, @Body() b: any) { return this.trade.unpost(ctx, id, b?.override); }
+  tradeUnpost(@Org() ctx: OrgContext, @Param('id') id: string, @Body() b: any) { return this.trade.unpost(ctx, id, b?.override, b?.expectedVersion); }
 
   @Post('trade-documents/:id/cancel') @RequirePermission('acc.doc.cancel') @ApiHeader(IDEMP_HEADER)
-  tradeCancel(@Org() ctx: OrgContext, @Param('id') id: string, @Body() b: any) { return this.trade.cancel(ctx, id, b?.override); }
+  tradeCancel(@Org() ctx: OrgContext, @Param('id') id: string, @Body() b: any) { return this.trade.cancel(ctx, id, b?.override, b?.expectedVersion); }
+
+  @Get('trade-documents/:id/versions') @RequirePermission('acc.doc.read')
+  tradeVersions(@Org() ctx: OrgContext, @Param('id') id: string) { return this.trade.versions(ctx, id); }
 
   @Post('trade-documents/:id/restore') @RequirePermission('acc.doc.cancel') @ApiHeader(IDEMP_HEADER)
   tradeRestore(@Org() ctx: OrgContext, @Param('id') id: string) { return this.trade.restore(ctx, id); }
@@ -324,6 +329,10 @@ export class AccountingController {
 
   @Get('documents') @RequirePermission('acc.doc.read')
   list(@Org() ctx: OrgContext, @Query() q: any) { return this.docs.list(ctx, q); }
+
+  /** FP-028: граф документов (основания, сторно, ЭСФ, исправления) от документа — TRADE | ACC | ESF. */
+  @Get('document-graph/:type/:id') @RequirePermission('acc.doc.read')
+  docGraph(@Org() ctx: OrgContext, @Param('type') type: string, @Param('id') id: string, @Query('depth') depth?: string) { return this.graph.graph(ctx, type, id, depth); }
 
   @Get('documents/:id') @RequirePermission('acc.doc.read')
   get(@Org() ctx: OrgContext, @Param('id') id: string) { return this.docs.get(ctx, id); }

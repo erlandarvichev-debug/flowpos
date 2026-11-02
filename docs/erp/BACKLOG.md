@@ -111,7 +111,7 @@ Catalog | P1 | Backend | M | DONE_LOCAL — см. `FP-027-PRICING-DISCOUNTS-ROUN
 Зависимости: FP-025. Приёмка: Priority/interval; preview discount; immutable offline snapshot.
 
 ## FP-028 · Общие документы версии и ссылки
-Documents | P0 | Backend | L | PLANNED
+Documents | P0 | Backend | L | DONE_LOCAL — см. `FP-028-DOCUMENTS-VERSIONS-LINKS.md` (не выкладывалось)
 Зависимости: FP-009,FP-026. Приёмка: Expected_version; immutable posted version; source/correction graph; duplicate post conflict.
 
 ## FP-029 · Согласования и simulate command

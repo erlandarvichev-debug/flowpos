@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { createHash } from 'crypto';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { AccError } from '../common/acc-error';
 import { OrgContext } from '../access/org-context';
@@ -85,10 +86,22 @@ export class DocumentsService {
     return doc;
   }
 
+  /** FP-028: хэш содержимого версии (без статуса) — одинаковое содержимое даёт одинаковый хэш. */
+  private contentHash(doc: any) {
+    const { status: _s, version: _v, ...content } = this.snapshot(doc);
+    return createHash('sha256').update(JSON.stringify({ ...content, date: new Date(content.date).toISOString(), amount: new Prisma.Decimal(content.amount ?? 0).toFixed(2) })).digest('hex');
+  }
+
   private async version(tx: Tx, ctx: OrgContext, doc: any, action: string, reason?: string) {
     await tx.accDocumentVersion.create({
-      data: { documentId: doc.id, version: doc.version, action, snapshot: this.snapshot(doc) as any, changedById: ctx.userId, reason },
+      data: { documentId: doc.id, version: doc.version, action, snapshot: this.snapshot(doc) as any, hash: this.contentHash(doc), changedById: ctx.userId, reason },
     });
+  }
+
+  private checkVersion(doc: { version: number }, expected: unknown) {
+    if (expected !== undefined && expected !== null && Number(expected) !== doc.version) {
+      throw new AccError('VERSION_CONFLICT', `Документ уже изменён другим пользователем (версия ${doc.version}, у вас ${expected})`, { status: 409, fix: 'Обновите документ и повторите действие.', details: { currentVersion: doc.version } });
+    }
   }
 
   /** Проверка, что ссылки аналитик принадлежат организации (собственные справочники учёта и склады). */
@@ -179,11 +192,10 @@ export class DocumentsService {
   async update(ctx: OrgContext, id: string, input: UpdateDocInput) {
     return this.prisma.$transaction(async (tx) => {
       const doc = await this.lockDoc(tx, ctx, id);
-      if (doc.version !== Number(input.expectedVersion)) {
-        throw new AccError('VERSION_CONFLICT', `Документ уже изменён другим пользователем (версия ${doc.version}, у вас ${input.expectedVersion})`, {
-          fix: 'Обновите документ и внесите изменения повторно.', status: 409, details: { currentVersion: doc.version },
-        });
+      if (input.expectedVersion === undefined || input.expectedVersion === null) {
+        throw new AccError('VERSION_REQUIRED', 'Укажите версию документа, которую вы изменяете (expectedVersion)', { status: 428, details: { currentVersion: doc.version } });
       }
+      this.checkVersion(doc, input.expectedVersion);
       if (doc.status === 'CANCELLED') throw new AccError('DOC_CANCELLED', 'Документ помечен на удаление — сначала восстановите его');
       if (doc.docType === 'STORNO') throw new AccError('STORNO_READONLY', 'Документ сторно не редактируется');
       const newDate = input.date ? this.parseDate(input.date) : doc.date;
@@ -200,6 +212,8 @@ export class DocumentsService {
         data: {
           date: newDate, comment: input.comment ?? doc.comment, body, amount: rule.amount(body),
           version: { increment: 1 }, updatedById: ctx.userId,
+          // Перепроведение — новая проведённая версия; прежняя остаётся в неизменяемой истории.
+          ...(doc.status === 'POSTED' ? { postedVersion: doc.version + 1 } : {}),
         },
       });
       await this.version(tx, ctx, updated, 'UPDATE', input.reason);
@@ -222,42 +236,46 @@ export class DocumentsService {
   async post(ctx: OrgContext, id: string, opts: { expectedVersion?: number; override?: OverrideRequest } = {}) {
     return this.prisma.$transaction(async (tx) => {
       const doc = await this.lockDoc(tx, ctx, id);
-      if (opts.expectedVersion !== undefined && doc.version !== Number(opts.expectedVersion)) {
-        throw new AccError('VERSION_CONFLICT', 'Документ изменён другим пользователем', { status: 409, fix: 'Обновите документ.' });
-      }
+      this.checkVersion(doc, opts.expectedVersion);
       if (doc.status === 'CANCELLED') throw new AccError('DOC_CANCELLED', 'Документ помечен на удаление');
+      // FP-028: повторное проведение — конфликт (строка заблокирована, параллельные проведения идут по очереди).
+      // Законный повтор того же запроса — Idempotency-Key. Проведённый без записи движений (сбой) — дописываем.
+      if (doc.status === 'POSTED' && (await this.posting.activePostings(tx, ctx.organizationId, SOURCE, id))) {
+        throw new AccError('DOC_ALREADY_POSTED', `Документ ${doc.number} уже проведён (версия ${doc.postedVersion ?? doc.version})`, { status: 409, details: { postedVersion: doc.postedVersion ?? doc.version } });
+      }
       await this.periods.assertOpen(tx, ctx, [doc.date], opts.override, 'проведение');
-      const { reused } = await this.writePostings(tx, ctx, doc);
-      if (doc.status === 'POSTED' && reused) return this.withEntry(tx, ctx, doc); // повторный запрос — без дублей
-      const posted = await tx.accDocument.update({ where: { id }, data: { status: 'POSTED', postedAt: new Date(), updatedById: ctx.userId } });
+      await this.writePostings(tx, ctx, doc);
+      const posted = await tx.accDocument.update({ where: { id }, data: { status: 'POSTED', postedAt: new Date(), postedVersion: doc.version, updatedById: ctx.userId } });
       await this.version(tx, ctx, posted, 'POST');
       return this.withEntry(tx, ctx, posted);
     });
   }
 
-  async unpost(ctx: OrgContext, id: string, opts: { override?: OverrideRequest; reason?: string } = {}) {
+  async unpost(ctx: OrgContext, id: string, opts: { override?: OverrideRequest; reason?: string; expectedVersion?: number } = {}) {
     return this.prisma.$transaction(async (tx) => {
       const doc = await this.lockDoc(tx, ctx, id);
+      this.checkVersion(doc, opts.expectedVersion);
       if (doc.status !== 'POSTED') return doc;
       await this.assertNotStornoed(tx, ctx, id);
       await this.periods.assertOpen(tx, ctx, [doc.date], opts.override, 'отмена проведения');
       await this.posting.cancelSource(tx, ctx.organizationId, SOURCE, id);
-      const d = await tx.accDocument.update({ where: { id }, data: { status: 'DRAFT', updatedById: ctx.userId } });
+      const d = await tx.accDocument.update({ where: { id }, data: { status: 'DRAFT', postedVersion: null, updatedById: ctx.userId } });
       await this.version(tx, ctx, d, 'UNPOST', opts.reason);
       return d;
     });
   }
 
-  async cancel(ctx: OrgContext, id: string, opts: { override?: OverrideRequest; reason?: string } = {}) {
+  async cancel(ctx: OrgContext, id: string, opts: { override?: OverrideRequest; reason?: string; expectedVersion?: number } = {}) {
     return this.prisma.$transaction(async (tx) => {
       const doc = await this.lockDoc(tx, ctx, id);
+      this.checkVersion(doc, opts.expectedVersion);
       if (doc.status === 'CANCELLED') return doc;
       if (doc.status === 'POSTED') {
         await this.assertNotStornoed(tx, ctx, id);
         await this.periods.assertOpen(tx, ctx, [doc.date], opts.override, 'пометка на удаление');
         await this.posting.cancelSource(tx, ctx.organizationId, SOURCE, id);
       }
-      const d = await tx.accDocument.update({ where: { id }, data: { status: 'CANCELLED', updatedById: ctx.userId } });
+      const d = await tx.accDocument.update({ where: { id }, data: { status: 'CANCELLED', postedVersion: null, updatedById: ctx.userId } });
       await this.version(tx, ctx, d, 'CANCEL', opts.reason);
       return d;
     });
@@ -274,11 +292,12 @@ export class DocumentsService {
   }
 
   /** Сторно проведённого документа новым документом в открытом периоде (исходный не меняется). */
-  async storno(ctx: OrgContext, id: string, input: { date: string; reason: string }) {
+  async storno(ctx: OrgContext, id: string, input: { date: string; reason: string; expectedVersion?: number }) {
     if (!input.reason) throw new AccError('REASON_REQUIRED', 'Укажите причину сторно');
     const date = this.parseDate(input.date, 'Дата сторно');
     return this.prisma.$transaction(async (tx) => {
       const orig = await this.lockDoc(tx, ctx, id);
+      this.checkVersion(orig, input.expectedVersion);
       if (orig.status !== 'POSTED') throw new AccError('STORNO_SOURCE_NOT_POSTED', 'Сторнировать можно только проведённый документ');
       if (orig.docType === 'STORNO') throw new AccError('STORNO_OF_STORNO', 'Сторно сторно не допускается — проведите исходную операцию заново');
       await this.assertNotStornoed(tx, ctx, id);
@@ -293,7 +312,7 @@ export class DocumentsService {
       });
       await this.version(tx, ctx, doc, 'CREATE', input.reason);
       await this.writePostings(tx, ctx, doc);
-      const posted = await tx.accDocument.update({ where: { id: doc.id }, data: { status: 'POSTED', postedAt: new Date() } });
+      const posted = await tx.accDocument.update({ where: { id: doc.id }, data: { status: 'POSTED', postedAt: new Date(), postedVersion: doc.version } });
       await this.version(tx, ctx, posted, 'POST', input.reason);
       return this.withEntry(tx, ctx, posted);
     });

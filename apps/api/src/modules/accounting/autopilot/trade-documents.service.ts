@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { createHash } from 'crypto';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { AccError } from '../common/acc-error';
 import { D, money, round } from '../common/money';
@@ -77,6 +78,12 @@ export class TradeDocumentsService {
       const c = await tx.counterparty.findUnique({ where: { id: input.counterpartyId } });
       if (!c || c.tenantId !== ctx.tenantId || (c.organizationId && c.organizationId !== ctx.organizationId)) throw new AccError('REF_FOREIGN', 'Контрагент не найден в этой организации');
     }
+    // FP-028: основание — документ своей организации (иначе граф связал бы документы разных организаций).
+    if (input.baseId) {
+      const base = await tx.document.findUnique({ where: { id: input.baseId }, select: { organizationId: true, storeId: true } });
+      const baseOrg = base?.organizationId ?? (base?.storeId ? (await tx.store.findUnique({ where: { id: base.storeId } }))?.organizationId : null);
+      if (!base || baseOrg !== ctx.organizationId) throw new AccError('REF_FOREIGN', 'Документ-основание не найден в этой организации');
+    }
     // FP-026: договор — своей организации, с контрагентом документа и действует на дату документа.
     if (input.contractId) {
       const k = await tx.contract.findFirst({ where: { id: input.contractId, tenantId: ctx.tenantId, organizationId: ctx.organizationId } });
@@ -133,6 +140,42 @@ export class TradeDocumentsService {
     for (const l of doc.lines) await apply(doc.storeId, l.productId, new D(l.qty).times(s * sign));
   }
 
+  // ── FP-028: версии ──
+
+  /** Содержимое версии (без статуса): шапка и строки в фиксированном порядке — для хэша и истории. */
+  private content(doc: any) {
+    return {
+      docType: doc.docType, number: doc.number, date: new Date(doc.date).toISOString(), counterpartyId: doc.counterpartyId ?? null,
+      contractId: doc.contractId ?? null, storeId: doc.storeId ?? null, storeToId: doc.storeToId ?? null,
+      total: doc.total == null ? null : new D(doc.total).toFixed(2), comment: doc.comment ?? null, attributes: doc.attributes ?? null,
+      lines: [...(doc.lines ?? [])].sort((a: any, b: any) => a.lineNo - b.lineNo).map((l: any) => ({
+        lineNo: l.lineNo, productId: l.productId, qty: new D(l.qty).toString(), price: l.price == null ? null : new D(l.price).toFixed(2),
+        discount: l.discount == null ? null : new D(l.discount).toString(), amount: l.amount == null ? null : new D(l.amount).toFixed(2), vatRate: l.vatRate == null ? null : new D(l.vatRate).toString(),
+      })),
+    };
+  }
+
+  /** Неизменяемая запись истории: версия, действие, снимок, хэш содержимого. */
+  private async writeVersion(tx: Tx, ctx: OrgContext, id: string, action: string, reason?: string) {
+    const doc = await tx.document.findUniqueOrThrow({ where: { id }, include: { lines: true } });
+    const snapshot = this.content(doc);
+    const hash = createHash('sha256').update(JSON.stringify(snapshot)).digest('hex');
+    await tx.documentVersion.create({ data: { tenantId: doc.tenantId, organizationId: ctx.organizationId, documentId: id, version: doc.version, action, snapshot: { ...snapshot, status: doc.status } as any, hash, changedBy: ctx.userId, reason } });
+  }
+
+  private checkVersion(doc: { version: number }, expected: unknown) {
+    if (expected !== undefined && expected !== null && Number(expected) !== doc.version) {
+      throw new AccError('VERSION_CONFLICT', `Документ уже изменён другим пользователем или обменом (версия ${doc.version}, у вас ${expected})`, { status: 409, fix: 'Обновите документ и повторите действие.', details: { currentVersion: doc.version } });
+    }
+  }
+
+  versions(ctx: OrgContext, id: string) {
+    return this.prisma.$transaction(async (tx) => {
+      await this.scoped(tx, ctx, id);
+      return tx.documentVersion.findMany({ where: { documentId: id }, orderBy: [{ createdAt: 'asc' }] });
+    });
+  }
+
   async create(ctx: OrgContext, input: TradeDocInput, override?: OverrideRequest) {
     if (!EDITABLE.includes(input.docType)) throw new AccError('UNKNOWN_DOC_TYPE', `Тип документа ${input.docType} не поддерживается`);
     const date = new Date(input.date);
@@ -153,17 +196,24 @@ export class TradeDocumentsService {
         },
       });
       await tx.auditLog.create({ data: { userId: ctx.userId, organizationId: ctx.organizationId, action: 'TRADE_DOC_CREATE', entity: 'document', entityId: doc.id, after: { docType: doc.docType, number, total: total.toFixed(2) } } });
+      await this.writeVersion(tx, ctx, doc.id, 'CREATE');
       if (input.status === 'POSTED') return this.postIn(tx, ctx, doc.id, override);
       return this.view(tx, doc.id);
     }, { timeout: 60000 });
   }
 
-  async update(ctx: OrgContext, id: string, input: Partial<TradeDocInput> & { expectedUpdatedAt?: string; reason?: string }, override?: OverrideRequest) {
+  async update(ctx: OrgContext, id: string, input: Partial<TradeDocInput> & { expectedVersion?: number; expectedUpdatedAt?: string; reason?: string }, override?: OverrideRequest) {
     return this.prisma.$transaction(async (tx) => {
       const doc = await this.scoped(tx, ctx, id);
-      if (input.expectedUpdatedAt && new Date(input.expectedUpdatedAt).getTime() !== doc.updatedAt.getTime()) {
-        throw new AccError('VERSION_CONFLICT', 'Документ уже изменён другим пользователем или обменом', { status: 409, fix: 'Обновите документ и внесите изменения повторно.' });
+      // FP-028: изменение — только с ожидаемой версией (защита от «последний записавший побеждает»).
+      if (input.expectedVersion === undefined && !input.expectedUpdatedAt) {
+        throw new AccError('VERSION_REQUIRED', 'Укажите версию документа, которую вы изменяете (expectedVersion)', { status: 428, details: { currentVersion: doc.version } });
       }
+      this.checkVersion(doc, input.expectedVersion);
+      if (input.expectedUpdatedAt && new Date(input.expectedUpdatedAt).getTime() !== doc.updatedAt.getTime()) {
+        throw new AccError('VERSION_CONFLICT', 'Документ уже изменён другим пользователем или обменом', { status: 409, fix: 'Обновите документ и внесите изменения повторно.', details: { currentVersion: doc.version } });
+      }
+      if (doc.deleted || doc.status === 'CANCELLED') throw new AccError('DOC_CANCELLED', 'Документ помечен на удаление — сначала восстановите его');
       if (doc.status === 'POSTED' && !input.reason) throw new AccError('REASON_REQUIRED', 'Изменение проведённого документа требует указать причину');
       const merged: TradeDocInput = {
         docType: doc.docType, date: input.date ?? doc.date.toISOString(), counterpartyId: input.counterpartyId ?? doc.counterpartyId ?? undefined,
@@ -174,7 +224,11 @@ export class TradeDocumentsService {
       for (const k of ['comment', 'vatIncluded', 'paymentType', 'bankAccountId', 'departmentId', 'lossAccount'] as const) if ((input as any)[k] !== undefined) (merged as any)[k] = (input as any)[k];
       await this.validateRefs(tx, ctx, merged);
       const wasPosted = doc.status === 'POSTED';
-      if (wasPosted) await this.applyStock(tx, doc, -1);
+      // Проведённая версия неизменяема: снимаем проведение, меняем, проводим новую версию (всё в одной транзакции).
+      if (wasPosted) {
+        await this.applyStock(tx, doc, -1);
+        await tx.document.update({ where: { id }, data: { status: 'DRAFT' } });
+      }
       const lines = this.buildLines(merged);
       const isPayment = doc.docType.startsWith('PAYMENT_');
       const total = isPayment ? money(merged.amount, 2, 'сумма платежа') : lines.reduce((a, l) => a.plus(l.amount), new D(0));
@@ -183,52 +237,68 @@ export class TradeDocumentsService {
         where: { id },
         data: {
           date: new Date(merged.date), counterpartyId: merged.counterpartyId, contractId: merged.contractId, storeId: merged.storeId, storeToId: merged.storeToId,
-          total, comment: merged.comment ?? doc.comment, attributes: this.attrs(input as TradeDocInput, doc.attributes ?? {}), updatedBy: ctx.userId,
+          total, comment: merged.comment ?? doc.comment, attributes: this.attrs(input as TradeDocInput, doc.attributes ?? {}), updatedBy: ctx.userId, version: { increment: 1 },
           lines: { create: lines.map((l) => ({ lineNo: l.lineNo, productId: l.productId, qty: l.qty, price: l.price, discount: l.discount, amount: l.amount, vatRate: l.vatRate })) },
         },
       });
       await tx.auditLog.create({ data: { userId: ctx.userId, organizationId: ctx.organizationId, action: 'TRADE_DOC_UPDATE', entity: 'document', entityId: id, reason: input.reason, before: { total: doc.total, date: doc.date } as any, after: { total: total.toFixed(2), date: merged.date } } });
+      await this.writeVersion(tx, ctx, id, 'UPDATE', input.reason);
       if (wasPosted) {
         const fresh = await tx.document.findUnique({ where: { id }, include: { lines: true } });
+        await tx.document.update({ where: { id }, data: { status: 'POSTED', postedVersion: fresh!.version } });
         await this.applyStock(tx, fresh!, 1);
         await this.autopilot.syncTradeDocument(tx, id, { userId: ctx.userId, override, organizationId: ctx.organizationId });
+        await this.writeVersion(tx, ctx, id, 'POST', input.reason);
       }
       return this.view(tx, id);
     }, { timeout: 60000 });
   }
 
-  private async postIn(tx: Tx, ctx: OrgContext, id: string, override?: OverrideRequest) {
+  /**
+   * FP-028: проведение версии. Строка документа заблокирована (scoped — FOR UPDATE), поэтому параллельные проведения
+   * идут по очереди; второе видит «уже проведён» и получает 409, а не тихий успех. Законный повтор того же запроса —
+   * через Idempotency-Key (ответ первого).
+   */
+  private async postIn(tx: Tx, ctx: OrgContext, id: string, override?: OverrideRequest, expectedVersion?: unknown) {
     const doc = await this.scoped(tx, ctx, id);
+    this.checkVersion(doc, expectedVersion);
     if (doc.deleted) throw new AccError('DOC_CANCELLED', 'Документ помечен на удаление');
-    if (doc.status !== 'POSTED') {
-      await tx.document.update({ where: { id }, data: { status: 'POSTED', updatedBy: ctx.userId } });
-      await this.applyStock(tx, doc, 1);
+    if (doc.status === 'POSTED') {
+      throw new AccError('DOC_ALREADY_POSTED', `Документ ${doc.number ?? ''} уже проведён (версия ${doc.postedVersion ?? doc.version})`, { status: 409, details: { postedVersion: doc.postedVersion ?? doc.version } });
     }
+    await tx.document.update({ where: { id }, data: { status: 'POSTED', postedVersion: doc.version, updatedBy: ctx.userId } });
+    await this.applyStock(tx, doc, 1);
     await this.autopilot.syncTradeDocument(tx, id, { userId: ctx.userId, override, organizationId: ctx.organizationId });
+    await this.writeVersion(tx, ctx, id, 'POST');
     return this.view(tx, id);
   }
 
-  post(ctx: OrgContext, id: string, override?: OverrideRequest) {
-    return this.prisma.$transaction((tx) => this.postIn(tx, ctx, id, override), { timeout: 60000 });
+  post(ctx: OrgContext, id: string, override?: OverrideRequest, expectedVersion?: unknown) {
+    return this.prisma.$transaction((tx) => this.postIn(tx, ctx, id, override, expectedVersion), { timeout: 60000 });
   }
 
-  unpost(ctx: OrgContext, id: string, override?: OverrideRequest) {
+  unpost(ctx: OrgContext, id: string, override?: OverrideRequest, expectedVersion?: unknown) {
     return this.prisma.$transaction(async (tx) => {
       const doc = await this.scoped(tx, ctx, id);
+      this.checkVersion(doc, expectedVersion);
       if (doc.status !== 'POSTED') return this.view(tx, id);
-      await tx.document.update({ where: { id }, data: { status: 'DRAFT', updatedBy: ctx.userId } });
+      await tx.document.update({ where: { id }, data: { status: 'DRAFT', postedVersion: null, updatedBy: ctx.userId } });
       await this.applyStock(tx, doc, -1);
       await this.autopilot.syncTradeDocument(tx, id, { userId: ctx.userId, override, organizationId: ctx.organizationId });
+      await this.writeVersion(tx, ctx, id, 'UNPOST');
       return this.view(tx, id);
     }, { timeout: 60000 });
   }
 
-  cancel(ctx: OrgContext, id: string, override?: OverrideRequest) {
+  cancel(ctx: OrgContext, id: string, override?: OverrideRequest, expectedVersion?: unknown) {
     return this.prisma.$transaction(async (tx) => {
       const doc = await this.scoped(tx, ctx, id);
+      this.checkVersion(doc, expectedVersion);
+      if (doc.deleted && doc.status === 'CANCELLED') return this.view(tx, id);
       if (doc.status === 'POSTED') await this.applyStock(tx, doc, -1);
-      await tx.document.update({ where: { id }, data: { status: 'CANCELLED', deleted: true, updatedBy: ctx.userId } });
+      await tx.document.update({ where: { id }, data: { status: 'CANCELLED', deleted: true, postedVersion: null, updatedBy: ctx.userId } });
       await this.autopilot.syncTradeDocument(tx, id, { userId: ctx.userId, override, organizationId: ctx.organizationId });
+      await this.writeVersion(tx, ctx, id, 'CANCEL');
       return this.view(tx, id);
     }, { timeout: 60000 });
   }
@@ -240,6 +310,7 @@ export class TradeDocumentsService {
       if (!doc.deleted && doc.status !== 'CANCELLED') return this.view(tx, id);
       await tx.document.update({ where: { id }, data: { status: 'DRAFT', deleted: false, updatedBy: ctx.userId } });
       await tx.auditLog.create({ data: { userId: ctx.userId, organizationId: ctx.organizationId, action: 'TRADE_DOC_RESTORE', entity: 'document', entityId: id } });
+      await this.writeVersion(tx, ctx, id, 'RESTORE');
       return this.view(tx, id);
     });
   }

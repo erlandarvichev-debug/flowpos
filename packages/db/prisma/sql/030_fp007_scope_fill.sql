@@ -68,6 +68,7 @@ BEGIN
     ['price_list_items',    'tenant_id',       'price_list_id',     'price_lists',          'tenant_id'],
     ['discount_rules',      'tenant_id',       'organization_id',   'organizations',        'tenant_id'],
     ['pricing_snapshots',   'tenant_id',       'organization_id',   'organizations',        'tenant_id'],
+    ['document_versions',   'tenant_id',       'document_id',       'documents',            'tenant_id'],
     ['document_lines',      'tenant_id',       'document_id',       'documents',            'tenant_id'],
     ['outbox',              'tenant_id',       '',                  '',                     ''],
     ['grade_rate_values',   'organization_id', 'grade_id',          'salary_grades',        'organization_id'],
