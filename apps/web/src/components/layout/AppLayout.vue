@@ -91,10 +91,10 @@
             <el-icon><UserFilled /></el-icon>
             <span>Зарплата и кадры</span>
           </template>
-          <el-menu-item index="/hr/employees">Сотрудники</el-menu-item>
+          <el-menu-item index="/hr/staff">Сотрудники</el-menu-item>
+          <el-menu-item index="/hr/payroll-run">Расчёт зарплаты</el-menu-item>
           <el-menu-item index="/hr/schedule">График смен</el-menu-item>
           <el-menu-item index="/hr/timesheet">Табель</el-menu-item>
-          <el-menu-item index="/hr/payrolls">Начисление зарплаты</el-menu-item>
         </el-sub-menu>
 
         <el-sub-menu index="operations">

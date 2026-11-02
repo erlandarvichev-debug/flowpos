@@ -63,6 +63,11 @@ BEGIN
           'WITH CHECK (fp_system() OR organization_id IN (SELECT id FROM organizations))';
   covered := covered || 'acc_accounts'::text;
 
+  -- Производственный календарь: строки без организации — общий календарь РК, его читают все; пишет только система.
+  EXECUTE 'CREATE POLICY fp_org ON hr_calendar_days USING (organization_id IS NULL OR fp_system() OR organization_id IN (SELECT id FROM organizations)) '
+          'WITH CHECK (fp_system() OR organization_id IN (SELECT id FROM organizations))';
+  covered := covered || 'hr_calendar_days'::text;
+
   -- Таблицы организации без tenant_id: организация должна быть видима (своего клиента).
   FOR r IN SELECT c.table_name FROM information_schema.columns c JOIN information_schema.tables t USING (table_schema, table_name)
            WHERE c.table_schema = 'public' AND t.table_type = 'BASE TABLE' AND c.column_name = 'organization_id'

@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { runAsSystem } from '../../../common/db-context';
 import { Prisma } from '@prisma/client';
 import { createHash } from 'crypto';
 import { PrismaService } from '../../../prisma/prisma.service';
@@ -48,7 +49,8 @@ export class PayrollService {
     if (!list) return;
     const have = await this.prisma.hrCalendarDay.count({ where: { organizationId: null, date: { gte: new Date(`${year}-01-01`), lte: new Date(`${year}-12-31`) } } });
     if (have) return;
-    await this.prisma.hrCalendarDay.createMany({ data: list.map((d) => ({ organizationId: null, date: day(d), kind: 'HOLIDAY' })), skipDuplicates: true });
+    // Общий календарь (без организации) — справочные данные из кода: запись в системном режиме (рабочей роли RLS не даёт).
+    await runAsSystem(() => this.prisma.hrCalendarDay.createMany({ data: list.map((d) => ({ organizationId: null, date: day(d), kind: 'HOLIDAY' })), skipDuplicates: true }));
   }
 
   /** Рабочие дни (пятидневка) в интервале включительно с учётом праздников и переносов. */

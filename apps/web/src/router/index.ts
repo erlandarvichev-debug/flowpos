@@ -177,6 +177,8 @@ const router = createRouter({
         { path: 'reports/reconciliation', name: 'reconciliation', component: () => import('@/views/accounting/ReconciliationView.vue'), meta: { title: 'Акт сверки' } },
         { path: 'assets', name: 'assets', component: () => import('@/views/assets/AssetsView.vue'), meta: { title: 'Основные средства и НМА' } },
         { path: 'assets/depreciation', name: 'assets-depreciation', component: () => import('@/views/assets/DepreciationView.vue'), meta: { title: 'Амортизация' } },
+        { path: 'hr/staff', name: 'hr-staff', component: () => import('@/views/hr/StaffView.vue'), meta: { title: 'Сотрудники' } },
+        { path: 'hr/payroll-run', name: 'hr-payroll-run', component: () => import('@/views/hr/PayrollRunView.vue'), meta: { title: 'Расчёт зарплаты' } },
         // Налоги (FP-039)
         { path: 'tax/rules', name: 'tax-rules', component: () => import('@/views/tax/TaxRulesView.vue'), meta: { title: 'Налоговые правила' } },
         { path: 'tax/declarations', name: 'tax-declarations', component: () => import('@/views/tax/DeclarationsView.vue'), meta: { title: 'Декларации' } },

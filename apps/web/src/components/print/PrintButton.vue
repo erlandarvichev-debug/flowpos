@@ -28,9 +28,9 @@ import api from '@/api/client'
 import PrintFrame from './PrintFrame.vue'
 import { showError } from '@/views/accounting/acc'
 
-const props = withDefaults(defineProps<{ source: 'TRADE' | 'ACC' | 'RECON'; docType?: string; id?: string; query?: Record<string, unknown>; size?: 'small' | 'default' }>(), { size: 'default' })
+const props = withDefaults(defineProps<{ source: 'TRADE' | 'ACC' | 'RECON' | 'PAYROLL'; docType?: string; id?: string; query?: Record<string, unknown>; size?: 'small' | 'default' }>(), { size: 'default' })
 const all = ref<any[]>([])
-const kinds = computed(() => all.value.filter((k) => k.source === props.source && (props.source === 'RECON' || k.docTypes.includes(props.docType))))
+const kinds = computed(() => all.value.filter((k) => k.source === props.source && (props.source === 'RECON' || props.source === 'PAYROLL' || k.docTypes.includes(props.docType))))
 const show = ref(false)
 const current = ref<any>(null)
 const templates = ref<any[]>([])

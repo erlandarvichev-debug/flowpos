@@ -16,7 +16,8 @@
         <el-button v-if="cur && !cur.isDefault && canManage" @click="makeDefault">Сделать по умолчанию</el-button>
         <el-button v-if="cur && !cur.builtin && canManage" type="danger" plain @click="archive">В архив</el-button>
         <span class="spacer" />
-        <el-select v-if="kindDef?.source !== 'RECON'" v-model="sampleId" filterable placeholder="Документ для предпросмотра" style="width: 280px;" @change="loadData">
+        <el-date-picker v-if="kindDef?.source === 'PAYROLL'" v-model="sampleId" type="month" value-format="YYYY-MM" placeholder="Месяц" style="width: 150px;" @change="loadData" />
+        <el-select v-else-if="kindDef?.source !== 'RECON'" v-model="sampleId" filterable placeholder="Документ для предпросмотра" style="width: 280px;" @change="loadData">
           <el-option v-for="d in samples" :key="d.id" :value="d.id" :label="`${d.number ?? '—'} от ${fmtDate(d.date)}`" />
         </el-select>
         <template v-else>
@@ -134,6 +135,7 @@ async function onKind() {
     const k = kindDef.value
     if (k?.source === 'TRADE') samples.value = ((await api.get('/accounting/trade-documents', { params: { docType: k.docTypes.join(','), limit: 30 } })) as any).items
     if (k?.source === 'ACC') samples.value = ((await api.get('/accounting/documents', { params: { docType: k.docTypes.join(','), limit: 30 } })) as any).items
+    if (k?.source === 'PAYROLL') { const d = new Date(); sampleId.value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; await loadData().catch(() => null) }
     if (samples.value[0]) { sampleId.value = samples.value[0].id; await loadData() }
   } catch (e) { showError(e) }
 }

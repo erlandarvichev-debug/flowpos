@@ -125,6 +125,26 @@ export class PrintService {
     const k = KINDS.find((x) => x.kind === kind);
     if (!k) throw new AccError('BAD_KIND', 'Неизвестный вид печатной формы', { status: 404 });
     const org = await this.orgData(ctx);
+    if (k.source === 'PAYROLL') {
+      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(id)) throw new AccError('BAD_PERIOD', 'Месяц — ГГГГ-ММ');
+      const from = new Date(`${id}-01T00:00:00.000Z`);
+      const pp = await this.prisma.payrollPeriod.findUnique({ where: { organizationId_period: { organizationId: ctx.organizationId, period: from } }, include: { results: { include: { contract: { include: { individual: true } } }, orderBy: { createdAt: 'asc' } } } });
+      if (!pp || !pp.results.length) throw new AccError('NOT_FOUND', 'Зарплата за месяц не рассчитана', { status: 404 });
+      const depts = await this.prisma.department.findMany({ where: { organizationId: ctx.organizationId }, select: { id: true, name: true } });
+      const MONTHS = ['январь', 'февраль', 'март', 'апрель', 'май', 'июнь', 'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь'];
+      const periodTitle = `${MONTHS[Number(id.slice(5)) - 1]} ${id.slice(0, 4)} года`;
+      const money2 = (v: any) => new D(v ?? 0).toFixed(2);
+      const employees = pp.results.map((r) => ({
+        name: [r.contract.individual.lastName, r.contract.individual.firstName, r.contract.individual.middleName].filter(Boolean).join(' '), iin: r.contract.individual.iin,
+        contractNumber: r.contract.contractNumber, department: depts.find((x) => x.id === r.departmentId)?.name ?? '', workedDays: new D(r.workedDays).toString(), normDays: r.normDays,
+        baseAccrued: money2(r.baseAccrued), bonusAccrued: money2(r.bonusAccrued), totalGrossSalary: money2(r.totalGrossSalary), opvAmount: money2(r.opvAmount), vosmsAmount: money2(r.vosmsAmount),
+        standardDeduction: money2(r.standardDeduction), ipnAmount: money2(r.ipnAmount), otherDeductions: money2(r.otherDeductions), netSalaryToPay: money2(r.netSalaryToPay),
+        withheld: new D(r.opvAmount).plus(r.vosmsAmount).plus(r.ipnAmount).plus(r.otherDeductions).toFixed(2), netWords: words(money2(r.netSalaryToPay)),
+        soAmount: money2(r.soAmount), oosmsAmount: money2(r.oosmsAmount), opvrAmount: money2(r.opvrAmount), snAmount: money2(r.snAmount),
+      }));
+      const net = employees.reduce((s, e) => s.plus(e.netSalaryToPay), new D(0));
+      return { org, period: id, periodTitle, status: pp.status, number: id.replace('-', ''), employees, totals: { net: net.toFixed(2), count: employees.length }, totalWords: words(net.toFixed(2)), today: iso(new Date()) };
+    }
     if (k.source === 'RECON') {
       const r = await reconciliation(this.prisma, ctx, q);
       const closing = new D(r.closing);

@@ -3,8 +3,8 @@
 // не имеют — по деловой практике РК.
 import { Z2, R1, KO1, KO2 } from './templates-primary';
 
-export type PrintKind = 'INVOICE' | 'Z2' | 'R1' | 'KO1' | 'KO2' | 'RECON';
-export interface KindDef { kind: PrintKind; title: string; source: 'TRADE' | 'ACC' | 'RECON'; docTypes: string[]; lines?: 'GOODS' | 'SERVICES' | 'ALL' }
+export type PrintKind = 'INVOICE' | 'Z2' | 'R1' | 'KO1' | 'KO2' | 'RECON' | 'PAYSLIP' | 'PAYROLL_SHEET';
+export interface KindDef { kind: PrintKind; title: string; source: 'TRADE' | 'ACC' | 'RECON' | 'PAYROLL'; docTypes: string[]; lines?: 'GOODS' | 'SERVICES' | 'ALL' }
 export interface BuiltinTemplate { id: string; kind: PrintKind; name: string; html: string; primary: boolean; source: string }
 
 export const KINDS: KindDef[] = [
@@ -14,6 +14,8 @@ export const KINDS: KindDef[] = [
   { kind: 'KO1', title: 'Приходный кассовый ордер (КО-1)', source: 'ACC', docTypes: ['CASH_IN'] },
   { kind: 'KO2', title: 'Расходный кассовый ордер (КО-2)', source: 'ACC', docTypes: ['CASH_OUT'] },
   { kind: 'RECON', title: 'Акт сверки взаиморасчётов', source: 'RECON', docTypes: [] },
+  { kind: 'PAYSLIP', title: 'Расчётные листки', source: 'PAYROLL', docTypes: [] },
+  { kind: 'PAYROLL_SHEET', title: 'Платёжная ведомость', source: 'PAYROLL', docTypes: [] },
 ];
 
 const CSS = `<style>
@@ -61,11 +63,44 @@ const RECON = `${CSS}<div class="f">
 <div>От {{counterparty.name}}<br><br>Руководитель <span class="line"></span><br><br>Главный бухгалтер <span class="line"></span><br><br>М. П.</div></div>
 </div>`;
 
+const PAYSLIP = `${CSS}<div class="f">
+{{#each employees}}<div style="border:1px solid #000;padding:8px 10px;margin-bottom:10px;page-break-inside:avoid">
+<div style="display:flex;justify-content:space-between"><b>{{org.name}}</b><span>Расчётный листок за {{periodTitle}}</span></div>
+<p style="margin:4px 0"><b>{{name}}</b>, ИИН {{iin}}, таб. договор {{contractNumber}}{{#if department}}, {{department}}{{/if}}<br>Отработано дней: {{workedDays}} из {{normDays}}</p>
+<table class="g">
+<tr><th colspan="2">Начислено</th><th colspan="2">Удержано</th></tr>
+<tr><td>Оклад за отработанное время</td><td class="r">{{baseAccrued|money}}</td><td>ОПВ 10%</td><td class="r">{{opvAmount|money}}</td></tr>
+<tr><td>Премии и доплаты</td><td class="r">{{bonusAccrued|money}}</td><td>ВОСМС 2%</td><td class="r">{{vosmsAmount|money}}</td></tr>
+<tr><td></td><td></td><td>ИПН{{#if standardDeduction}} (вычет {{standardDeduction|money}}){{/if}}</td><td class="r">{{ipnAmount|money}}</td></tr>
+<tr><td></td><td></td><td>Прочие удержания</td><td class="r">{{otherDeductions|money}}</td></tr>
+<tr><td><b>Всего начислено</b></td><td class="r"><b>{{totalGrossSalary|money}}</b></td><td><b>Всего удержано</b></td><td class="r"><b>{{withheld|money}}</b></td></tr>
+</table>
+<p style="margin:4px 0"><b>К выплате: {{netSalaryToPay|money}} тенге</b> ({{netWords}})</p>
+<p class="muted">За счёт работодателя (не удерживаются): СО {{soAmount|money}}, ООСМС {{oosmsAmount|money}}, ОПВР {{opvrAmount|money}}, СН {{snAmount|money}}</p>
+</div>{{/each}}
+</div>`;
+
+const PAYROLL_SHEET = `${CSS}<div class="f">
+<p>Организация {{org.name}}, БИН {{org.bin}}</p>
+<h1 class="c">Платёжная ведомость № {{number}}</h1>
+<p class="c">на выплату заработной платы за {{periodTitle}}</p>
+<table class="g">
+<tr><th>№</th><th>Фамилия, имя, отчество</th><th>ИИН</th><th>Сумма, тенге</th><th>Подпись в получении</th></tr>
+{{#each employees}}<tr><td class="c">{{@n}}</td><td>{{name}}</td><td>{{iin}}</td><td class="r">{{netSalaryToPay|money}}</td><td style="width:120px"></td></tr>{{/each}}
+<tr><td colspan="3" class="r"><b>Итого</b></td><td class="r"><b>{{totals.net|money}}</b></td><td></td></tr>
+</table>
+<p>Сумма к выплате: {{totalWords}}</p>
+<div class="sig"><div>Руководитель <span class="line"></span> /{{org.director}}/<br><br>Главный бухгалтер <span class="line"></span> /{{org.accountant}}/</div>
+<div>Выплату произвёл кассир <span class="line"></span> /{{org.cashier}}/<br><br>Дата «____» ____________ 20___ г.</div></div>
+</div>`;
+
 export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
   { id: 'builtin:INVOICE', kind: 'INVOICE', name: 'Счёт на оплату (стандартный)', html: INVOICE, primary: true, source: 'Обязательной формы нет; реквизиты платежа по Правилам безналичных платежей НБРК (Кбе, КНП)' },
   { id: 'builtin:Z2', kind: 'Z2', name: Z2.name, html: Z2.html, primary: true, source: Z2.source },
   { id: 'builtin:R1', kind: 'R1', name: R1.name, html: R1.html, primary: true, source: R1.source },
   { id: 'builtin:KO1', kind: 'KO1', name: KO1.name, html: KO1.html, primary: true, source: KO1.source },
   { id: 'builtin:KO2', kind: 'KO2', name: KO2.name, html: KO2.html, primary: true, source: KO2.source },
+  { id: 'builtin:PAYSLIP', kind: 'PAYSLIP', name: 'Расчётные листки (стандартные)', html: PAYSLIP, primary: true, source: 'Трудовой кодекс РК, ст. 113 п. 2 — расчётный листок с составными частями зарплаты и удержаниями; обязательной формы нет' },
+  { id: 'builtin:PAYROLL_SHEET', kind: 'PAYROLL_SHEET', name: 'Платёжная ведомость (стандартная)', html: PAYROLL_SHEET, primary: true, source: 'Обязательной формы нет (ст. 7 п. 3 Закона «О бухучёте»)' },
   { id: 'builtin:RECON', kind: 'RECON', name: 'Акт сверки (стандартный)', html: RECON, primary: true, source: 'Обязательной формы нет; по деловой практике' },
 ];

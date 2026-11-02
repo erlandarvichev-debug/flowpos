@@ -20,7 +20,7 @@ export function isValidIban(iban: string): boolean {
   return mod === 1;
 }
 
-type OrgModel = 'orgBankAccount' | 'cashbox' | 'accItem' | 'project';
+type OrgModel = 'orgBankAccount' | 'cashbox' | 'accItem' | 'project' | 'department';
 
 @Injectable()
 export class RefsService {
@@ -77,7 +77,7 @@ export class RefsService {
   list(ctx: OrgContext, model: OrgModel, q: { kind?: string } = {}) {
     return (this.prisma[model] as any).findMany({
       where: { organizationId: ctx.organizationId, ...(model === 'accItem' && q.kind ? { kind: q.kind } : {}) },
-      orderBy: model === 'orgBankAccount' || model === 'cashbox' ? { name: 'asc' } : { code: 'asc' },
+      orderBy: model === 'orgBankAccount' || model === 'cashbox' || model === 'department' ? { name: 'asc' } : { code: 'asc' },
     });
   }
 
@@ -87,6 +87,12 @@ export class RefsService {
       if (!isValidIban(data.iban)) throw new AccError('BAD_IBAN', 'IBAN некорректен', { fix: 'IBAN Казахстана: KZ + 18 символов, проверьте контрольные цифры.' });
     }
     if (model === 'accItem' && !['INCOME', 'EXPENSE', 'CASHFLOW'].includes(data.kind)) throw new AccError('BAD_KIND', 'Вид статьи: INCOME, EXPENSE или CASHFLOW');
+    if (model === 'department') {
+      // Подразделение: только наименование, вид и счёт затрат (остальные поля из тела не принимаются).
+      if (String(data.name ?? '').trim().length < 2) throw new AccError('NAME_REQUIRED', 'Укажите наименование подразделения');
+      if (data.costAccount && !/^\d{4}$/.test(String(data.costAccount))) throw new AccError('BAD_ACCOUNT', 'Счёт затрат — четыре цифры');
+      data = { name: String(data.name).trim(), kind: ['STORE', 'WAREHOUSE', 'OFFICE'].includes(data.kind) ? data.kind : 'OFFICE', costAccount: data.costAccount ?? '7030' };
+    }
     const row = await (this.prisma[model] as any).create({ data: { ...data, organizationId: ctx.organizationId } });
     await this.audit(ctx, 'CREATE', model, row.id, row);
     return row;

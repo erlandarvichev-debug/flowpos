@@ -89,7 +89,7 @@ export class AccountingController {
   @Get('payroll/:period') @RequirePermission('payroll.read')
   payrollGet(@Org() ctx: OrgContext, @Param('period') period: string) { return this.payroll.get(ctx, period); }
 
-  @Post('payroll/:period/calculate') @RequirePermission('payroll.read') // расчёт возвращает все суммы
+  @Post('payroll/:period/calculate') @RequirePermission('payroll.approve') // расчёт записывает результаты месяца
   payrollCalc(@Org() ctx: OrgContext, @Param('period') period: string, @Body() b: any) { return this.payroll.calculate(ctx, period, b?.overrides ?? {}); }
 
   @Post('payroll/:period/approve') @RequirePermission('payroll.approve') @ApiHeader(IDEMP_HEADER)
@@ -515,7 +515,7 @@ export class AccountingController {
   }
 
   private model(kind: string) {
-    const m: Record<string, any> = { 'bank-accounts': 'orgBankAccount', cashboxes: 'cashbox', items: 'accItem', projects: 'project' };
+    const m: Record<string, any> = { 'bank-accounts': 'orgBankAccount', cashboxes: 'cashbox', items: 'accItem', projects: 'project', departments: 'department' };
     if (!m[kind]) throw new (require('./common/acc-error').AccError)('UNKNOWN_REF', `Неизвестный справочник: ${kind}`, { status: 404 });
     return m[kind];
   }
