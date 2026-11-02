@@ -21,6 +21,8 @@
         <span class="muted">{{ KIND[decl.kind] }} · пакет {{ decl.packVersion }} · {{ decl.header.name }}, БИН {{ decl.header.bin ?? '—' }}</span>
         <span v-if="decl.receipt" class="muted">· рег. № {{ decl.receipt.number }} от {{ fmtDate(decl.receipt.date) }}</span>
         <span class="spacer" />
+        <el-button size="small" :loading="dl === 'pdf'" @click="download('pdf')">PDF</el-button>
+        <el-button size="small" :loading="dl === 'xlsx'" @click="download('xlsx')">Excel</el-button>
         <template v-if="org.can('acc.period.lock')">
           <el-button v-if="decl.status === 'DRAFT'" type="success" size="small" :disabled="failed.length > 0" @click="finalize">Готова к сдаче</el-button>
           <el-button v-if="decl.status === 'FINAL'" size="small" type="primary" @click="submitted">Отметить сдачу</el-button>
@@ -31,7 +33,7 @@
           <el-button v-if="['FINAL', 'SUBMITTED', 'ACCEPTED'].includes(decl.status)" size="small" @click="build('ADDITIONAL')">Дополнительная</el-button>
         </template>
       </div>
-      <el-alert v-for="c in decl.checks.filter((x: any) => !x.ok)" :key="c.code" :type="c.severity === 'ERROR' ? 'error' : 'warning'" :closable="false" show-icon class="block" :title="c.text" />
+      <el-alert v-for="c in decl.checks.filter((x: any) => !x.ok)" :key="c.code" :type="c.severity === 'ERROR' ? 'error' : 'warning'" :closable="false" show-icon class="block" :title="c.severity === 'ERROR' ? `Не выполнено: ${c.text}` : `Внимание: ${c.hint ?? c.text}`" />
 
       <el-table :data="decl.lines" size="small" row-key="code">
         <el-table-column label="Код строки" width="190" prop="code" />
@@ -67,6 +69,19 @@ const years = [now.getFullYear() - 1, now.getFullYear()]
 const period = ref('')
 const history = ref<any[]>([])
 const busy = ref(false)
+const dl = ref('')
+async function download(format: 'pdf' | 'xlsx') {
+  dl.value = format
+  try {
+    const blob = (await api.get(`/accounting/tax/declarations/${decl.value.id}/export`, { params: { format }, responseType: 'blob' })) as unknown as Blob
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = `${form.value.replace('.', '')}_${decl.value.header.bin ?? 'org'}_${year.value}${period.value}.${format}`
+    a.click()
+    URL.revokeObjectURL(a.href)
+  } catch (e) { showError(e) }
+  dl.value = ''
+}
 const STATUS: Record<string, string> = { DRAFT: 'Черновик', FINAL: 'Готова к сдаче', SUBMITTED: 'Сдана', ACCEPTED: 'Принята', REJECTED: 'Отказ в приёме' }
 const TAG: Record<string, any> = { DRAFT: 'info', FINAL: 'primary', SUBMITTED: 'warning', ACCEPTED: 'success', REJECTED: 'danger' }
 const KIND: Record<string, string> = { INITIAL: 'Первоначальная', ADDITIONAL: 'Дополнительная', LIQUIDATION: 'Ликвидационная', BY_NOTICE: 'По уведомлению' }

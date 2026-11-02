@@ -7,6 +7,8 @@ import { PrismaService } from '../src/prisma/prisma.service';
 import { TaxService } from '../src/modules/accounting/tax/tax.service';
 import { DeclarationsService } from '../src/modules/accounting/tax/declarations.service';
 import { KZ_2026_1 } from '../src/modules/accounting/tax/rule-packs';
+import { declarationPdf, declarationXlsx, headerRows } from '../src/modules/accounting/tax/declaration-export';
+import * as ExcelJS from 'exceljs';
 import { makeOrg, makeServices, makeTrade } from './accounting-helpers';
 
 const prisma = new PrismaService();
@@ -60,6 +62,16 @@ describe('FP-054: 300.00', () => {
     for (const [k, v] of Object.entries(g300.lines)) expect([k, got[k]]).toEqual([k, v]);
     expect((d.checks as any[]).filter((c) => !c.ok && c.severity === 'ERROR')).toEqual([]);
     expect(d.header).toMatchObject({ form: '300.00', year: 2026, period: 'Q2', kind: 'INITIAL', vatCreditMethod: 'PROPORTIONAL' });
+    // Печатная форма: PDF и Excel с шапкой и всеми строками (значения те же).
+    const pdf = await declarationPdf(d as any);
+    expect(pdf.subarray(0, 5).toString()).toBe('%PDF-');
+    expect(headerRows(d as any)).toEqual(expect.arrayContaining([['Налоговый период', '2 квартал 2026 года'], ['Вид декларации', 'первоначальная']]));
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(await declarationXlsx(d as any) as any);
+    const cells = new Map<string, number>();
+    wb.worksheets[0].eachRow((r) => { const c = r.getCell(1).value, v = r.getCell(3).value; if (typeof c === 'string' && typeof v === 'number') cells.set(c, v); });
+    expect(cells.get('300.00.030 II')).toBe(Number(g300.lines['300.00.030 II']));
+    expect(cells.size).toBe((d.lines as any[]).length);
   });
 
   it('готова → неизменна; сдача с номером; первоначальная повторно — нельзя, дополнительная — можно; регистр изменился — не собирается', async () => {

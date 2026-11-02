@@ -8,7 +8,8 @@ import { TaxPackDef } from './rule-packs';
 
 type Dec = Prisma.Decimal;
 export interface DeclLine { code: string; name: string; value: string; formula?: string; source?: string }
-export interface DeclCheck { code: string; ok: boolean; severity: 'ERROR' | 'WARNING'; text: string }
+/** text — условие (что должно выполняться); hint — что делать, если не выполнено. */
+export interface DeclCheck { code: string; ok: boolean; severity: 'ERROR' | 'WARNING'; text: string; hint?: string }
 export interface FormBuildInput { register: any; pack: TaxPackDef; period: string; year: number; policy: { vatPayer?: boolean; taxRegime?: string; params?: any } | null }
 export interface FormDef {
   form: string;
@@ -124,8 +125,8 @@ const F300: FormDef = {
       { code: 'C2', severity: 'ERROR', ok: l013B.eq(new D(r.input.credit)), text: `300.00.013 B (${money(l013B)}) = зачёт по регистру (${r.input.credit})` },
       { code: 'C3', severity: 'ERROR', ok: !(l030I.gt(0) && l030II.gt(0)), text: '300.00.030 I и 300.00.030 II не заполняются одновременно' },
       { code: 'C4', severity: 'ERROR', ok: l006.eq(sum([l001A, l002, l003A, l004, l005])), text: '300.00.006 = 001 A + 002 + 003 A + 004 + 005' },
-      { code: 'W1', severity: 'WARNING', ok: other.length === 0, text: 'Есть обороты по иной ставке (300.00.001 I 4) — проверьте ставку' },
-      { code: 'W2', severity: 'WARNING', ok: (r.issues ?? []).every((i: any) => i.severity !== 'WARNING'), text: 'В регистре НДС есть предупреждения — проверьте перед сдачей' },
+      { code: 'W1', severity: 'WARNING', ok: other.length === 0, text: 'Оборотов по иной ставке (300.00.001 I 4) нет', hint: 'проверьте ставку в документах' },
+      { code: 'W2', severity: 'WARNING', ok: (r.issues ?? []).every((i: any) => i.severity !== 'WARNING'), text: 'В регистре НДС нет предупреждений', hint: 'проверьте их перед сдачей' },
     ];
     return { header: { vatCreditMethod: 'PROPORTIONAL', currency: 'KZT' }, lines, checks };
   },
@@ -165,8 +166,8 @@ const F910: FormDef = {
       { code: 'C1', severity: 'ERROR', ok: rate.gte(pack.params.simplified.maslikhatMin) && rate.lte(pack.params.simplified.maslikhatMax), text: `Ставка ${rate}% в пределах ${pack.params.simplified.maslikhatMin}–${pack.params.simplified.maslikhatMax}% (решение маслихата)` },
       { code: 'C2', severity: 'ERROR', ok: (r.issues ?? []).every((i: any) => i.code !== 'LIMIT_EXCEEDED'), text: `Доход не превышает предел ${pack.params.simplified.incomeLimitMrp} МРП` },
       { code: 'C3', severity: 'ERROR', ok: l003.eq(income.minus(l002)), text: '910.00.003 = 910.00.001 − 910.00.002' },
-      { code: 'W1', severity: 'WARNING', ok: income.lte(reductionThreshold), text: `Доход превысил 24 000 МРП — возможно уменьшение по п. 1 ст. 724 (910.00.002), его FlowPOS не считает` },
-      { code: 'W2', severity: 'WARNING', ok: r.rule?.status !== 'METHODOLOGIST_REVIEW', text: 'Состав дохода (какие счета входят) — правило-черновик; проверьте регистр доходов' },
+      { code: 'W1', severity: 'WARNING', ok: income.lte(reductionThreshold), text: 'Доход не превышает 24 000 МРП', hint: 'возможно уменьшение по п. 1 ст. 724 (910.00.002) — FlowPOS его не считает, заполните вручную' },
+      { code: 'W2', severity: 'WARNING', ok: r.rule?.status !== 'METHODOLOGIST_REVIEW', text: 'Состав дохода утверждён методологом', hint: 'правило-черновик — проверьте регистр доходов' },
     ];
     return { header: { legalForm: params.legalForm ?? null, currency: 'KZT', rate: rate.toString() }, lines, checks };
   },

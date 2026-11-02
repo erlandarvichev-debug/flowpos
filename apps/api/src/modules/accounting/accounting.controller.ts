@@ -16,6 +16,7 @@ import { RefsService } from './refs/refs.service';
 import { OrgEcpService } from './refs/org-ecp';
 import { TaxService } from './tax/tax.service';
 import { DeclarationsService } from './tax/declarations.service';
+import { declarationFileName, declarationPdf, declarationXlsx } from './tax/declaration-export';
 import { PeriodsService } from './periods/periods.service';
 import { AutopilotService } from './autopilot/autopilot.service';
 import { TradeDocumentsService } from './autopilot/trade-documents.service';
@@ -545,6 +546,17 @@ export class AccountingController {
 
   @Get('tax/declarations/:id') @RequirePermission('acc.reports.read')
   taxDeclaration(@Org() ctx: OrgContext, @Param('id') id: string) { return this.decl.get(ctx, id); }
+
+  /** Печатная форма декларации: format = pdf | xlsx. */
+  @Get('tax/declarations/:id/export') @RequirePermission('acc.reports.read')
+  async taxExport(@Org() ctx: OrgContext, @Param('id') id: string, @Query() q: any, @Res() res: Response) {
+    const d = (await this.decl.get(ctx, id)) as any;
+    const pdf = q.format !== 'xlsx';
+    const buf = pdf ? await declarationPdf(d) : await declarationXlsx(d);
+    res.setHeader('Content-Type', pdf ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${declarationFileName(d, pdf ? 'pdf' : 'xlsx')}"`);
+    res.send(buf);
+  }
 
   @Post('tax/declarations') @RequirePermission('acc.reports.read')
   taxBuildDeclaration(@Org() ctx: OrgContext, @Body() b: any) { return this.decl.build(ctx, b ?? {}); }
