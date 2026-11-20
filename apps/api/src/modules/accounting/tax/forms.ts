@@ -173,4 +173,48 @@ const F910: FormDef = {
   },
 };
 
-export const FORMS: Record<string, FormDef> = { [F300.form]: F300, [F910.form]: F910 };
+// ── 200.00 Декларация по ИПН и социальному налогу (налоговый агент) ──
+const F200: FormDef = {
+  form: '200.00',
+  title: 'Декларация по ИПН и социальному налогу',
+  periods: ['Q1', 'Q2', 'Q3', 'Q4'],
+  registerKind: 'PAYROLL',
+  registerPeriod: (p) => p,
+  registerLink: '/tax/payroll',
+  verified: true,
+  note: `${ORDER_695}8. Заполняются строки налогового агента по работникам (без ИП за себя, ОППВ, единого платежа, структурных подразделений). Суммы — по месяцу начисления зарплаты; ИПН и ОПВ в форме — по месяцу выплаты: при выплате в следующем месяце сверьте.`,
+  build({ register: r }) {
+    const m = r.months as any[];
+    const L = (code: string, name: string, v: Dec, formula?: string, source?: string): DeclLine => ({ code, name, value: money(v), formula, source });
+    const ROMAN = ['I', 'II', 'III'];
+    const lines: DeclLine[] = [];
+    const quarterly = (code: string, name: string, pick: (x: any) => string | number, source: string) => {
+      ROMAN.forEach((r2, i) => lines.push(L(`${code} ${r2}`, `${name} — ${m[i]?.month ?? ''}`, new D(m[i] ? pick(m[i]) : 0), undefined, source)));
+      lines.push(L(`${code} IV`, `${name} — итого за квартал`, sum(m.map((x) => new D(pick(x)))), `${code} I + II + III`));
+    };
+    quarterly('200.00.001', 'ИПН у источника выплаты', (x) => x.ipn, 'утверждённый расчёт зарплаты');
+    quarterly('200.00.002', 'ОПВ', (x) => x.opv, 'утверждённый расчёт зарплаты');
+    quarterly('200.00.005', 'Социальный налог (ст. 557 п. 1)', (x) => x.sn, 'утверждённый расчёт зарплаты');
+    quarterly('200.00.008', 'Социальные отчисления', (x) => x.so, 'утверждённый расчёт зарплаты');
+    quarterly('200.00.010', 'Отчисления на ОСМС', (x) => x.oosms, 'утверждённый расчёт зарплаты');
+    quarterly('200.00.011', 'Взносы на ОСМС', (x) => x.vosms, 'утверждённый расчёт зарплаты');
+    quarterly('200.00.013', 'ОПВР', (x) => x.opvr, 'утверждённый расчёт зарплаты');
+    quarterly('200.01.007', 'Доходы физических лиц', (x) => x.income, 'начислено');
+    quarterly('200.01.008', 'Облагаемый доход (ИПН)', (x) => x.taxable, 'после ОПВ, ВОСМС и вычетов');
+    quarterly('200.01.009', 'Доходы, с которых удерживаются ОПВ', (x) => x.bases.opv, 'база ОПВ');
+    quarterly('200.01.011', 'Доходы, с которых исчисляются ОПВР', (x) => x.bases.opvr, 'база ОПВР');
+    quarterly('200.01.016', 'Объект социального налога', (x) => x.bases.sn, 'база СН');
+    quarterly('200.01.017', 'Доходы для социальных отчислений', (x) => x.bases.so, 'база СО');
+    quarterly('200.01.019', 'Доходы для отчислений на ОСМС', (x) => x.bases.oosms, 'база ООСМС');
+    quarterly('200.01.020', 'Доходы для взносов на ОСМС', (x) => x.bases.vosms, 'база ВОСМС');
+    const v = (code: string) => new D(lines.find((l) => l.code === code)!.value);
+    const checks: DeclCheck[] = [
+      { code: 'C1', severity: 'ERROR', ok: (r.issues ?? []).every((i: any) => i.severity !== 'ERROR'), text: 'Зарплата за все месяцы квартала утверждена' },
+      { code: 'C2', severity: 'ERROR', ok: ['001', '002', '005', '008', '010', '011', '013'].every((c) => v(`200.00.${c} IV`).eq(v(`200.00.${c} I`).plus(v(`200.00.${c} II`)).plus(v(`200.00.${c} III`)))), text: 'Итог квартала = сумма месяцев по каждой строке' },
+      { code: 'C3', severity: 'WARNING', ok: v('200.01.008 IV').lte(v('200.01.007 IV')), text: 'Облагаемый доход не больше начисленного', hint: 'проверьте вычеты' },
+    ];
+    return { header: { currency: 'KZT', agent: true }, lines, checks };
+  },
+};
+
+export const FORMS: Record<string, FormDef> = { [F300.form]: F300, [F910.form]: F910, [F200.form]: F200 };

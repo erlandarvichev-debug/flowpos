@@ -77,7 +77,7 @@ const pay = ref({ bankAccountId: '', date: new Date().toISOString().slice(0, 10)
 const STATUS: Record<string, string> = { NONE: 'Не рассчитана', OPEN: 'Открыта', CALCULATED: 'Рассчитана', CLOSED: 'Утверждена' }
 const TAG: Record<string, any> = { NONE: 'info', OPEN: 'info', CALCULATED: 'warning', CLOSED: 'success' }
 const COLS = [
-  { k: 'totalGrossSalary', l: 'Начислено', b: true, w: 120 }, { k: 'opvAmount', l: 'ОПВ' }, { k: 'vosmsAmount', l: 'ВОСМС' }, { k: 'standardDeduction', l: 'Вычет' },
+  { k: 'baseAccrued', l: 'Оклад', w: 110 }, { k: 'absencePay', l: 'Отпускные / пособие', w: 130 }, { k: 'totalGrossSalary', l: 'Начислено', b: true, w: 120 }, { k: 'opvAmount', l: 'ОПВ' }, { k: 'vosmsAmount', l: 'ВОСМС' }, { k: 'standardDeduction', l: 'Вычет' },
   { k: 'ipnAmount', l: 'ИПН' }, { k: 'otherDeductions', l: 'Прочие удерж.' }, { k: 'netSalaryToPay', l: 'К выплате', b: true, w: 120 },
   { k: 'soAmount', l: 'СО' }, { k: 'oosmsAmount', l: 'ООСМС' }, { k: 'opvrAmount', l: 'ОПВР' }, { k: 'snAmount', l: 'СН' },
 ]

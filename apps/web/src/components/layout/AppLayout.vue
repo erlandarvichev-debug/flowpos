@@ -92,6 +92,7 @@
             <span>Зарплата и кадры</span>
           </template>
           <el-menu-item index="/hr/staff">Сотрудники</el-menu-item>
+          <el-menu-item index="/hr/absences">Отпуска и больничные</el-menu-item>
           <el-menu-item index="/hr/payroll-run">Расчёт зарплаты</el-menu-item>
           <el-menu-item index="/hr/schedule">График смен</el-menu-item>
           <el-menu-item index="/hr/timesheet">Табель</el-menu-item>
@@ -121,6 +122,7 @@
           <el-menu-item index="/tax/declarations">Декларации</el-menu-item>
           <el-menu-item index="/tax/vat">Регистр НДС</el-menu-item>
           <el-menu-item index="/tax/simplified">Доходы для упрощёнки</el-menu-item>
+          <el-menu-item index="/tax/payroll">Налоги с зарплаты</el-menu-item>
           <el-menu-item v-if="org.can('acc.esf.read')" index="/accounting/esf">ЭСФ и зачёт НДС</el-menu-item>
           <el-menu-item index="/tax/rules">Налоговые правила</el-menu-item>
         </el-sub-menu>

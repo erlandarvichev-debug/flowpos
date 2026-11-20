@@ -71,7 +71,7 @@ const PAYSLIP = `${CSS}<div class="f">
 <tr><th colspan="2">Начислено</th><th colspan="2">Удержано</th></tr>
 <tr><td>Оклад за отработанное время</td><td class="r">{{baseAccrued|money}}</td><td>ОПВ 10%</td><td class="r">{{opvAmount|money}}</td></tr>
 <tr><td>Премии и доплаты</td><td class="r">{{bonusAccrued|money}}</td><td>ВОСМС 2%</td><td class="r">{{vosmsAmount|money}}</td></tr>
-<tr><td></td><td></td><td>ИПН{{#if standardDeduction}} (вычет {{standardDeduction|money}}){{/if}}</td><td class="r">{{ipnAmount|money}}</td></tr>
+<tr><td>Отпускные, пособие по нетрудоспособности</td><td class="r">{{absencePay|money}}</td><td>ИПН{{#if standardDeduction}} (вычет {{standardDeduction|money}}){{/if}}</td><td class="r">{{ipnAmount|money}}</td></tr>
 <tr><td></td><td></td><td>Прочие удержания</td><td class="r">{{otherDeductions|money}}</td></tr>
 <tr><td><b>Всего начислено</b></td><td class="r"><b>{{totalGrossSalary|money}}</b></td><td><b>Всего удержано</b></td><td class="r"><b>{{withheld|money}}</b></td></tr>
 </table>

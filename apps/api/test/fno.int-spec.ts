@@ -147,6 +147,6 @@ describe('FP-054: 910.00', () => {
     const d = await decl.build(ctx, { form: '910.00', year: 2026, period: 'H1' });
     expect(await code(decl.finalize(ctx, d.id))).toBe('CHECKS_FAILED');
     expect(await code(decl.build(ctx, { form: '910.00', year: 2026, period: 'Q1' }))).toBe('BAD_PERIOD');
-    expect(await code(decl.build(ctx, { form: '200.00', year: 2026, period: 'Q1' }))).toBe('FORM_UNKNOWN');
+    expect(await code(decl.build(ctx, { form: '100.00', year: 2026, period: 'Q1' }))).toBe('FORM_UNKNOWN');
   });
 });

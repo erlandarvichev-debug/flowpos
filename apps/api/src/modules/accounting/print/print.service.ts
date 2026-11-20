@@ -137,7 +137,7 @@ export class PrintService {
       const employees = pp.results.map((r) => ({
         name: [r.contract.individual.lastName, r.contract.individual.firstName, r.contract.individual.middleName].filter(Boolean).join(' '), iin: r.contract.individual.iin,
         contractNumber: r.contract.contractNumber, department: depts.find((x) => x.id === r.departmentId)?.name ?? '', workedDays: new D(r.workedDays).toString(), normDays: r.normDays,
-        baseAccrued: money2(r.baseAccrued), bonusAccrued: money2(r.bonusAccrued), totalGrossSalary: money2(r.totalGrossSalary), opvAmount: money2(r.opvAmount), vosmsAmount: money2(r.vosmsAmount),
+        baseAccrued: money2(r.baseAccrued), bonusAccrued: money2(r.bonusAccrued), absencePay: money2(r.absencePay), totalGrossSalary: money2(r.totalGrossSalary), opvAmount: money2(r.opvAmount), vosmsAmount: money2(r.vosmsAmount),
         standardDeduction: money2(r.standardDeduction), ipnAmount: money2(r.ipnAmount), otherDeductions: money2(r.otherDeductions), netSalaryToPay: money2(r.netSalaryToPay),
         withheld: new D(r.opvAmount).plus(r.vosmsAmount).plus(r.ipnAmount).plus(r.otherDeductions).toFixed(2), netWords: words(money2(r.netSalaryToPay)),
         soAmount: money2(r.soAmount), oosmsAmount: money2(r.oosmsAmount), opvrAmount: money2(r.opvrAmount), snAmount: money2(r.snAmount),

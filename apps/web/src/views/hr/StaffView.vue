@@ -21,6 +21,7 @@
         <el-table-column label="Состояние" width="140"><template #default="{ row }"><el-tag :type="row.status === 'ACTIVE' ? 'success' : 'info'" size="small">{{ row.status === 'ACTIVE' ? 'Работает' : `Уволен ${fmtDate(row.fireDate)}` }}</el-tag></template></el-table-column>
         <el-table-column v-if="org.can('hr.manage')" label="" width="260">
           <template #default="{ row }">
+            <el-button v-if="row.status === 'TERMINATED' && org.can('payroll.approve')" link size="small" @click="compensate(row)">Компенсация отпуска</el-button>
             <template v-if="row.status === 'ACTIVE'">
               <el-button link size="small" @click="openChange(row)">Изменить</el-button>
               <el-button link size="small" @click="openAccrual(row)">Начисление</el-button>
@@ -141,6 +142,9 @@ async function terminate() {
   busy.value = true
   try { await api.post(`/accounting/hr/contracts/${cur.value.contractId}/terminate`, fire.value); ElMessage.success('Сотрудник уволен'); fireDlg.value = false; await load() } catch (e) { showError(e) }
   busy.value = false
+}
+async function compensate(r: any) {
+  try { const x = (await api.post(`/accounting/hr/contracts/${r.contractId}/compensation`, {})) as any; ElMessage.success(`Компенсация ${fmtMoney(x.amount)} за ${x.calendarDays} дн. — в зарплату ${x.payPeriod}`) } catch (e) { showError(e) }
 }
 async function addDept() {
   try { await api.post('/accounting/refs/departments', nd.value); nd.value = { name: '', costAccount: '7030' }; depts.value = (await api.get('/accounting/refs/departments')) as any } catch (e) { showError(e) }

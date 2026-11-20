@@ -18,6 +18,7 @@ import { TaxService } from './tax/tax.service';
 import { DeclarationsService } from './tax/declarations.service';
 import { PrintService } from './print/print.service';
 import { AssetsService } from './assets/assets.service';
+import { AbsencesService } from './payroll/absences.service';
 import { declarationFileName, declarationPdf, declarationXlsx } from './tax/declaration-export';
 import { PeriodsService } from './periods/periods.service';
 import { AutopilotService } from './autopilot/autopilot.service';
@@ -50,6 +51,7 @@ export class AccountingController {
     private decl: DeclarationsService,
     private print: PrintService,
     private assets: AssetsService,
+    private absences: AbsencesService,
     private docs: DocumentsService,
     private graph: DocumentGraphService,
     private approvals: ApprovalsService,
@@ -85,6 +87,31 @@ export class AccountingController {
 
   @Post('hr/contracts/:id/accruals') @RequirePermission('hr.manage')
   hrAccrual(@Org() ctx: OrgContext, @Param('id') id: string, @Body() b: any) { return this.payroll.addAccrual(ctx, id, b).then((r) => payView(r, ctx.can('payroll.read'))); }
+
+  // ── Отпуска и больничные ── суммы (средний заработок) видны только с payroll.read
+  private absView<T>(rows: T, ctx: OrgContext): T {
+    if (ctx.can('payroll.read')) return rows;
+    const hide = (r: any) => ({ ...r, avgDailyWage: null, amount: null, calc: null });
+    return (Array.isArray(rows) ? rows.map(hide) : hide(rows)) as T;
+  }
+
+  @Get('hr/absences') @RequirePermission('hr.read')
+  hrAbsences(@Org() ctx: OrgContext, @Query() q: any) { return this.absences.list(ctx, q).then((r) => this.absView(r, ctx)); }
+
+  @Post('hr/contracts/:id/absences') @RequirePermission('hr.manage')
+  hrAbsenceCreate(@Org() ctx: OrgContext, @Param('id') id: string, @Body() b: any) { return this.absences.create(ctx, id, b ?? {}).then((r) => this.absView(r, ctx)); }
+
+  @Post('hr/absences/:id/approve') @RequirePermission('payroll.approve')
+  hrAbsenceApprove(@Org() ctx: OrgContext, @Param('id') id: string) { return this.absences.approve(ctx, id); }
+
+  @Post('hr/absences/:id/cancel') @RequirePermission('payroll.approve')
+  hrAbsenceCancel(@Org() ctx: OrgContext, @Param('id') id: string, @Body() b: any) { return this.absences.cancel(ctx, id, b?.reason); }
+
+  @Get('hr/contracts/:id/leave-balance') @RequirePermission('hr.read')
+  hrLeaveBalance(@Org() ctx: OrgContext, @Param('id') id: string, @Query() q: any) { return this.absences.leaveBalance(ctx, id, q?.date ?? new Date().toISOString().slice(0, 10)); }
+
+  @Post('hr/contracts/:id/compensation') @RequirePermission('payroll.approve')
+  hrCompensation(@Org() ctx: OrgContext, @Param('id') id: string) { return this.absences.compensation(ctx, id); }
 
   @Get('payroll/:period') @RequirePermission('payroll.read')
   payrollGet(@Org() ctx: OrgContext, @Param('period') period: string) { return this.payroll.get(ctx, period); }
@@ -535,6 +562,9 @@ export class AccountingController {
 
   @Post('tax/registers/vat') @RequirePermission('acc.reports.read')
   taxBuildVat(@Org() ctx: OrgContext, @Body() b: any) { return this.tax.buildVat(ctx, Number(b?.year), String(b?.period ?? '')); }
+
+  @Post('tax/registers/payroll') @RequirePermission('payroll.read')
+  taxBuildPayroll(@Org() ctx: OrgContext, @Body() b: any) { return this.tax.buildPayroll(ctx, Number(b?.year), String(b?.period ?? '')); }
 
   @Post('tax/registers/simplified') @RequirePermission('acc.reports.read')
   taxBuildSimplified(@Org() ctx: OrgContext, @Body() b: any) { return this.tax.buildSimplified(ctx, Number(b?.year), String(b?.period ?? '')); }

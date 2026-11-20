@@ -11,6 +11,7 @@ import { PostingInput } from '../core/posting.types';
 import { PeriodsService } from '../periods/periods.service';
 import { DocumentsService } from '../documents/documents.service';
 import { PersonFlags, calcMonth, paramsForYear } from './kz-payroll';
+import { absencesForPayroll } from './absences.service';
 
 type Tx = Prisma.TransactionClient;
 type Dec = Prisma.Decimal;
@@ -44,6 +45,14 @@ export class PayrollService {
 
   // ── Производственный календарь ──
 
+  /** Праздники (общие и организации) в интервале — для отпуска (ТК ст. 90 п. 1). */
+  async holidays(organizationId: string, from: Date, to: Date): Promise<Set<string>> {
+    await this.ensureCalendar(from.getUTCFullYear());
+    if (to.getUTCFullYear() !== from.getUTCFullYear()) await this.ensureCalendar(to.getUTCFullYear());
+    const marks = await this.prisma.hrCalendarDay.findMany({ where: { date: { gte: from, lte: to }, kind: 'HOLIDAY', OR: [{ organizationId: null }, { organizationId }] } });
+    return new Set(marks.map((m) => iso(m.date)));
+  }
+
   async ensureCalendar(year: number) {
     const list = HOLIDAYS[year];
     if (!list) return;
@@ -54,7 +63,7 @@ export class PayrollService {
   }
 
   /** Рабочие дни (пятидневка) в интервале включительно с учётом праздников и переносов. */
-  private async workdays(organizationId: string, from: Date, to: Date): Promise<string[]> {
+  async workdays(organizationId: string, from: Date, to: Date): Promise<string[]> {
     if (from > to) return [];
     await this.ensureCalendar(from.getUTCFullYear());
     const marks = await this.prisma.hrCalendarDay.findMany({ where: { date: { gte: from, lte: to }, OR: [{ organizationId: null }, { organizationId }] } });
@@ -215,14 +224,17 @@ export class PayrollService {
         const segments: any[] = [];
         let base = new D(0), workedDays = 0;
         const ov = overrides[c.id]?.workedDays;
+        const abs = await absencesForPayroll(tx, c.id, period, (f, t) => this.workdays(ctx.organizationId, f, t));
         for (const s of c.history) {
           if (s.rateUnit !== 'MONTHLY') throw new AccError('HOURLY_NOT_SUPPORTED', `Договор ${c.contractNumber}: почасовая оплата пока не рассчитывается`, { fix: 'Укажите месячный оклад.' });
           const sFrom = s.validFrom > start ? day(s.validFrom) : start;
           const sTo = s.validTo < end ? day(s.validTo) : end;
-          const days = (await this.workdays(ctx.organizationId, sFrom, sTo)).length;
+          const all = await this.workdays(ctx.organizationId, sFrom, sTo);
+          const absent = await abs.absentDays(sFrom, sTo);
+          const days = all.filter((d) => !absent.has(d)).length; // отпуск, болезнь, без содержания — не оклад
           const full = new D(s.calculatedSalary).times(s.employmentRate);
           const amount = normDays ? full.times(days).div(normDays) : new D(0);
-          segments.push({ from: iso(sFrom), to: iso(sTo), salary: s.calculatedSalary.toFixed(2), rate: s.employmentRate.toString(), days, amount: amount.toFixed(2) });
+          segments.push({ from: iso(sFrom), to: iso(sTo), salary: s.calculatedSalary.toFixed(2), rate: s.employmentRate.toString(), days, absentDays: all.length - days, amount: amount.toFixed(2) });
           base = base.plus(amount); workedDays += days;
         }
         if (ov !== undefined && c.history.length) {
@@ -236,7 +248,8 @@ export class PayrollService {
         const accruals = await tx.oneTimeAccrual.findMany({ where: { contractId: c.id, period: from } });
         const bonus = accruals.filter((a) => a.accrualType !== 'INVENTORY_PENALTY').reduce((s, a) => s.plus(a.amount), new D(0));
         const other = accruals.filter((a) => a.accrualType === 'INVENTORY_PENALTY').reduce((s, a) => s.plus(a.amount), new D(0));
-        const gross = base.plus(bonus);
+        const absencePay = abs.pay; // отпускные, пособие, компенсация — средний заработок (облагаются как зарплата)
+        const gross = base.plus(bonus).plus(absencePay);
 
         const prev = await tx.payrollResult.aggregate({ where: { contractId: c.id, period: { gte: new Date(Date.UTC(y, 0, 1)), lt: from } }, _sum: { ipnBase: true, ipnAmount: true, standardDeduction: true } });
         const hireOrFire = (c.hireDate >= from && c.hireDate <= to) || (!!c.fireDate && c.fireDate >= from && c.fireDate <= to);
@@ -247,10 +260,10 @@ export class PayrollService {
         const net = r.net.minus(other);
         const data = {
           payrollPeriodId: pp.id, contractId: c.id, period: from, departmentId: c.history[c.history.length - 1]?.departmentId ?? null,
-          normDays, workedDays: new D(workedDays), baseAccrued: base, bonusAccrued: bonus, totalGrossSalary: gross,
+          normDays, workedDays: new D(workedDays), baseAccrued: base, bonusAccrued: bonus, absencePay, totalGrossSalary: gross,
           opvAmount: r.opv, vosmsAmount: r.vosms, standardDeduction: r.basicDeduction, ipnBase: r.taxable, ipnAmount: r.ipn,
           soAmount: r.so, snAmount: r.sn, oosmsAmount: r.oosms, opvrAmount: r.opvr, otherDeductions: other, netSalaryToPay: net,
-          details: { segments, bases: r.bases, exemptions: r.exemptions, params: { year: params.year, mrp: params.mrp, mzp: params.mzp }, sources: params.sources } as any,
+          details: { segments, absences: abs.items, bases: r.bases, exemptions: r.exemptions, params: { year: params.year, mrp: params.mrp, mzp: params.mzp }, sources: params.sources } as any,
         };
         const saved = await tx.payrollResult.upsert({ where: { payrollPeriodId_contractId: { payrollPeriodId: pp.id, contractId: c.id } }, create: data, update: data });
         out.push(saved);

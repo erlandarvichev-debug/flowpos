@@ -39,6 +39,15 @@ describe('FP-008: поля зарплаты — только с payroll.read', (
     expect([forAcc.salary, forAcc.iban]).toEqual(['750000.00', iban]);
     // Руководитель: hr.read есть, payroll.read — нет.
     expect((await as('manager', 'GET', '/accounting/hr/employees')).body.find((e: any) => e.iin === iin).salary).toBeNull();
+
+    // Отпуск: кадровик оформляет, но утверждает (считает деньги) — бухгалтер; суммы кадровику не видны.
+    const leave = await as('hr', 'POST', `/accounting/hr/contracts/${forAcc.contractId}/absences`, { kind: 'ANNUAL_LEAVE', dateFrom: '2026-11-02', days: 7 });
+    expect(leave.status).toBe(201);
+    expect((await as('hr', 'POST', `/accounting/hr/absences/${leave.body.id}/approve`, {})).status).toBe(403);
+    expect((await as('accountant', 'POST', `/accounting/hr/absences/${leave.body.id}/approve`, {})).status).toBe(201);
+    const hrView = (await as('hr', 'GET', `/accounting/hr/absences?contractId=${forAcc.contractId}`)).body[0];
+    expect([hrView.status, hrView.amount, hrView.avgDailyWage, hrView.calc]).toEqual(['APPROVED', null, null, null]);
+    expect(Number((await as('accountant', 'GET', `/accounting/hr/absences?contractId=${forAcc.contractId}`)).body[0].amount)).toBeGreaterThan(0);
   });
 
   it('ведомость, расчёт и выплата — только с payroll.read', async () => {

@@ -178,11 +178,13 @@ const router = createRouter({
         { path: 'assets', name: 'assets', component: () => import('@/views/assets/AssetsView.vue'), meta: { title: 'Основные средства и НМА' } },
         { path: 'assets/depreciation', name: 'assets-depreciation', component: () => import('@/views/assets/DepreciationView.vue'), meta: { title: 'Амортизация' } },
         { path: 'hr/staff', name: 'hr-staff', component: () => import('@/views/hr/StaffView.vue'), meta: { title: 'Сотрудники' } },
+        { path: 'hr/absences', name: 'hr-absences', component: () => import('@/views/hr/AbsencesView.vue'), meta: { title: 'Отпуска и больничные' } },
         { path: 'hr/payroll-run', name: 'hr-payroll-run', component: () => import('@/views/hr/PayrollRunView.vue'), meta: { title: 'Расчёт зарплаты' } },
         // Налоги (FP-039)
         { path: 'tax/rules', name: 'tax-rules', component: () => import('@/views/tax/TaxRulesView.vue'), meta: { title: 'Налоговые правила' } },
         { path: 'tax/declarations', name: 'tax-declarations', component: () => import('@/views/tax/DeclarationsView.vue'), meta: { title: 'Декларации' } },
         { path: 'tax/simplified', name: 'tax-simplified', component: () => import('@/views/tax/SimplifiedRegisterView.vue'), meta: { title: 'Доходы для упрощёнки' } },
+        { path: 'tax/payroll', name: 'tax-payroll', component: () => import('@/views/tax/PayrollTaxRegisterView.vue'), meta: { title: 'Налоги с зарплаты' } },
         { path: 'tax/vat', name: 'tax-vat', component: () => import('@/views/tax/VatRegisterView.vue'), meta: { title: 'Регистр НДС' } },
         // Аналитика
         {

@@ -2083,6 +2083,7 @@ model PayrollResult {
   workedHours      Decimal  @default(0) @map("worked_hours") @db.Decimal(8, 2)
   baseAccrued      Decimal  @map("base_accrued") @db.Decimal(15, 2)
   bonusAccrued     Decimal  @default(0) @map("bonus_accrued") @db.Decimal(15, 2)
+  absencePay       Decimal  @default(0) @map("absence_pay") @db.Decimal(15, 2) // отпускные, пособие, компенсация отпуска (средний заработок)
   totalGrossSalary Decimal  @map("total_gross_salary") @db.Decimal(15, 2)
   opvAmount        Decimal  @map("opv_amount") @db.Decimal(15, 2)
   vosmsAmount      Decimal  @map("vosms_amount") @db.Decimal(15, 2)
@@ -2939,6 +2940,38 @@ model AssetDepreciation {
   @@unique([assetId, period])
   @@index([organizationId, period])
   @@map("asset_depreciation")
+}
+
+/// Отсутствия сотрудника: ежегодный оплачиваемый отпуск, отпуск без содержания, временная нетрудоспособность,
+/// декрет, прочие. Утверждённые не пересекаются (по договору); оплачиваемые — с расчётом среднего заработка (calc)
+/// и суммой, которая входит в начисления месяца payPeriod. Изменение — отменой с причиной и новым документом.
+model HrAbsence {
+  id             String    @id @default(uuid())
+  organizationId String    @map("organization_id")
+  contractId     String    @map("contract_id")
+  kind           String    // ANNUAL_LEAVE | UNPAID_LEAVE | SICK | MATERNITY | OTHER_PAID
+  dateFrom       DateTime  @map("date_from") @db.Date
+  dateTo         DateTime  @map("date_to") @db.Date
+  calendarDays   Int       @map("calendar_days")
+  workDays       Int       @map("work_days")
+  paidDays       Int       @default(0) @map("paid_days")
+  documentNumber String?   @map("document_number") // № листа нетрудоспособности / приказа
+  status         String    @default("DRAFT") // DRAFT | APPROVED | CANCELLED
+  avgDailyWage   Decimal   @default(0) @map("avg_daily_wage") @db.Decimal(18, 2)
+  amount         Decimal   @default(0) @db.Decimal(18, 2)
+  calc           Json?     // расчётный период, заработок, дни, формула, лимит, источник правил
+  payPeriod      String?   @map("pay_period") // YYYY-MM — месяц начисления
+  note           String?
+  createdBy      String    @map("created_by")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  approvedBy     String?   @map("approved_by")
+  approvedAt     DateTime? @map("approved_at")
+  cancelledBy    String?   @map("cancelled_by")
+  cancelReason   String?   @map("cancel_reason")
+
+  @@index([organizationId, contractId, dateFrom])
+  @@index([organizationId, payPeriod])
+  @@map("hr_absences")
 }
 
 model VatCreditAllocation {

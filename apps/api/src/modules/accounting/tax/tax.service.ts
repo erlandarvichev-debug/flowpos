@@ -52,6 +52,13 @@ export interface SimplifiedRegisterData {
   issues: { severity: 'ERROR' | 'WARNING'; code: string; text: string }[];
 }
 
+export interface PayrollRegisterData {
+  pack: { code: string; version: string; hash: string };
+  period: { year: number; period: string; from: string; to: string };
+  months: { month: string; employees: number; income: string; taxable: string; ipn: string; opv: string; vosms: string; so: string; oosms: string; opvr: string; sn: string; bases: Record<string, string> }[];
+  issues: { severity: 'ERROR' | 'WARNING'; code: string; text: string }[];
+}
+
 /** Какие доходы (счета раздела 6) входят в доход упрощёнки. Черновик: неденежные переоценки и восстановления — не доход. */
 export const SIMPLIFIED_INCOME_RULE = {
   code: 'KZ_SIMPLIFIED_INCOME',
@@ -253,7 +260,7 @@ export class TaxService {
     if (reg.status !== 'DRAFT') throw new AccError('REGISTER_NOT_DRAFT', 'Фиксируется только черновик', { status: 409 });
     const errors = ((reg.data as any).issues ?? []).filter((i: any) => i.severity === 'ERROR');
     if (errors.length) throw new AccError('REGISTER_HAS_ERRORS', `В регистре ошибки (${errors.length}): ${errors[0].text}`, { fix: 'Исправьте документы, пересоберите регистр.' });
-    const now = reg.kind === 'VAT' ? await this.computeVat(ctx, reg.year, reg.period, reg.packId) : await this.computeSimplified(ctx, reg.year, reg.period, reg.packId);
+    const now = reg.kind === 'VAT' ? await this.computeVat(ctx, reg.year, reg.period, reg.packId) : reg.kind === 'PAYROLL' ? await this.computePayroll(ctx, reg.year, reg.period, reg.packId) : await this.computeSimplified(ctx, reg.year, reg.period, reg.packId);
     if (now.hash !== reg.contentHash) throw new AccError('REGISTER_STALE', 'Данные изменились после сборки — пересоберите регистр', { status: 409 });
     return this.prisma.$transaction(async (tx) => {
       const prev = await tx.taxRegister.findFirst({ where: { organizationId: ctx.organizationId, kind: reg.kind, year: reg.year, period: reg.period, status: 'FIXED' } });
@@ -273,6 +280,10 @@ export class TaxService {
     const reg = await this.prisma.taxRegister.findFirst({ where: { id, organizationId: ctx.organizationId } });
     if (!reg) throw new AccError('NOT_FOUND', 'Регистр не найден', { status: 404 });
     if (reg.kind === 'VAT') return this.verify(ctx, id);
+    if (reg.kind === 'PAYROLL') {
+      const now = await this.computePayroll(ctx, reg.year, reg.period, reg.packId);
+      return { same: now.hash === reg.contentHash, savedHash: reg.contentHash, currentHash: now.hash, was: {}, now: {}, changedDocs: [] as string[] };
+    }
     const now = await this.computeSimplified(ctx, reg.year, reg.period, reg.packId);
     const was = reg.data as any as SimplifiedRegisterData;
     return { same: now.hash === reg.contentHash, savedHash: reg.contentHash, currentHash: now.hash, was: { income: was.income }, now: { income: now.data.income }, changedDocs: [] as string[] };
@@ -316,6 +327,54 @@ export class TaxService {
         rows, income: income.toFixed(2), limit: limit.toFixed(2), issues,
       };
       return { packId: pack.id, data, hash: hashOf({ ...data, rows: rows.map(({ name: _n, ...r }) => r) }) };
+    });
+  }
+
+  /**
+   * Регистр по зарплатным налогам и взносам за квартал (основа 200.00): по каждому месяцу — суммы и базы из
+   * УТВЕРЖДЁННЫХ расчётов зарплаты. Месяц квартала с сотрудниками без утверждённого расчёта — ошибка.
+   */
+  async computePayroll(ctx: OrgContext, year: number, period: string, packId?: string): Promise<{ packId: string; data: PayrollRegisterData; hash: string }> {
+    const { from, to } = quarterRange(year, period);
+    return this.prisma.$transaction(async (tx) => {
+      let pack: { id: string; def: TaxPackDef };
+      if (packId) {
+        const p = await tx.taxRulePack.findUniqueOrThrow({ where: { id: packId } });
+        pack = { id: p.id, def: { code: p.code, version: p.version, validFrom: iso(p.validFrom), validTo: p.validTo ? iso(p.validTo) : null, params: p.params as any, sources: p.sources as any, unverified: p.unverified as any } };
+      } else pack = await this.packFor(tx, ctx.organizationId, to);
+      const issues: PayrollRegisterData['issues'] = [];
+      const months: PayrollRegisterData['months'] = [];
+      for (let i = 0; i < 3; i++) {
+        const m = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth() + i, 1));
+        const key = iso(m).slice(0, 7);
+        const pp = await tx.payrollPeriod.findUnique({ where: { organizationId_period: { organizationId: ctx.organizationId, period: m } }, include: { results: true } });
+        const active = await tx.hrContract.count({ where: { organizationId: ctx.organizationId, hireDate: { lte: new Date(Date.UTC(m.getUTCFullYear(), m.getUTCMonth() + 1, 0)) }, OR: [{ fireDate: null }, { fireDate: { gte: m } }] } });
+        if (active && pp?.status !== 'CLOSED') issues.push({ severity: 'ERROR', code: 'PAYROLL_NOT_APPROVED', text: `Зарплата за ${key} не утверждена` });
+        const rows = pp?.status === 'CLOSED' ? pp.results : [];
+        const sum = (f: (r: any) => any) => rows.reduce((s: Dec, r: any) => s.plus(new D(f(r) ?? 0)), new D(0));
+        const base = (k: string, amountKey: string) => sum((r) => (new D(r[amountKey]).isZero() ? 0 : (r.details as any)?.bases?.[k] ?? 0));
+        months.push({
+          month: key, employees: rows.length,
+          income: sum((r) => r.totalGrossSalary).toFixed(2), taxable: sum((r) => r.ipnBase).toFixed(2),
+          ipn: sum((r) => r.ipnAmount).toFixed(2), opv: sum((r) => r.opvAmount).toFixed(2), vosms: sum((r) => r.vosmsAmount).toFixed(2),
+          so: sum((r) => r.soAmount).toFixed(2), oosms: sum((r) => r.oosmsAmount).toFixed(2), opvr: sum((r) => r.opvrAmount).toFixed(2), sn: sum((r) => r.snAmount).toFixed(2),
+          bases: {
+            opv: base('opv', 'opvAmount').toFixed(2), opvr: base('opvr', 'opvrAmount').toFixed(2), so: base('so', 'soAmount').toFixed(2),
+            oosms: base('oosms', 'oosmsAmount').toFixed(2), vosms: base('vosms', 'vosmsAmount').toFixed(2), sn: sum((r) => (r.details as any)?.bases?.sn ?? 0).toFixed(2),
+          },
+        });
+      }
+      issues.push({ severity: 'WARNING', code: 'ACCRUAL_BASIS', text: 'Суммы по месяцу начисления; в 200.00 ИПН и ОПВ — по месяцу выплаты дохода: если зарплата выплачивается в следующем месяце, сверьте' });
+      const data: PayrollRegisterData = { pack: { code: pack.def.code, version: pack.def.version, hash: packHash(pack.def) }, period: { year, period, from: iso(from), to: iso(to) }, months, issues };
+      return { packId: pack.id, data, hash: hashOf(data) };
+    });
+  }
+
+  async buildPayroll(ctx: OrgContext, year: number, period: string) {
+    const r = await this.computePayroll(ctx, Number(year), String(period));
+    return this.prisma.$transaction(async (tx) => {
+      await tx.taxRegister.deleteMany({ where: { organizationId: ctx.organizationId, kind: 'PAYROLL', year: Number(year), period, status: 'DRAFT' } });
+      return tx.taxRegister.create({ data: { organizationId: ctx.organizationId, kind: 'PAYROLL', year: Number(year), period, packId: r.packId, packVersion: `${r.data.pack.code} ${r.data.pack.version}`, data: r.data as any, contentHash: r.hash, createdBy: ctx.userId } });
     });
   }
 
