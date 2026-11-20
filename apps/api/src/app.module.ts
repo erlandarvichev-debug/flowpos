@@ -14,6 +14,8 @@ import { PosModule } from './modules/pos/pos.module';
 import { HrModule } from './modules/hr/hr.module';
 import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { AccountingModule } from './modules/accounting/accounting.module';
+import { PlatformModule } from './modules/platform/platform.module';
+import { FieldModule } from './modules/field/field.module';
 
 @Module({
   imports: [
@@ -31,6 +33,8 @@ import { AccountingModule } from './modules/accounting/accounting.module';
     HrModule,
     AnalyticsModule,
     AccountingModule,
+    PlatformModule,
+    FieldModule,
   ],
 })
 export class AppModule implements NestModule {

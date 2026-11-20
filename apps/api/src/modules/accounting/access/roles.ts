@@ -21,11 +21,13 @@ export const PERMISSIONS = [
   'trade.read', 'trade.write',
   'pos.operate', 'pos.manage',
   'analytics.read',
+  // Решение «Супервайзер» (торговые представители); адреса ещё закрыты подпиской организации
+  'field.read', 'field.manage',
 ] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
 export const ROLES = [
-  'owner', 'admin', 'chief_accountant', 'accountant', 'hr', 'cashier', 'storekeeper', 'manager', 'auditor',
+  'owner', 'admin', 'chief_accountant', 'accountant', 'hr', 'cashier', 'storekeeper', 'manager', 'auditor', 'supervisor',
 ] as const;
 export type OrgRole = (typeof ROLES)[number];
 
@@ -35,7 +37,7 @@ const TRADE_READ: Permission[] = ['catalog.read', 'stock.read', 'trade.read'];
 export const ROLE_PERMISSIONS: Record<OrgRole, Permission[]> = {
   owner: [...PERMISSIONS],
   admin: PERMISSIONS.filter((p) => p !== 'acc.period.override'),
-  chief_accountant: PERMISSIONS.filter((p) => p !== 'org.members.manage'),
+  chief_accountant: PERMISSIONS.filter((p) => p !== 'org.members.manage' && !p.startsWith('field.')),
   accountant: [...READ_ALL, 'acc.doc.write', 'acc.doc.post', 'acc.doc.cancel', 'acc.refs.manage', 'acc.esf.send', 'hr.read', 'hr.manage', 'payroll.approve', 'payroll.read', ...TRADE_READ, 'catalog.manage', 'trade.write', 'analytics.read'],
   // Кадровик ведёт кадры, но зарплату видит только с payroll.read — его у роли нет.
   hr: ['acc.refs.read', 'hr.read', 'hr.manage'],
@@ -43,6 +45,8 @@ export const ROLE_PERMISSIONS: Record<OrgRole, Permission[]> = {
   storekeeper: ['acc.doc.read', 'acc.refs.read', ...TRADE_READ, 'trade.write'],
   manager: [...READ_ALL, 'hr.read', ...TRADE_READ, 'analytics.read'],
   auditor: [...READ_ALL, 'acc.audit.read', ...TRADE_READ, 'analytics.read'],
+  // Супервайзер торговых: представители, точки, маршруты, задания, посещения. Бухгалтерии не видит.
+  supervisor: ['field.read', 'field.manage'],
 };
 
 export const ROLE_LABELS: Record<OrgRole, { ru: string; kk: string }> = {
@@ -55,6 +59,7 @@ export const ROLE_LABELS: Record<OrgRole, { ru: string; kk: string }> = {
   storekeeper: { ru: 'Кладовщик', kk: 'Қойма меңгерушісі' },
   manager: { ru: 'Руководитель', kk: 'Басшы' },
   auditor: { ru: 'Аудитор', kk: 'Аудитор' },
+  supervisor: { ru: 'Супервайзер', kk: 'Супервайзер' },
 };
 
 export function hasPermission(role: string, perm: Permission): boolean {

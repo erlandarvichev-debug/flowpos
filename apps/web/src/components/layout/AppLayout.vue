@@ -20,7 +20,24 @@
           <template #title>Главное</template>
         </el-menu-item>
 
-        <el-sub-menu index="sales">
+        <!-- Решение «Супервайзер»: торговые представители (по подписке организации) -->
+        <el-sub-menu v-if="solutions.supervisor && org.can('field.read')" index="field">
+          <template #title>
+            <el-icon><Location /></el-icon>
+            <span>Торговые</span>
+          </template>
+          <el-menu-item index="/field/day">День на карте</el-menu-item>
+          <el-menu-item index="/field/visits">Посещения</el-menu-item>
+          <el-menu-item index="/field/routes">Маршруты</el-menu-item>
+          <el-menu-item index="/field/tasks">Задания</el-menu-item>
+          <el-menu-item index="/field/plan-fact">План и факт</el-menu-item>
+          <el-menu-item index="/field/points">Точки</el-menu-item>
+          <el-menu-item index="/field/reps">Представители</el-menu-item>
+        </el-sub-menu>
+
+        <!-- Решения «Учётная система» (торговля, склад, розница) и «Бухгалтерия»: у организации без подписки
+             включены оба, как раньше; раздел скрывается, только если решение приостановлено. -->
+        <el-sub-menu v-if="showTrade" index="sales">
           <template #title>
             <el-icon><Sell /></el-icon>
             <span>Продажи</span>
@@ -29,11 +46,11 @@
           <el-menu-item index="/sales/shipments">Реализации</el-menu-item>
           <el-menu-item index="/sales/returns">Возвраты от покупателей</el-menu-item>
           <el-menu-item index="/sales/retail">Розничные продажи</el-menu-item>
-          <el-menu-item v-if="org.can('acc.esf.read')" index="/accounting/esf">ЭСФ</el-menu-item>
+          <el-menu-item v-if="showAcc && org.can('acc.esf.read')" index="/accounting/esf">ЭСФ</el-menu-item>
           <el-menu-item index="/catalog/pricing">Цены и скидки</el-menu-item>
         </el-sub-menu>
 
-        <el-sub-menu index="purchases">
+        <el-sub-menu v-if="showTrade" index="purchases">
           <template #title>
             <el-icon><ShoppingCart /></el-icon>
             <span>Покупки</span>
@@ -45,7 +62,7 @@
           <el-menu-item index="/purchases/returns">Возвраты поставщикам</el-menu-item>
         </el-sub-menu>
 
-        <el-sub-menu index="bank">
+        <el-sub-menu v-if="showAcc" index="bank">
           <template #title>
             <el-icon><Wallet /></el-icon>
             <span>Банк и касса</span>
@@ -55,7 +72,7 @@
           <el-menu-item index="/bank/cash">Кассовые документы</el-menu-item>
         </el-sub-menu>
 
-        <el-sub-menu index="warehouse">
+        <el-sub-menu v-if="showTrade" index="warehouse">
           <template #title>
             <el-icon><Box /></el-icon>
             <span>Склад</span>
@@ -67,7 +84,7 @@
           <el-menu-item index="/warehouse/inventories">Инвентаризации</el-menu-item>
         </el-sub-menu>
 
-        <el-sub-menu index="assets">
+        <el-sub-menu v-if="showAcc" index="assets">
           <template #title>
             <el-icon><OfficeBuilding /></el-icon>
             <span>Основные средства</span>
@@ -76,7 +93,7 @@
           <el-menu-item index="/assets/depreciation">Амортизация</el-menu-item>
         </el-sub-menu>
 
-        <el-sub-menu index="pos">
+        <el-sub-menu v-if="showTrade" index="pos">
           <template #title>
             <el-icon><Monitor /></el-icon>
             <span>Розница (FlowPOS)</span>
@@ -86,7 +103,7 @@
           <el-menu-item index="/pos/receipts">Чеки</el-menu-item>
         </el-sub-menu>
 
-        <el-sub-menu index="hr">
+        <el-sub-menu v-if="showAcc" index="hr">
           <template #title>
             <el-icon><UserFilled /></el-icon>
             <span>Зарплата и кадры</span>
@@ -98,7 +115,7 @@
           <el-menu-item index="/hr/timesheet">Табель</el-menu-item>
         </el-sub-menu>
 
-        <el-sub-menu index="operations">
+        <el-sub-menu v-if="showAcc" index="operations">
           <template #title>
             <el-icon><Operation /></el-icon>
             <span>Операции</span>
@@ -114,7 +131,7 @@
           <el-menu-item index="/accounting/documents">Все документы учёта</el-menu-item>
         </el-sub-menu>
 
-        <el-sub-menu index="tax">
+        <el-sub-menu v-if="showAcc" index="tax">
           <template #title>
             <el-icon><Stamp /></el-icon>
             <span>Налоги</span>
@@ -127,31 +144,31 @@
           <el-menu-item index="/tax/rules">Налоговые правила</el-menu-item>
         </el-sub-menu>
 
-        <el-sub-menu index="reports">
+        <el-sub-menu v-if="showTrade || showAcc" index="reports">
           <template #title>
             <el-icon><DataAnalysis /></el-icon>
             <span>Отчёты</span>
           </template>
-          <el-menu-item index="/accounting/reports/trial-balance">Оборотно-сальдовая ведомость</el-menu-item>
-          <el-menu-item index="/accounting/reports/account-card">Карточка счёта</el-menu-item>
-          <el-menu-item index="/accounting/reports/journal">Журнал проводок</el-menu-item>
-          <el-menu-item index="/accounting/reports/settlements">Взаиморасчёты</el-menu-item>
-          <el-menu-item index="/reports/reconciliation">Акт сверки</el-menu-item>
-          <el-menu-item index="/accounting/reports/stock">Остатки и себестоимость</el-menu-item>
-          <el-menu-item index="/accounting/statements">Финансовая отчётность</el-menu-item>
-          <el-menu-item index="/analytics">Аналитика продаж</el-menu-item>
+          <el-menu-item v-if="showAcc" index="/accounting/reports/trial-balance">Оборотно-сальдовая ведомость</el-menu-item>
+          <el-menu-item v-if="showAcc" index="/accounting/reports/account-card">Карточка счёта</el-menu-item>
+          <el-menu-item v-if="showAcc" index="/accounting/reports/journal">Журнал проводок</el-menu-item>
+          <el-menu-item v-if="showTrade" index="/accounting/reports/settlements">Взаиморасчёты</el-menu-item>
+          <el-menu-item v-if="showTrade" index="/reports/reconciliation">Акт сверки</el-menu-item>
+          <el-menu-item v-if="showTrade" index="/accounting/reports/stock">Остатки и себестоимость</el-menu-item>
+          <el-menu-item v-if="showAcc" index="/accounting/statements">Финансовая отчётность</el-menu-item>
+          <el-menu-item v-if="showTrade" index="/analytics">Аналитика продаж</el-menu-item>
         </el-sub-menu>
 
-        <el-sub-menu index="refs">
+        <el-sub-menu v-if="showTrade || showAcc" index="refs">
           <template #title>
             <el-icon><Notebook /></el-icon>
             <span>Справочники</span>
           </template>
-          <el-menu-item index="/catalog/items">Номенклатура</el-menu-item>
-          <el-menu-item index="/catalog/counterparties">Контрагенты</el-menu-item>
-          <el-menu-item index="/catalog/warehouses">Склады</el-menu-item>
-          <el-menu-item index="/accounting/chart">План счетов</el-menu-item>
-          <el-menu-item index="/accounting/refs">Справочники учёта</el-menu-item>
+          <el-menu-item v-if="showTrade" index="/catalog/items">Номенклатура</el-menu-item>
+          <el-menu-item v-if="showTrade" index="/catalog/counterparties">Контрагенты</el-menu-item>
+          <el-menu-item v-if="showTrade" index="/catalog/warehouses">Склады</el-menu-item>
+          <el-menu-item v-if="showAcc" index="/accounting/chart">План счетов</el-menu-item>
+          <el-menu-item v-if="showAcc" index="/accounting/refs">Справочники учёта</el-menu-item>
         </el-sub-menu>
 
         <el-sub-menu index="admin">
@@ -159,10 +176,15 @@
             <el-icon><Setting /></el-icon>
             <span>Администрирование</span>
           </template>
-          <el-menu-item index="/accounting/settings">Учётная политика и периоды</el-menu-item>
+          <el-menu-item v-if="showAcc" index="/accounting/settings">Учётная политика и периоды</el-menu-item>
           <el-menu-item index="/settings/print">Печатные формы</el-menu-item>
           <el-menu-item index="/settings/users">Пользователи</el-menu-item>
         </el-sub-menu>
+
+        <el-menu-item v-if="solutions.isPlatformAdmin" index="/platform">
+          <el-icon><Platform /></el-icon>
+          <template #title>Платформа</template>
+        </el-menu-item>
       </el-menu>
 
       <div class="sidebar-footer">
@@ -256,6 +278,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter, RouterView } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useOrgStore } from '@/stores/org'
+import { useSolutionsStore } from '@/stores/solutions'
 import { useI18n } from '@/composables/useI18n'
 import { Plus } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
@@ -266,6 +289,11 @@ const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 const org = useOrgStore()
+const solutions = useSolutionsStore()
+// Супервайзеру учёт и бухгалтерия не нужны (и прав на них у роли нет) — показываем только «Торговые».
+const notSupervisor = computed(() => org.context?.role !== 'supervisor')
+const showTrade = computed(() => solutions.trade && notSupervisor.value)
+const showAcc = computed(() => solutions.accounting && notSupervisor.value)
 const { t, lang, setLang } = useI18n()
 const orgDialog = ref(false)
 const orgForm = ref<any>({ name: '', nameKk: '', inn: '', legalForm: 'TOO', vatPayer: false, taxRegime: 'GENERAL' })
@@ -328,10 +356,11 @@ function handleUserCommand(cmd: string) {
   }
 }
 
-watch(() => org.currentId, () => loadAutopilotIssues())
+watch(() => org.currentId, () => { loadAutopilotIssues(); solutions.load() })
 
 onMounted(() => {
   org.load()
+  solutions.load()
   loadAutopilotIssues()
   setInterval(() => loadAutopilotIssues(), 60_000)
 })

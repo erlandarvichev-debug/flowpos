@@ -13,10 +13,10 @@ tar $XATTR -czf "$OUT" \
   --exclude='*/dist' --exclude='*/coverage' --exclude='*.tsbuildinfo' \
   --exclude='.env' --exclude='*/.env' --exclude='*/.env.*' \
   --exclude='./flowpos-release-*.tar.gz' --exclude='*/data/mcp-oauth.json' \
-  --exclude='*/.vite' --exclude='.DS_Store' \
+  --exclude='*/.vite' --exclude='.DS_Store'   --exclude='./.pgtest' --exclude='./_baseline' --exclude='./.claude' --exclude='*/data/field' \
   .
 # Контроль: в архиве не должно быть .env и ключей
-if tar -tzf "$OUT" | grep -E '(^|/)\.env$|\.p12$|mcp-oauth\.json$' ; then
+if tar -tzf "$OUT" | grep -E '(^|/)\.env$|\.p12$|mcp-oauth\.json$|(^|/)\.pgtest/|test-login\.txt$' ; then
   echo "!! В архив попали секреты — архив удалён"; rm -f "$OUT"; exit 1
 fi
 echo "Готово: $OUT ($(du -h "$OUT" | cut -f1)), файлов: $(tar -tzf "$OUT" | wc -l | tr -d ' ')"

@@ -12,12 +12,14 @@
     "dayjs": "^1.11.10",
     "echarts": "^5.5.0",
     "element-plus": "^2.6.1",
+    "leaflet": "^1.9.4",
     "pinia": "^2.1.7",
     "vue": "^3.4.19",
     "vue-echarts": "^6.7.3",
     "vue-router": "^4.3.0"
   },
   "devDependencies": {
+    "@types/leaflet": "^1.9.12",
     "@vitejs/plugin-vue": "^5.2.4",
     "typescript": "^5.3.3",
     "unplugin-auto-import": "^0.17.5",

@@ -8,3 +8,5 @@ dist/
 coverage/
 prisma/migrations/dev/
 _baseline/
+.pgtest/
+flowpos-release-*.tar.gz

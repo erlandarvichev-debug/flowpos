@@ -3045,3 +3045,292 @@ model AccPeriodClose {
   @@index([organizationId, period])
   @@map("acc_period_closes")
 }
+
+// ─── ПЛАТФОРМА: подписки на решения ─────────────────────────────────────────
+// Решение «ERP» включено у организации, пока его явно не приостановили (строки может не быть);
+// «Супервайзер» — только при подписке trial/active с неистёкшим сроком.
+
+/// Администратор платформы (владелец flowpos.kz): видит все организации и меняет их подписки.
+/// Не роль организации. Служебная таблица — читается только в системном режиме (RLS).
+/// Назначается скриптом deploy/scripts/platform-admin.mjs.
+model PlatformAdmin {
+  userId    String   @id @map("user_id")
+  note      String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("platform_admins")
+}
+
+/// Подписка организации на решение: erp | supervisor.
+model OrgSubscription {
+  id             String    @id @default(uuid())
+  tenantId       String    @default(dbgenerated("NULLIF(current_setting('flowpos.tenant_id', true), '')")) @map("tenant_id")
+  organizationId String    @map("organization_id")
+  solution       String // erp | supervisor
+  status         String // trial | active | suspended
+  validUntil     DateTime? @map("valid_until") // null — без срока
+  seats          Int? // «Супервайзер»: сколько представителей можно подключить; null — без ограничения
+  note           String?
+  updatedBy      String?   @map("updated_by")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  @@unique([organizationId, solution])
+  @@index([tenantId])
+  @@map("org_subscriptions")
+}
+
+/// Журнал изменений подписок: кто, когда, что было и что стало.
+model SubscriptionEvent {
+  id             String   @id @default(uuid())
+  tenantId       String   @default(dbgenerated("NULLIF(current_setting('flowpos.tenant_id', true), '')")) @map("tenant_id")
+  organizationId String   @map("organization_id")
+  solution       String
+  userId         String?  @map("user_id")
+  before         Json?
+  after          Json?
+  ts             DateTime @default(now())
+
+  @@index([organizationId, ts])
+  @@map("subscription_events")
+}
+
+// ─── СУПЕРВАЙЗЕР: торговые представители ────────────────────────────────────
+// Все таблицы — с tenant_id/organization_id (RLS по клиенту, FP-009).
+
+/// Торговый представитель. На сайт не входит — работает в агенте на телефоне (привязка кодом).
+model FieldRep {
+  id             String   @id @default(uuid())
+  tenantId       String   @default(dbgenerated("NULLIF(current_setting('flowpos.tenant_id', true), '')")) @map("tenant_id")
+  organizationId String   @map("organization_id")
+  name           String
+  phone          String?
+  moyskladLogin  String?  @map("moysklad_login")
+  supervisorId   String?  @map("supervisor_id") // пользователь сайта (супервайзер)
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  devices FieldDevice[]
+  codes   FieldBindCode[]
+
+  @@index([organizationId])
+  @@index([tenantId])
+  @@map("field_reps")
+}
+
+/// Телефон, привязанный к представителю. Токен хранится только хэшем.
+model FieldDevice {
+  id             String    @id @default(uuid())
+  tenantId       String    @default(dbgenerated("NULLIF(current_setting('flowpos.tenant_id', true), '')")) @map("tenant_id")
+  organizationId String    @map("organization_id")
+  repId          String    @map("rep_id")
+  tokenHash      String    @unique @map("token_hash")
+  model          String?
+  appVersion     String?   @map("app_version")
+  lastSeenAt     DateTime? @map("last_seen_at")
+  revokedAt      DateTime? @map("revoked_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  rep FieldRep @relation(fields: [repId], references: [id])
+
+  @@index([repId])
+  @@index([tenantId])
+  @@map("field_devices")
+}
+
+/// Код привязки телефона из 6 цифр: действует 15 минут, один раз.
+model FieldBindCode {
+  id             String    @id @default(uuid())
+  tenantId       String    @default(dbgenerated("NULLIF(current_setting('flowpos.tenant_id', true), '')")) @map("tenant_id")
+  organizationId String    @map("organization_id")
+  repId          String    @map("rep_id")
+  codeHash       String    @unique @map("code_hash")
+  expiresAt      DateTime  @map("expires_at")
+  usedAt         DateTime? @map("used_at")
+  createdBy      String?   @map("created_by")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  rep FieldRep @relation(fields: [repId], references: [id])
+
+  @@index([repId])
+  @@index([tenantId])
+  @@map("field_bind_codes")
+}
+
+/// Торговая точка (клиент). moyskladId — контрагент МойСклад; координаты — с первого посещения или с карты.
+model FieldPoint {
+  id             String   @id @default(uuid())
+  tenantId       String   @default(dbgenerated("NULLIF(current_setting('flowpos.tenant_id', true), '')")) @map("tenant_id")
+  organizationId String   @map("organization_id")
+  name           String
+  address        String?
+  phone          String?
+  moyskladId     String?  @map("moysklad_id")
+  lat            Float?
+  lng            Float?
+  radiusM        Int?     @map("radius_m") // null — 100 м
+  coordsSource   String?  @map("coords_source") // rep — запомнил представитель на месте, supervisor — поставлен на карте
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@unique([organizationId, moyskladId])
+  @@index([tenantId])
+  @@map("field_points")
+}
+
+/// Маршрут представителя на дату.
+model FieldRoute {
+  id             String   @id @default(uuid())
+  tenantId       String   @default(dbgenerated("NULLIF(current_setting('flowpos.tenant_id', true), '')")) @map("tenant_id")
+  organizationId String   @map("organization_id")
+  repId          String   @map("rep_id")
+  date           DateTime @db.Date
+  note           String?
+  createdBy      String?  @map("created_by")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  stops FieldRouteStop[]
+
+  @@unique([repId, date])
+  @@index([organizationId, date])
+  @@index([tenantId])
+  @@map("field_routes")
+}
+
+/// Точка маршрута по порядку.
+model FieldRouteStop {
+  id             String @id @default(uuid())
+  tenantId       String @default(dbgenerated("NULLIF(current_setting('flowpos.tenant_id', true), '')")) @map("tenant_id")
+  organizationId String @map("organization_id")
+  routeId        String @map("route_id")
+  pointId        String @map("point_id")
+  position       Int
+
+  route FieldRoute @relation(fields: [routeId], references: [id], onDelete: Cascade)
+
+  @@unique([routeId, pointId])
+  @@index([tenantId])
+  @@map("field_route_stops")
+}
+
+/// Задание представителю (по точке или общее).
+model FieldTask {
+  id             String    @id @default(uuid())
+  tenantId       String    @default(dbgenerated("NULLIF(current_setting('flowpos.tenant_id', true), '')")) @map("tenant_id")
+  organizationId String    @map("organization_id")
+  repId          String    @map("rep_id")
+  pointId        String?   @map("point_id")
+  dueDate        DateTime? @map("due_date") @db.Date
+  title          String
+  text           String?
+  status         String    @default("open") // open | done | cancelled
+  result         String?
+  doneAt         DateTime? @map("done_at")
+  visitId        String?   @map("visit_id")
+  createdBy      String?   @map("created_by")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  @@index([organizationId, repId, status])
+  @@index([tenantId])
+  @@map("field_tasks")
+}
+
+/// Посещение точки. placement решает сервер по расстоянию: on_site | remote | unknown.
+model FieldVisit {
+  id             String    @id @default(uuid())
+  tenantId       String    @default(dbgenerated("NULLIF(current_setting('flowpos.tenant_id', true), '')")) @map("tenant_id")
+  organizationId String    @map("organization_id")
+  repId          String    @map("rep_id")
+  pointId        String    @map("point_id")
+  clientUuid     String    @map("client_uuid") // идентификатор с телефона: повторная отправка не создаёт дубль
+  startedAt      DateTime  @map("started_at")
+  finishedAt     DateTime? @map("finished_at")
+  lat            Float?
+  lng            Float?
+  accuracyM      Float?    @map("accuracy_m")
+  distanceM      Float?    @map("distance_m")
+  placement      String // on_site | remote | unknown
+  comment        String?
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  photos FieldPhoto[]
+
+  @@unique([organizationId, clientUuid])
+  @@index([organizationId, startedAt])
+  @@index([repId, startedAt])
+  @@index([tenantId])
+  @@map("field_visits")
+}
+
+/// Фото посещения. Файл — в каталоге данных сервера (вне релиза), хранится 180 дней.
+model FieldPhoto {
+  id             String   @id @default(uuid())
+  tenantId       String   @default(dbgenerated("NULLIF(current_setting('flowpos.tenant_id', true), '')")) @map("tenant_id")
+  organizationId String   @map("organization_id")
+  visitId        String   @map("visit_id")
+  repId          String   @map("rep_id")
+  clientUuid     String   @map("client_uuid")
+  path           String // относительно каталога данных
+  size           Int
+  mime           String
+  takenAt        DateTime @map("taken_at")
+  lat            Float?
+  lng            Float?
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  visit FieldVisit @relation(fields: [visitId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, clientUuid])
+  @@index([visitId])
+  @@index([createdAt])
+  @@index([tenantId])
+  @@map("field_photos")
+}
+
+/// Заказ из агента (сам заказ — в МойСклад): где оформлен — на точке или удалённо.
+model FieldOrder {
+  id             String   @id @default(uuid())
+  tenantId       String   @default(dbgenerated("NULLIF(current_setting('flowpos.tenant_id', true), '')")) @map("tenant_id")
+  organizationId String   @map("organization_id")
+  repId          String   @map("rep_id")
+  pointId        String?  @map("point_id")
+  visitId        String?  @map("visit_id")
+  clientUuid     String   @map("client_uuid")
+  moyskladId     String?  @map("moysklad_id")
+  number         String?
+  sum            Decimal  @db.Decimal(14, 2)
+  at             DateTime
+  lat            Float?
+  lng            Float?
+  accuracyM      Float?   @map("accuracy_m")
+  distanceM      Float?   @map("distance_m")
+  placement      String // on_site | remote | unknown
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@unique([organizationId, clientUuid])
+  @@index([organizationId, at])
+  @@index([tenantId])
+  @@map("field_orders")
+}
+
+/// Отметки местоположения по событиям (посещение, фото, заказ) — без постоянного слежения.
+model FieldTrack {
+  id             String   @id @default(uuid())
+  tenantId       String   @default(dbgenerated("NULLIF(current_setting('flowpos.tenant_id', true), '')")) @map("tenant_id")
+  organizationId String   @map("organization_id")
+  repId          String   @map("rep_id")
+  at             DateTime
+  lat            Float
+  lng            Float
+  accuracyM      Float?   @map("accuracy_m")
+  event          String // visit_start | visit_end | photo | order
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@index([repId, at])
+  @@index([tenantId])
+  @@map("field_track")
+}

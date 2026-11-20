@@ -5,6 +5,13 @@ const router = createRouter({
   history: createWebHistory(),
   routes: [
     {
+      // Рекламная страница для гостей (не вошедших)
+      path: '/welcome',
+      name: 'landing',
+      component: () => import('@/views/LandingView.vue'),
+      meta: { public: true },
+    },
+    {
       path: '/login',
       name: 'login',
       component: () => import('@/views/auth/LoginView.vue'),
@@ -186,6 +193,17 @@ const router = createRouter({
         { path: 'tax/simplified', name: 'tax-simplified', component: () => import('@/views/tax/SimplifiedRegisterView.vue'), meta: { title: 'Доходы для упрощёнки' } },
         { path: 'tax/payroll', name: 'tax-payroll', component: () => import('@/views/tax/PayrollTaxRegisterView.vue'), meta: { title: 'Налоги с зарплаты' } },
         { path: 'tax/vat', name: 'tax-vat', component: () => import('@/views/tax/VatRegisterView.vue'), meta: { title: 'Регистр НДС' } },
+        // Решение «Супервайзер» (торговые представители)
+        { path: 'field', redirect: '/field/day' },
+        { path: 'field/day', name: 'field-day', component: () => import('@/views/field/DayMapView.vue'), meta: { title: 'День на карте' } },
+        { path: 'field/visits', name: 'field-visits', component: () => import('@/views/field/VisitsView.vue'), meta: { title: 'Посещения' } },
+        { path: 'field/routes', name: 'field-routes', component: () => import('@/views/field/RoutesView.vue'), meta: { title: 'Маршруты' } },
+        { path: 'field/tasks', name: 'field-tasks', component: () => import('@/views/field/TasksView.vue'), meta: { title: 'Задания' } },
+        { path: 'field/plan-fact', name: 'field-plan-fact', component: () => import('@/views/field/PlanFactView.vue'), meta: { title: 'План и факт' } },
+        { path: 'field/points', name: 'field-points', component: () => import('@/views/field/PointsView.vue'), meta: { title: 'Точки' } },
+        { path: 'field/reps', name: 'field-reps', component: () => import('@/views/field/RepsView.vue'), meta: { title: 'Представители' } },
+        // Администратор платформы: организации и подписки
+        { path: 'platform', name: 'platform', component: () => import('@/views/platform/PlatformView.vue'), meta: { title: 'Платформа' } },
         // Аналитика
         {
           path: 'analytics',
@@ -211,7 +229,8 @@ router.beforeEach(async (to) => {
 
   if (to.meta.public) return true
 
-  if (!auth.token) return '/login'
+  // Гость, открывший сайт (flowpos.kz → /dashboard), видит рекламную страницу, а не форму входа.
+  if (!auth.token) return to.path === '/' || to.path === '/dashboard' ? '/welcome' : '/login'
 
   if (!auth.user) {
     await auth.fetchMe()
