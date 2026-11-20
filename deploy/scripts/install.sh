@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Первичная подготовка сервера FlowPOS (Ubuntu 22.04/24.04). Запускать от root ОДИН раз.
-#   sudo APP_DOMAIN=app.example.kz MCP_DOMAIN=mcp.example.kz bash install.sh
+#   sudo APP_DOMAIN=app.example.kz bash install.sh
 # Ставит Node.js 22, PostgreSQL 16, Redis, nginx, certbot; создаёт пользователя flowpos, каталоги,
 # базу и секреты. Ничего не перезаписывает: если файлы настроек уже есть — оставляет их.
 set -euo pipefail
 
 : "${APP_DOMAIN:?Укажите APP_DOMAIN, напр. app.example.kz}"
-: "${MCP_DOMAIN:?Укажите MCP_DOMAIN, напр. mcp.example.kz}"
+ADMIN_DOMAIN="${ADMIN_DOMAIN:-ad.${APP_DOMAIN}}"   # панель управления платформой
 ROOT=/opt/flowpos
 SHARED=$ROOT/shared
 HERE="$(cd "$(dirname "$0")/.." && pwd)"   # каталог deploy/
@@ -76,7 +76,6 @@ else
 fi
 if [ ! -f $SHARED/mcp.env ]; then
   sed -e "s#MCP_STATE_KEY=<сгенерировать>#MCP_STATE_KEY=$(openssl rand -hex 32)#" \
-      -e "s#https://mcp.example.kz#https://${MCP_DOMAIN}#" \
       -e "s#https://app.example.kz#https://${APP_DOMAIN}#" \
       "$HERE/env/mcp.env.example" > $SHARED/mcp.env
 else
@@ -91,7 +90,7 @@ systemctl enable flowpos-api flowpos-mcp
 
 echo "== nginx"
 install -m 644 "$HERE/nginx/flowpos-proxy.conf" /etc/nginx/snippets/flowpos-proxy.conf
-sed -e "s/app.example.kz/${APP_DOMAIN}/g" -e "s/mcp.example.kz/${MCP_DOMAIN}/g" "$HERE/nginx/flowpos.conf" > /etc/nginx/sites-available/flowpos.conf
+sed -e "s/app.example.kz/${APP_DOMAIN}/g" -e "s/ad.example.kz/${ADMIN_DOMAIN}/g" "$HERE/nginx/flowpos.conf" > /etc/nginx/sites-available/flowpos.conf
 echo "   Конфиг: /etc/nginx/sites-available/flowpos.conf (ещё НЕ включён — сначала сертификаты)"
 
 echo "== Бэкап по расписанию (ежедневно 03:30)"
@@ -101,9 +100,9 @@ echo "30 3 * * * flowpos /usr/local/bin/flowpos-backup >> $SHARED/backups/backup
 cat <<EOT
 
 Готово. Дальше:
- 1. DNS: ${APP_DOMAIN} и ${MCP_DOMAIN} → IP этого сервера.
+ 1. DNS: ${APP_DOMAIN} и ${ADMIN_DOMAIN} → IP этого сервера (ИИ-помощник — ${APP_DOMAIN}/mcp).
  2. Сертификат (один на оба имени; nginx на минуту останавливается, продление — так же автоматически):
-    certbot certonly --standalone -d ${APP_DOMAIN} -d ${MCP_DOMAIN} \\
+    certbot certonly --standalone -d ${APP_DOMAIN} -d ${ADMIN_DOMAIN} \\
       --pre-hook 'systemctl stop nginx' --post-hook 'systemctl start nginx'
  3. Включить сайт: ln -s /etc/nginx/sites-available/flowpos.conf /etc/nginx/sites-enabled/ && nginx -t && systemctl reload nginx
  4. Выложить код: deploy.sh (см. deploy/README.md), затем создать администратора: create-admin.mjs

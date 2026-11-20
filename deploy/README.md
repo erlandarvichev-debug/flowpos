@@ -6,7 +6,8 @@
 
 ```
 https://app.<домен>  → nginx → веб (статика) + /api → FlowPOS API :3000 (127.0.0.1)
-https://mcp.<домен>  → nginx → MCP для клиентов :3100 (127.0.0.1) — подключение Claude
+https://app.<домен>/mcp → nginx → ИИ-помощник для Claude (MCP) :3100 (127.0.0.1); его OAuth — в корне сайта
+https://ad.<домен>   → nginx → панель управления платформой (тот же веб; наружу только вход и /api/v1/platform)
 /opt/flowpos/
   releases/<дата>/   — релизы (хранятся 5 последних)
   current → releases/<активный>
@@ -15,7 +16,7 @@ https://mcp.<домен>  → nginx → MCP для клиентов :3100 (127.0
 
 ## Что нужно от владельца
 1. **Сервер.** Ubuntu 22.04/24.04, 2 vCPU / 4 ГБ RAM / 40 ГБ диска для начала, root по SSH.
-2. **Два имени в DNS** на IP сервера: `app.<домен>` и `mcp.<домен>` (например, `app.flowpos.kz`, `mcp.flowpos.kz`).
+2. **Два имени в DNS** на IP сервера: `app.<домен>` и `ad.<домен>` (например, `flowpos.kz`, `ad.flowpos.kz`).
 3. **Решение по данным.** Новый сервер стартует с пустой базой и первым администратором. Переносить ли данные из локальной базы — решить отдельно.
 
 ## Установка (первый раз)
@@ -26,11 +27,11 @@ scp flowpos-release-*.tar.gz root@SERVER:/tmp/
 scp -r deploy root@SERVER:/root/flowpos-deploy
 
 # на сервере
-sudo APP_DOMAIN=app.flowpos.kz MCP_DOMAIN=mcp.flowpos.kz bash /root/flowpos-deploy/scripts/install.sh
+sudo APP_DOMAIN=flowpos.kz bash /root/flowpos-deploy/scripts/install.sh
 #   ставит Node 22, PostgreSQL 16, Redis, nginx, certbot; создаёт пользователя flowpos, базу,
 #   секреты (JWT_SECRET, пароль БД, MCP_STATE_KEY) в /opt/flowpos/shared/*.env, службы, бэкап в cron
 
-certbot certonly --standalone -d app.flowpos.kz -d mcp.flowpos.kz \
+certbot certonly --standalone -d flowpos.kz -d ad.flowpos.kz \
   --pre-hook 'systemctl stop nginx' --post-hook 'systemctl start nginx'
 ln -s /etc/nginx/sites-available/flowpos.conf /etc/nginx/sites-enabled/ && nginx -t && systemctl reload nginx
 

@@ -6,6 +6,7 @@ import { AuthService } from './auth.service';
 import { JwtStrategy } from './jwt.strategy';
 import { MfaService } from './mfa.service';
 import { OidcService } from './oidc.service';
+import { SignupService } from './signup.service';
 
 @Module({
   imports: [
@@ -18,7 +19,7 @@ import { OidcService } from './oidc.service';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, MfaService, OidcService, JwtStrategy],
+  providers: [AuthService, MfaService, OidcService, SignupService, JwtStrategy],
   exports: [AuthService, JwtModule],
 })
 export class AuthModule {}

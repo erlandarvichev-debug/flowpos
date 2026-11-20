@@ -5,6 +5,7 @@ import { ThrottlerModule } from '@nestjs/throttler';
 import { PrismaModule } from './prisma/prisma.module';
 import { OutboxModule } from './common/outbox/outbox.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { AiModule } from './modules/ai/ai.module';
 import { UsersModule } from './modules/users/users.module';
 import { RolesModule } from './modules/roles/roles.module';
 import { CatalogModule } from './modules/catalog/catalog.module';
@@ -24,6 +25,7 @@ import { FieldModule } from './modules/field/field.module';
     PrismaModule,
     OutboxModule,
     AuthModule,
+    AiModule,
     UsersModule,
     RolesModule,
     CatalogModule,

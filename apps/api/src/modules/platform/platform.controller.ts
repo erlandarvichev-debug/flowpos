@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Put, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Put, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -27,6 +27,22 @@ export class PlatformController {
 
   @Get('organizations/:id/events')
   events(@Param('id') id: string) { return this.platform.events(id); }
+
+  // Панель управления ad.flowpos.kz
+  @Get('overview')
+  overview() { return this.platform.overview(); }
+
+  @Get('organizations/:id')
+  organization(@Param('id', new ParseUUIDPipe()) id: string) { return this.platform.organization(id); }
+
+  @Get('users')
+  users(@Query('q') q?: string) { return this.platform.users(q); }
+
+  @Get('journal')
+  journal(@Query('limit') limit?: string) { return this.platform.journal(Number(limit) || 200); }
+
+  @Get('admins')
+  admins() { return this.platform.admins(); }
 }
 
 /** Что показывать пользователю: решения его организации и признак администратора платформы. */

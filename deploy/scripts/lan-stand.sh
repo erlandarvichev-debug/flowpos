@@ -12,7 +12,7 @@ echo "== Адрес стенда: $IP"
 echo 'Acquire::ForceIPv4 "true";' > /etc/apt/apt.conf.d/99force-ipv4
 dpkg --configure -a || true
 cd "$(dirname "$0")/.."
-APP_DOMAIN=$IP MCP_DOMAIN=mcp.lan.invalid bash scripts/install.sh
+APP_DOMAIN=$IP bash scripts/install.sh
 
 E=/opt/flowpos/shared/api.env
 sed -i "s#^CORS_ORIGIN=.*#CORS_ORIGIN=http://$IP#" $E

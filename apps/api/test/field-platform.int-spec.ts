@@ -116,6 +116,26 @@ describe('подписки и администратор платформы', ()
     expect(ev.body[0]).toMatchObject({ solution: 'supervisor', after: { status: 'trial', seats: 1 } });
   });
 
+  it('панель управления (ad.flowpos.kz): обзор, карточка, пользователи, журнал — только администратору платформы', async () => {
+    for (const path of ['/platform/overview', `/platform/organizations/${B.orgId}`, '/platform/users', '/platform/journal', '/platform/admins']) {
+      expect((await web(B, 'GET', path)).status).toBe(403);
+      expect((await web(A, 'GET', path)).status).toBe(200);
+    }
+    const ov = (await web(A, 'GET', '/platform/overview')).body;
+    expect(ov.organizations).toBeGreaterThanOrEqual(2);
+    expect(ov.solutions.find((s: any) => s.code === 'supervisor').enabled).toBeGreaterThanOrEqual(2);
+    // Карточка чужого клиента видна целиком (системный режим), с историей подписок.
+    const card = (await web(A, 'GET', `/platform/organizations/${B.orgId}`)).body;
+    expect(card.id).toBe(B.orgId);
+    expect(card.members.length).toBeGreaterThanOrEqual(1);
+    expect(card.events[0]).toMatchObject({ solution: 'supervisor' });
+    expect((await web(A, 'GET', '/platform/organizations/not-a-uuid')).status).toBe(400);
+    const users = (await web(A, 'GET', '/platform/users')).body;
+    expect(users.find((u: any) => u.id === A.userId)?.isPlatformAdmin).toBe(true);
+    const journal = (await web(A, 'GET', '/platform/journal')).body;
+    expect(journal.some((r: any) => r.action === 'SUBSCRIPTION_SET' && r.organizationId === B.orgId)).toBe(true);
+  });
+
   it('приостановка учёта у организации видна ей самой', async () => {
     await web(A, 'PUT', `/platform/organizations/${B.orgId}/subscriptions/accounting`, { status: 'suspended' });
     const mine = await web(B, 'GET', '/subscriptions/mine');

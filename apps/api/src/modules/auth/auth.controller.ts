@@ -1,4 +1,6 @@
 import { Controller, Post, Body, Get, Delete, Param, Query, UseGuards, Request, Res } from '@nestjs/common';
+import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
+import { SignupService, parseSignup } from './signup.service';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { Response } from 'express';
 import { AuthService } from './auth.service';
@@ -20,7 +22,23 @@ const COOKIE_OPTS = {
 @ApiTags('auth')
 @Controller('auth')
 export class AuthController {
-  constructor(private auth: AuthService, private mfa: MfaService, private oidc: OidcService) {}
+  constructor(private auth: AuthService, private mfa: MfaService, private oidc: OidcService, private signup: SignupService) {}
+
+  /** Регистрация компании на сайте: компания, владелец — и сразу вход. Не больше 5 попыток в час с одного адреса. */
+  @Post('register')
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 5, ttl: 3_600_000 } })
+  async register(@Body() body: any, @Request() req: any, @Res({ passthrough: true }) res: Response) {
+    if (body?.website) return { ok: true }; // поле-ловушка для ботов: человек его не видит и не заполняет
+    const input = parseSignup(body);
+    const client = { ip: req.ip, userAgent: req.headers?.['user-agent'] };
+    await this.signup.register(input, client);
+    const result = await runAsSystem(() => this.auth.login({ email: input.email, password: input.password } as LoginDto, client));
+    if (result.mfaRequired) return result;
+    res.cookie(COOKIE, result.refreshToken, COOKIE_OPTS);
+    const { refreshToken: _, ...safe } = result;
+    return safe;
+  }
 
   @Post('login')
   async login(@Body() dto: LoginDto, @Request() req: any, @Res({ passthrough: true }) res: Response) {

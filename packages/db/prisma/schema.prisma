@@ -3334,3 +3334,37 @@ model FieldTrack {
   @@index([tenantId])
   @@map("field_track")
 }
+
+// ── ИИ-помощник (MCP для Claude): у каждой компании свой адрес коннектора ──
+
+/// Коннектор компании: https://<сайт>/mcp/c/<code>. Код случайный; смена кода — старый адрес перестаёт работать.
+model AiConnector {
+  id             String   @id @default(uuid())
+  tenantId       String   @default(dbgenerated("NULLIF(current_setting('flowpos.tenant_id', true), '')")) @map("tenant_id")
+  organizationId String   @unique @map("organization_id")
+  code           String   @unique
+  enabled        Boolean  @default(true)
+  updatedBy      String?  @map("updated_by")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@index([tenantId])
+  @@map("ai_connectors")
+}
+
+/// Подключение Claude (грант MCP) к компании от имени пользователя. Отзыв действует сразу: API проверяет каждый запрос.
+model AiConnection {
+  id             String    @id // идентификатор гранта MCP
+  tenantId       String    @default(dbgenerated("NULLIF(current_setting('flowpos.tenant_id', true), '')")) @map("tenant_id")
+  organizationId String    @map("organization_id")
+  userId         String    @map("user_id")
+  clientName     String?   @map("client_name")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  lastUsedAt     DateTime? @map("last_used_at")
+  revokedAt      DateTime? @map("revoked_at")
+  revokedBy      String?   @map("revoked_by")
+
+  @@index([organizationId])
+  @@index([tenantId])
+  @@map("ai_connections")
+}

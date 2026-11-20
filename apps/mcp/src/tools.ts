@@ -36,14 +36,20 @@ const READ = { readOnlyHint: true, openWorldHint: false } as const;
  * Проведение, отмена проведения, изменение реквизитов оплаты, подписание и отправка отчётности
  * через MCP недоступны: их выполняет уполномоченный пользователь в интерфейсе после предпросмотра.
  */
-export function registerTools(server: McpServer, api: FlowPosApi, webUrl: string) {
+export function registerTools(server: McpServer, api: FlowPosApi, webUrl: string, opts: { company?: string } = {}) {
   const link = (path: string) => `${webUrl}${path}`;
+  // Коннектор компании (/mcp/c/<код>): организация зафиксирована адресом, переключать нельзя.
+  const locked = !!opts.company;
 
   server.registerTool(
     'flowpos_context',
     { title: 'Контекст пользователя', description: 'Текущая организация, роль, права и список доступных организаций.', inputSchema: {}, annotations: READ },
     wrap(async () => {
       const [ctx, orgs] = await Promise.all([api.request('GET', '/accounting/context'), api.request<any[]>('GET', '/accounting/organizations/mine')]);
+      if (locked) {
+        const org = orgs.find((o) => o.id === ctx.organizationId);
+        return [`Компания: ${org?.name ?? opts.company} (БИН/ИИН ${org?.inn ?? '—'}), роль: ${ctx.role}`, `Права: ${ctx.permissions.join(', ')}`, 'Этот коннектор работает только с этой компанией.'].join('\n');
+      }
       return [
         `Организация: ${ctx.organizationId}, роль: ${ctx.role}`,
         `Права: ${ctx.permissions.join(', ')}`,
@@ -53,7 +59,7 @@ export function registerTools(server: McpServer, api: FlowPosApi, webUrl: string
     }),
   );
 
-  server.registerTool(
+  if (!locked) server.registerTool(
     'flowpos_switch_organization',
     { title: 'Сменить организацию', description: 'Переключить организацию для следующих запросов (только из доступных пользователю).', inputSchema: { organizationId: z.string() }, annotations: { readOnlyHint: true } },
     wrap(async ({ organizationId }) => {

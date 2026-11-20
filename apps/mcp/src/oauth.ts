@@ -20,8 +20,20 @@ const PENDING_TTL = 10 * 60 * 1000;
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 
+/** Код компании из адреса коннектора https://<сайт>/mcp/c/<код> (или из параметра resource). */
+export function companyCodeOf(resource: URL | string | undefined, publicUrl: URL): string | undefined {
+  if (!resource) return undefined;
+  let u: URL;
+  try { u = new URL(String(resource)); } catch { return undefined; }
+  if (u.origin !== publicUrl.origin) return undefined;
+  const m = u.pathname.match(/^\/mcp\/c\/([a-z2-9]{12})\/?$/);
+  return m?.[1];
+}
+
+export interface CompanyInfo { organizationId: string; organization: string; enabled: boolean }
+
 export class FlowPosOAuthProvider implements OAuthServerProvider {
-  constructor(private store: Store) {}
+  constructor(private store: Store, private opts: { publicUrl?: URL; company?: (code: string) => Promise<CompanyInfo | null> } = {}) {}
 
   get clientsStore(): OAuthRegisteredClientsStore {
     return {
@@ -33,22 +45,28 @@ export class FlowPosOAuthProvider implements OAuthServerProvider {
   /** Показываем страницу входа FlowPOS; форма отправляется на /consent вместе с id ожидающей авторизации. */
   async authorize(client: OAuthClientInformationFull, params: AuthorizationParams, res: Response): Promise<void> {
     const id = randomToken(24);
-    this.store.savePending({ id, clientId: client.client_id, redirectUri: params.redirectUri, codeChallenge: params.codeChallenge, state: params.state, scopes: params.scopes?.length ? params.scopes : [SCOPE], expiresAt: Date.now() + PENDING_TTL });
-    res.status(200).type('html').send(loginPage({ pendingId: id, clientName: client.client_name || 'ИИ-ассистент', redirectHost: new URL(params.redirectUri).host }));
+    const companyCode = this.opts.publicUrl ? companyCodeOf(params.resource, this.opts.publicUrl) : undefined;
+    const company = companyCode && this.opts.company ? await this.opts.company(companyCode).catch(() => null) : null;
+    this.store.savePending({ id, companyCode: company ? companyCode : undefined, clientId: client.client_id, redirectUri: params.redirectUri, codeChallenge: params.codeChallenge, state: params.state, scopes: params.scopes?.length ? params.scopes : [SCOPE], expiresAt: Date.now() + PENDING_TTL });
+    res.status(200).type('html').send(loginPage({ pendingId: id, clientName: client.client_name || 'ИИ-ассистент', redirectHost: new URL(params.redirectUri).host, company: company?.organization }));
   }
 
-  /** Пользователь вошёл в FlowPOS — создаём грант и код авторизации. Возвращает URL для редиректа. */
-  completeAuthorization(pendingId: string, session: { userId: string; email: string; organizationId?: string; refreshToken: string }): string {
+  /** Пользователь вошёл в FlowPOS — создаём грант и код авторизации. Возвращает URL для редиректа и грант. */
+  completeAuthorization(pendingId: string, session: { userId: string; email: string; organizationId?: string; refreshToken: string; companyCode?: string; companyOrgId?: string }): { location: string; grantId: string } {
     const p = this.store.takePending(pendingId);
     if (!p) throw new Error('Страница входа устарела — начните подключение заново');
-    const grant: Grant = { id: randomToken(16), clientId: p.clientId, userId: session.userId, email: session.email, organizationId: session.organizationId, scopes: p.scopes, sessionEnc: this.store.encrypt(session.refreshToken), createdAt: Date.now() };
+    const grant: Grant = {
+      id: randomToken(16), clientId: p.clientId, userId: session.userId, email: session.email,
+      organizationId: session.companyOrgId ?? session.organizationId, companyCode: session.companyCode, companyOrgId: session.companyOrgId,
+      scopes: p.scopes, sessionEnc: this.store.encrypt(session.refreshToken), createdAt: Date.now(),
+    };
     this.store.saveGrant(grant);
     const code = randomToken(32);
     this.store.saveCode({ codeHash: sha256(code), clientId: p.clientId, grantId: grant.id, codeChallenge: p.codeChallenge, redirectUri: p.redirectUri, expiresAt: Date.now() + CODE_TTL });
     const url = new URL(p.redirectUri);
     url.searchParams.set('code', code);
     if (p.state) url.searchParams.set('state', p.state);
-    return url.href;
+    return { location: url.href, grantId: grant.id };
   }
 
   async challengeForAuthorizationCode(client: OAuthClientInformationFull, code: string): Promise<string> {
@@ -95,7 +113,7 @@ export class FlowPosOAuthProvider implements OAuthServerProvider {
   }
 }
 
-export function loginPage(o: { pendingId: string; clientName: string; redirectHost: string; error?: string; email?: string }) {
+export function loginPage(o: { pendingId: string; clientName: string; redirectHost: string; error?: string; email?: string; company?: string }) {
   return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Подключение FlowPOS</title>
 <style>
@@ -109,7 +127,7 @@ button{margin-top:18px;width:100%;padding:11px;border:0;border-radius:8px;backgr
 .err{color:var(--err);margin-top:12px;font-size:14px}ul{padding-left:18px;margin:10px 0 0}li{margin:2px 0}
 </style></head><body><form class="card" method="post" action="consent" autocomplete="on">
 <h1>⚡ Подключить FlowPOS</h1>
-<div class="muted"><b>${esc(o.clientName)}</b> (${esc(o.redirectHost)}) просит доступ к вашему FlowPOS.</div>
+<div class="muted"><b>${esc(o.clientName)}</b> (${esc(o.redirectHost)}) просит доступ к ${o.company ? `компании <b>${esc(o.company)}</b> в FlowPOS. Войти может только её сотрудник` : 'вашему FlowPOS'}.</div>
 <ul class="muted"><li>видеть отчёты, остатки, документы, ЭСФ — в пределах ваших прав;</li><li>создавать черновики документов;</li><li>проводить, подписывать и удалять ИИ не сможет.</li></ul>
 <input type="hidden" name="pending" value="${esc(o.pendingId)}">
 <label for="e">E-mail в FlowPOS</label><input id="e" name="email" type="email" required value="${esc(o.email ?? '')}">

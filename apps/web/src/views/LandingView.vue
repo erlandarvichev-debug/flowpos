@@ -12,7 +12,10 @@
           <a href="#security" @click.prevent="scrollTo('security')">Надёжность</a>
           <a href="#faq" @click.prevent="scrollTo('faq')">Вопросы</a>
         </nav>
-        <router-link to="/login" class="btn btn-light">Войти</router-link>
+        <div class="head-cta">
+          <router-link to="/signup" class="btn btn-ghost-light">Регистрация</router-link>
+          <router-link to="/login" class="btn btn-light">Войти</router-link>
+        </div>
       </div>
     </header>
 
@@ -28,7 +31,8 @@
             Подключайте только нужные направления — и добавляйте новые, когда бизнес растёт.
           </p>
           <div class="cta reveal d3">
-            <router-link to="/login" class="btn btn-primary">Войти в платформу</router-link>
+            <router-link to="/signup" class="btn btn-primary">Зарегистрировать компанию</router-link>
+            <router-link to="/login" class="btn btn-ghost">Войти</router-link>
             <a href="#solutions" class="btn btn-ghost" @click.prevent="scrollTo('solutions')">Что внутри →</a>
           </div>
           <ul class="ticks reveal d4">
@@ -180,9 +184,10 @@
     <section class="final">
       <div class="wrap final-inner reveal">
         <h2>Готовы навести порядок в торговле?</h2>
-        <p>Войдите в платформу или свяжитесь с нами — подключим нужные направления.</p>
+        <p>Зарегистрируйте компанию за минуту — учёт и бухгалтерия включатся сразу. «Супервайзер» подключим по заявке.</p>
         <div class="cta center">
-          <router-link to="/login" class="btn btn-light">Войти в платформу</router-link>
+          <router-link to="/signup" class="btn btn-light">Зарегистрировать компанию</router-link>
+          <router-link to="/login" class="btn btn-outline">Войти</router-link>
           <a v-if="CONTACTS.whatsapp" :href="`https://wa.me/${CONTACTS.whatsapp}`" target="_blank" rel="noopener" class="btn btn-outline">Написать в WhatsApp</a>
           <a v-if="CONTACTS.phone" :href="`tel:${CONTACTS.phone}`" class="btn btn-outline">{{ CONTACTS.phone }}</a>
           <a v-if="CONTACTS.email" :href="`mailto:${CONTACTS.email}`" class="btn btn-outline">{{ CONTACTS.email }}</a>
@@ -470,7 +475,7 @@ h2 { font-size: clamp(28px, 3.4vw, 42px); font-weight: 800; letter-spacing: -.02
 
 @media (max-width: 960px) {
   .links { display: none; }
-  .nav-inner .btn-light { margin-left: auto; }
+  .nav-inner .head-cta { margin-left: auto; }
   .hero-inner, .split { grid-template-columns: 1fr; }
   .hero-visual { margin-top: 20px; }
   .f1 { left: 0; } .f2 { right: 0; }
@@ -487,4 +492,8 @@ h2 { font-size: clamp(28px, 3.4vw, 42px); font-weight: 800; letter-spacing: -.02
   .reveal { opacity: 1; transform: none; }
   .pt { opacity: 1; } .route { stroke-dashoffset: 0; }
 }
+.head-cta { display: flex; gap: 8px; align-items: center; }
+.btn-ghost-light { height: 42px; color: #fff; border: 1px solid rgba(255, 255, 255, .35); background: transparent; }
+.btn-ghost-light:hover { background: rgba(255, 255, 255, .1); }
+@media (max-width: 520px) { .btn-ghost-light { display: none; } }
 </style>

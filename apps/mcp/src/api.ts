@@ -11,6 +11,8 @@ export interface ApiConfig {
   /** Режим удалённого MCP: сессия пользователя по refresh-cookie FlowPOS (ротация на каждом обновлении). */
   refreshToken?: string;
   onSession?: (s: { refreshToken: string; organizationId?: string }) => void | Promise<void>;
+  /** Дополнительные заголовки каждого запроса (X-AI-Connection — подключение Claude к компании). */
+  headers?: Record<string, string>;
 }
 
 const REFRESH_COOKIE = 'fp_refresh';
@@ -107,6 +109,7 @@ export class FlowPosApi {
     const sentToken = this.token;
     const headers: Record<string, string> = { Authorization: `Bearer ${sentToken}`, 'Content-Type': 'application/json' };
     if (this.cfg.organizationId) headers['X-Organization-Id'] = this.cfg.organizationId;
+    Object.assign(headers, this.cfg.headers);
     if (opts.idempotencyKey) headers['Idempotency-Key'] = opts.idempotencyKey;
     const res = await fetch(url, { method, headers, body: opts.body === undefined ? undefined : JSON.stringify(opts.body), signal: AbortSignal.timeout(60000) });
     if (res.status === 401 && !retried && (this.cfg.email || this.cfg.refreshToken)) {

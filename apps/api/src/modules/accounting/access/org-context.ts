@@ -1,6 +1,7 @@
 import {
   CanActivate, ExecutionContext, ForbiddenException, Injectable, SetMetadata, createParamDecorator,
 } from '@nestjs/common';
+import { AI_CONNECTION_HEADER, assertAiConnection } from '../../ai/ai.service';
 import { Reflector } from '@nestjs/core';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { Permission, hasPermission } from './roles';
@@ -68,6 +69,9 @@ export class OrgGuard implements CanActivate {
     if (mfaEnforced() && this.reflector.getAllAndOverride<boolean>(REQUIRE_MFA, [ctx.getHandler(), ctx.getClass()])) {
       MfaService.requireStepUp(user.mfaAt);
     }
+    // Запрос ИИ-помощника (MCP): подключение к этой компании должно быть действующим — отключение работает сразу.
+    const aiConn = req.headers[AI_CONNECTION_HEADER];
+    if (aiConn) await assertAiConnection(this.prisma, Array.isArray(aiConn) ? aiConn[0] : aiConn, organizationId, user.sub);
     return true;
   }
 }

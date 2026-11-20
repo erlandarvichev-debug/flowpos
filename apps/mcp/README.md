@@ -65,18 +65,18 @@ Claude Code: `claude mcp add --transport http flowpos https://<ваш-домен
 **Запуск**
 ```bash
 cd apps/mcp && npm run build
-MCP_PUBLIC_URL=https://mcp.example.kz \
+MCP_PUBLIC_URL=https://app.example.kz \
 MCP_STATE_KEY=<случайные 32+ символа, хранить вне репозитория> \
 MCP_STATE_FILE=/var/lib/flowpos-mcp/oauth.json \
 FLOWPOS_API_URL=http://127.0.0.1:3000 FLOWPOS_WEB_URL=https://app.example.kz \
 MCP_PORT=3100 npm run start:http
 ```
-Nginx (TLS обязателен для claude.ai):
+Nginx (TLS обязателен для claude.ai). Сервис живёт на адресе сайта: коннектор — `https://app.example.kz/mcp`,
+OAuth — в корне сайта; nginx передаёт на :3100 только эти адреса (полностью — `deploy/nginx/flowpos.conf`):
 ```nginx
-server {
-  server_name mcp.example.kz;
-  location / { proxy_pass http://127.0.0.1:3100; proxy_set_header Host $host; proxy_set_header X-Forwarded-For $remote_addr; proxy_set_header X-Forwarded-Proto https; proxy_buffering off; }
-}
+location = /mcp { proxy_pass http://127.0.0.1:3100; include /etc/nginx/snippets/flowpos-proxy.conf; proxy_buffering off; }
+location ^~ /.well-known/oauth- { proxy_pass http://127.0.0.1:3100; include /etc/nginx/snippets/flowpos-proxy.conf; }
+location ~ ^/(authorize|token|register|revoke|docs|consent)$ { proxy_pass http://127.0.0.1:3100; include /etc/nginx/snippets/flowpos-proxy.conf; }
 ```
 Ограничение: один процесс, состояние в одном файле. Для нескольких экземпляров нужно вынести хранилище в БД.
 

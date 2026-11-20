@@ -14,6 +14,9 @@ export interface Grant {
   userId: string;
   email: string;
   organizationId?: string;
+  /** Коннектор компании (/mcp/c/<код>), к которому привязан грант; без него — грант ещё не привязан. */
+  companyCode?: string;
+  companyOrgId?: string;
   scopes: string[];
   sessionEnc: string; // зашифрованный refresh-токен FlowPOS
   accessHash?: string;
@@ -35,6 +38,8 @@ export interface AuthCode {
 
 export interface PendingAuthorization {
   id: string;
+  /** Код компании из параметра resource (RFC 8707): вход только сотрудника этой компании. */
+  companyCode?: string;
   clientId: string;
   redirectUri: string;
   codeChallenge: string;
@@ -100,6 +105,7 @@ export class Store {
 
   // ожидающие входа пользователя
   savePending(p: PendingAuthorization) { this.data.pending[p.id] = p; this.save(); }
+  peekPending(id: string) { const p = this.data.pending[id]; return p && p.expiresAt > Date.now() ? p : undefined; }
   takePending(id: string) { const p = this.data.pending[id]; if (p) { delete this.data.pending[id]; this.save(); } return p && p.expiresAt > Date.now() ? p : undefined; }
 
   // коды авторизации (одноразовые)

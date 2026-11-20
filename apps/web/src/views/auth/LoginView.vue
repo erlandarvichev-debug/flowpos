@@ -37,6 +37,8 @@
         </el-button>
       </el-form>
 
+      <p class="login-register">Нет учётной записи? <router-link to="/signup">Зарегистрировать компанию</router-link></p>
+
       <div class="login-hint" v-if="isDev">
         <el-text type="info" size="small">Demo: admin@flowpos.kz / admin123</el-text>
       </div>
@@ -125,4 +127,6 @@ h1 {
   text-align: center;
   margin-top: 16px;
 }
+.login-register { text-align: center; margin: 18px 0 0; color: #909399; font-size: 13px; }
+.login-register a { color: #0f766e; }
 </style>

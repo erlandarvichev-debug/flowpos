@@ -1,9 +1,11 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import type { RouteRecordRaw } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { adminUrl, isAdminHost } from '@/utils/host'
+import { adminRoutes, adminGuard } from './admin'
 
-const router = createRouter({
-  history: createWebHistory(),
-  routes: [
+// Рабочее место клиентов (flowpos.kz). Панель управления платформой (ad.flowpos.kz) — свои адреса в ./admin.
+const appRoutes: RouteRecordRaw[] = [
     {
       // Рекламная страница для гостей (не вошедших)
       path: '/welcome',
@@ -18,11 +20,20 @@ const router = createRouter({
       meta: { public: true },
     },
     {
+      // Регистрация компании на сайте
+      path: '/signup',
+      name: 'register',
+      component: () => import('@/views/auth/RegisterView.vue'),
+      meta: { public: true },
+    },
+    {
       path: '/',
       component: () => import('@/components/layout/AppLayout.vue'),
       meta: { requiresAuth: true },
       children: [
         { path: '', redirect: '/dashboard' },
+        // Страница раздела меню с плитками подразделов (components/layout/menu.ts)
+        { path: 'section/:key', name: 'section', component: () => import('@/views/SectionView.vue'), meta: { title: 'Раздел' } },
         {
           path: 'dashboard',
           name: 'dashboard',
@@ -180,6 +191,7 @@ const router = createRouter({
         { path: 'bank/statements', name: 'j-bank-statements', component: () => import('@/views/accounting/DocumentsView.vue'), meta: { title: 'Банковские выписки', docTypes: ['BANK_IN', 'BANK_OUT'] } },
         { path: 'bank/cash', name: 'j-bank-cash', component: () => import('@/views/accounting/DocumentsView.vue'), meta: { title: 'Кассовые документы', docTypes: ['CASH_IN', 'CASH_OUT'] } },
         { path: 'operations/manual', name: 'j-operations-manual', component: () => import('@/views/accounting/DocumentsView.vue'), meta: { title: 'Операции вручную', docTypes: ['MANUAL_OPERATION', 'OPENING_BALANCE', 'STORNO'] } },
+        { path: 'settings/ai', name: 'settings-ai', component: () => import('@/views/settings/AiAssistantView.vue'), meta: { title: 'ИИ-помощник (Claude)' } },
         { path: 'settings/print', name: 'settings-print', component: () => import('@/views/settings/PrintDesignerView.vue'), meta: { title: 'Печатные формы' } },
         { path: 'reports/reconciliation', name: 'reconciliation', component: () => import('@/views/accounting/ReconciliationView.vue'), meta: { title: 'Акт сверки' } },
         { path: 'assets', name: 'assets', component: () => import('@/views/assets/AssetsView.vue'), meta: { title: 'Основные средства и НМА' } },
@@ -194,7 +206,7 @@ const router = createRouter({
         { path: 'tax/payroll', name: 'tax-payroll', component: () => import('@/views/tax/PayrollTaxRegisterView.vue'), meta: { title: 'Налоги с зарплаты' } },
         { path: 'tax/vat', name: 'tax-vat', component: () => import('@/views/tax/VatRegisterView.vue'), meta: { title: 'Регистр НДС' } },
         // Решение «Супервайзер» (торговые представители)
-        { path: 'field', redirect: '/field/day' },
+        { path: 'field', redirect: '/section/field' },
         { path: 'field/day', name: 'field-day', component: () => import('@/views/field/DayMapView.vue'), meta: { title: 'День на карте' } },
         { path: 'field/visits', name: 'field-visits', component: () => import('@/views/field/VisitsView.vue'), meta: { title: 'Посещения' } },
         { path: 'field/routes', name: 'field-routes', component: () => import('@/views/field/RoutesView.vue'), meta: { title: 'Маршруты' } },
@@ -203,7 +215,13 @@ const router = createRouter({
         { path: 'field/points', name: 'field-points', component: () => import('@/views/field/PointsView.vue'), meta: { title: 'Точки' } },
         { path: 'field/reps', name: 'field-reps', component: () => import('@/views/field/RepsView.vue'), meta: { title: 'Представители' } },
         // Администратор платформы: организации и подписки
-        { path: 'platform', name: 'platform', component: () => import('@/views/platform/PlatformView.vue'), meta: { title: 'Платформа' } },
+        // Управление платформой переехало на отдельный адрес (ad.flowpos.kz)
+        {
+          path: 'platform',
+          name: 'platform',
+          component: () => import('@/views/DashboardView.vue'),
+          beforeEnter: () => { const url = adminUrl(); if (url) window.location.href = url; return url ? false : '/dashboard' },
+        },
         // Аналитика
         {
           path: 'analytics',
@@ -221,10 +239,15 @@ const router = createRouter({
       ],
     },
     { path: '/:pathMatch(.*)*', redirect: '/' },
-  ],
+]
+
+const router = createRouter({
+  history: createWebHistory(),
+  routes: isAdminHost ? adminRoutes : appRoutes,
 })
 
 router.beforeEach(async (to) => {
+  if (isAdminHost) return adminGuard(to)
   const auth = useAuthStore()
 
   if (to.meta.public) return true
