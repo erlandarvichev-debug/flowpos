@@ -18,7 +18,8 @@ export function buildMenu(c: MenuCtx): MenuSection[] {
     {
       key: 'field', title: 'Торговые', icon: 'Location', desc: 'Торговые представители «в полях»: маршруты, посещения с фото и местом, задания и заказы.',
       items: when(c.supervisor && c.can('field.read'),
-        { path: '/field/day', title: 'День на карте', desc: 'Где были торговые сегодня: посещения, путь и заказы на карте', icon: 'MapLocation' },
+        { path: '/field/day', title: 'Карта торговых', desc: 'Где торговые сейчас, их путь, маршрут, посещения и заказы за день', icon: 'MapLocation' },
+        { path: '/field/sales', title: 'Продажи торговых', desc: 'Заказы за период: по торговым, клиентам, дням; кто перестал заказывать', icon: 'TrendCharts' },
         { path: '/field/visits', title: 'Посещения', desc: 'Кто, где и когда был: на точке или удалённо, фото, комментарии', icon: 'Camera' },
         { path: '/field/routes', title: 'Маршруты', desc: 'План объезда точек на день для каждого торгового', icon: 'Guide' },
         { path: '/field/tasks', title: 'Задания', desc: 'Поручения торговым: сфотографировать выкладку, узнать цены', icon: 'List' },

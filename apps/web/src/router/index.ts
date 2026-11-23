@@ -207,7 +207,8 @@ const appRoutes: RouteRecordRaw[] = [
         { path: 'tax/vat', name: 'tax-vat', component: () => import('@/views/tax/VatRegisterView.vue'), meta: { title: 'Регистр НДС' } },
         // Решение «Супервайзер» (торговые представители)
         { path: 'field', redirect: '/section/field' },
-        { path: 'field/day', name: 'field-day', component: () => import('@/views/field/DayMapView.vue'), meta: { title: 'День на карте' } },
+        { path: 'field/day', name: 'field-day', component: () => import('@/views/field/DayMapView.vue'), meta: { title: 'Карта торговых' } },
+        { path: 'field/sales', name: 'field-sales', component: () => import('@/views/field/SalesView.vue'), meta: { title: 'Продажи торговых' } },
         { path: 'field/visits', name: 'field-visits', component: () => import('@/views/field/VisitsView.vue'), meta: { title: 'Посещения' } },
         { path: 'field/routes', name: 'field-routes', component: () => import('@/views/field/RoutesView.vue'), meta: { title: 'Маршруты' } },
         { path: 'field/tasks', name: 'field-tasks', component: () => import('@/views/field/TasksView.vue'), meta: { title: 'Задания' } },

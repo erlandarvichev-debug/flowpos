@@ -10,6 +10,7 @@ import { OrgGuard, RequirePermission } from '../accounting/access/org-context';
 import { RequireSolution, SolutionGuard } from '../platform/platform.guards';
 import { PrismaService } from '../../prisma/prisma.service';
 import { FieldService } from './field.service';
+import { FieldReportsService } from './field-reports.service';
 import { DEVICE_HEADER, FieldAgentService, FieldDevice, FieldDeviceCtx, FieldDeviceGuard, UploadedPhoto } from './field-agent.service';
 import { FieldPhotoStore } from './field-photos';
 import { PHOTO_MAX_BYTES } from './field-logic';
@@ -21,7 +22,7 @@ import { PHOTO_MAX_BYTES } from './field-logic';
 @RequireSolution('supervisor')
 @Controller('field')
 export class FieldController {
-  constructor(private field: FieldService, private prisma: PrismaService, private photos: FieldPhotoStore) {}
+  constructor(private field: FieldService, private reports: FieldReportsService, private prisma: PrismaService, private photos: FieldPhotoStore) {}
 
   @Get('defaults') @RequirePermission('field.read')
   defaults() { return this.field.defaults(); }
@@ -76,6 +77,14 @@ export class FieldController {
 
   @Get('plan-fact') @RequirePermission('field.read')
   planFact(@CurrentScope() s: Scope, @Query() q: any) { return this.field.planFact(s, q); }
+
+  /** Все торговые за день — для живой карты. */
+  @Get('live') @RequirePermission('field.read')
+  live(@CurrentScope() s: Scope, @Query() q: any) { return this.reports.live(s, q); }
+
+  /** Продажи торговых (заказы из агента) за период. */
+  @Get('sales') @RequirePermission('field.read')
+  sales(@CurrentScope() s: Scope, @Query() q: any) { return this.reports.sales(s, q); }
 
   /** Файл фото посещения (только своей организации). */
   @Get('photos/:id') @RequirePermission('field.read')

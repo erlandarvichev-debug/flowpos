@@ -37,13 +37,16 @@
 
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import api from '@/api/client'
 import { showError } from '../accounting/acc'
 import { PLACEMENT, fmtDistance, fmtDuration, fmtSum, kzTime, kzToday, loadReps, photoUrl, type Rep } from './field'
 
+// С карты торговых приходят ?date= и ?repId=.
+const route = useRoute()
 const reps = ref<Rep[]>([])
-const repId = ref('')
-const date = ref(kzToday())
+const repId = ref(String(route.query.repId || ''))
+const date = ref(/^\d{4}-\d{2}-\d{2}$/.test(String(route.query.date)) ? String(route.query.date) : kzToday())
 const visits = ref<any[]>([])
 const loading = ref(false)
 const urls = reactive<Record<string, string>>({})
