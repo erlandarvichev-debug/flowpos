@@ -96,7 +96,11 @@ export class AutopilotService implements OnModuleInit, OnModuleDestroy {
   }
 
   /** Отразить (или снять) документ в учёте. Вызывается внутри транзакции. */
-  async syncTradeDocument(tx: Tx, id: string, opts: { userId?: string | null; override?: OverrideRequest; organizationId?: string } = {}): Promise<SyncResult> {
+  /**
+   * force — содержимое документа точно изменилось (правка проведённого документа на платформе): перепровести, даже если
+   * отметка времени до секунды совпала с прежним отражением (иначе правка в ту же секунду оставляла старые проводки).
+   */
+  async syncTradeDocument(tx: Tx, id: string, opts: { userId?: string | null; override?: OverrideRequest; organizationId?: string; force?: boolean } = {}): Promise<SyncResult> {
     await tx.$queryRaw`SELECT id FROM documents WHERE id = ${id} FOR UPDATE`;
     const doc = await this.loadDoc(tx, id);
     if (!doc) throw new AccError('DOC_NOT_FOUND', 'Документ не найден', { status: 404 });
@@ -121,7 +125,8 @@ export class AutopilotService implements OnModuleInit, OnModuleDestroy {
       return { status: existing ? 'CANCELLED' : 'SKIPPED', reason: NO_ACCOUNTING.includes(doc.docType) || binMove ? 'документ без бухгалтерских последствий' : undefined };
     }
     if (!isSupported(doc.docType)) throw new AccError('NO_RULE', `Нет правила отражения для документа типа ${doc.docType}`);
-    const version = Math.floor(doc.updatedAt.getTime() / 1000);
+    let version = Math.floor(doc.updatedAt.getTime() / 1000);
+    if (opts.force && existing && existing.sourceVersion >= version) version = existing.sourceVersion + 1;
     if (existing && existing.sourceVersion === version && existing.ruleVersion === TRADE_RULE_VERSION) {
       await this.resolveIssue(tx, id);
       return { status: 'UNCHANGED', entryId: existing.id };

@@ -25,8 +25,8 @@ export class ItemsService {
   constructor(private prisma: PrismaService) {}
 
   async findAll(s: Scope, query: { search?: string; groupId?: string; parentId?: string; page?: number; limit?: number }) {
-    const page = Number(query.page) || 1;
-    const limit = Number(query.limit) || 50;
+    const page = Math.max(Number(query.page) || 1, 1);
+    const limit = Math.min(Math.max(Number(query.limit) || 50, 1), 200); // без потолка можно было запросить всю номенклатуру разом
     const skip = (page - 1) * limit;
 
     const where: any = { ...tenantCatalog(s), deleted: false };

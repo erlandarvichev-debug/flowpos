@@ -13,16 +13,26 @@ export class PosService {
   async findTerminals(s: Scope) {
     return this.prisma.pOSTerminal.findMany({
       where: { organizationId: s.organizationId, isActive: true },
-      include: { store: true },
+      // Ключ кассы наружу не отдаётся: им нигде не входят, а видеть его могли даже кассиры.
+      select: { id: true, name: true, code: true, storeId: true, isActive: true, createdAt: true, store: { select: { id: true, name: true } } },
       orderBy: { name: 'asc' },
     });
   }
 
   async createTerminal(s: Scope, body: any) {
-    const { data } = writable(body, s);
-    const { apiKey, ...rest } = data as any; // ключ кассы выдаёт сервер
-    if (rest.storeId) await assertTradeRefs(this.prisma, s, { storeIds: [rest.storeId] });
-    return this.prisma.pOSTerminal.create({ data: { ...rest, tenantId: s.tenantId, organizationId: s.organizationId } }).catch(scopeError);
+    writable(body, s); // проверка «не в чужую организацию»
+    // Только поля кассы: ключ выдаёт сервер, служебные поля из запроса не принимаются.
+    const name = String(body?.name ?? '').trim();
+    if (!name) throw new BadRequestException('Укажите название кассы');
+    const code = String(body?.code ?? '').trim() || `K-${Date.now().toString(36).toUpperCase()}`;
+    const storeId = body?.storeId || body?.warehouseId || null;
+    if (storeId) await assertTradeRefs(this.prisma, s, { storeIds: [storeId] });
+    return this.prisma.pOSTerminal
+      .create({ data: { name, code, storeId, tenantId: s.tenantId, organizationId: s.organizationId }, select: { id: true, name: true, code: true, storeId: true, isActive: true } })
+      .catch((e) => {
+        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') throw new BadRequestException(`Код кассы «${code}» уже занят — укажите другой`);
+        return scopeError(e);
+      });
   }
 
   private async terminal(s: Scope, id: string) {
@@ -92,6 +102,7 @@ export class PosService {
   }
 
   async cashIn(s: Scope, shiftId: string, amount: number, comment?: string) {
+    if (!(Number(amount) > 0)) throw new BadRequestException('Сумма должна быть больше нуля');
     const shift = await this.shift(s, shiftId);
     if (shift.status === 'CLOSED') throw new BadRequestException('Смена закрыта');
 
@@ -105,6 +116,7 @@ export class PosService {
   }
 
   async cashOut(s: Scope, shiftId: string, amount: number, comment?: string) {
+    if (!(Number(amount) > 0)) throw new BadRequestException('Сумма должна быть больше нуля');
     const shift = await this.shift(s, shiftId);
     if (shift.status === 'CLOSED') throw new BadRequestException('Смена закрыта');
 
@@ -119,7 +131,7 @@ export class PosService {
 
   async findShifts(s: Scope, query: any) {
     const page = Number(query.page) || 1;
-    const limit = Number(query.limit) || 20;
+    const limit = Math.min(Number(query.limit) || 20, 200);
     const where: Prisma.POSShiftWhereInput = { terminal: { organizationId: s.organizationId } };
     if (query.terminalId) where.terminalId = query.terminalId;
     if (query.status) where.status = query.status;
@@ -130,6 +142,7 @@ export class PosService {
         skip: (page - 1) * limit,
         take: limit,
         orderBy: { openedAt: 'desc' },
+        include: { terminal: { select: { id: true, name: true } } },
       }),
       this.prisma.pOSShift.count({ where }),
     ]);
@@ -142,7 +155,7 @@ export class PosService {
 
   async findReceipts(s: Scope, query: any) {
     const page = Number(query.page) || 1;
-    const limit = Number(query.limit) || 20;
+    const limit = Math.min(Number(query.limit) || 20, 200);
     const where = orgDocs(s, { docType: 'RETAIL_DEMAND' });
 
     const [receipts, total] = await Promise.all([

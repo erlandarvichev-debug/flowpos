@@ -71,26 +71,7 @@ export class PurchasingService {
   async needs(ctx: OrgContext, q: { storeId?: string; all?: string }) {
     const rules = await this.rules(ctx, q);
     if (!rules.length) return { items: [] };
-    const orders = await this.prisma.document.findMany({
-      where: { organizationId: ctx.organizationId, docType: 'PURCHASE_ORDER', status: 'POSTED', deleted: false, storeId: { in: [...new Set(rules.map((r) => r.storeId))] } },
-      include: { lines: true },
-    });
-    const open = orders.filter((o) => !(o.attributes as any)?.closed);
-    const supplies = open.length ? await this.prisma.document.findMany({
-      where: { docType: 'SUPPLY', status: 'POSTED', deleted: false, OR: open.map((o) => ({ attributes: { path: ['baseId'], equals: o.id } })) },
-      include: { lines: true },
-    }) : [];
-    const onOrder = new Map<string, Dec>();
-    for (const o of open) {
-      const got = new Map<string, Dec>();
-      for (const s of supplies.filter((x) => (x.attributes as any)?.baseId === o.id)) for (const l of s.lines) got.set(l.productId, (got.get(l.productId) ?? new D(0)).plus(l.qty));
-      for (const l of o.lines) {
-        const left = D.max(new D(l.qty).minus(got.get(l.productId) ?? 0), 0);
-        got.set(l.productId, D.max((got.get(l.productId) ?? new D(0)).minus(l.qty), 0));
-        const k = `${o.storeId}|${l.productId}`;
-        onOrder.set(k, (onOrder.get(k) ?? new D(0)).plus(left));
-      }
-    }
+    const onOrder = await this.onOrder(ctx, [...new Set(rules.map((r) => r.storeId))]);
     const items: any[] = [];
     for (const r of rules) {
       const [st] = await this.prisma.$queryRaw<{ q: string; r: string }[]>`
@@ -109,6 +90,88 @@ export class PurchasingService {
       });
     }
     return { items };
+  }
+
+  /**
+   * Ожидается от поставщиков: проведённые незакрытые заказы поставщикам минус принятое по ним. Ключ — «склад|товар».
+   * storeIds не указан — по всем складам организации.
+   */
+  async onOrder(ctx: OrgContext, storeIds?: string[]) {
+    const orders = await this.prisma.document.findMany({
+      where: { organizationId: ctx.organizationId, docType: 'PURCHASE_ORDER', status: 'POSTED', deleted: false, ...(storeIds ? { storeId: { in: storeIds } } : {}) },
+      include: { lines: true },
+    });
+    const open = orders.filter((o) => !(o.attributes as any)?.closed);
+    const supplies = open.length ? await this.prisma.document.findMany({
+      where: { docType: 'SUPPLY', status: 'POSTED', deleted: false, OR: open.map((o) => ({ attributes: { path: ['baseId'], equals: o.id } })) },
+      include: { lines: true },
+    }) : [];
+    const res = new Map<string, Dec>();
+    for (const o of open) {
+      const got = new Map<string, Dec>();
+      for (const s of supplies.filter((x) => (x.attributes as any)?.baseId === o.id)) for (const l of s.lines) got.set(l.productId, (got.get(l.productId) ?? new D(0)).plus(l.qty));
+      for (const l of o.lines) {
+        const left = D.max(new D(l.qty).minus(got.get(l.productId) ?? 0), 0);
+        got.set(l.productId, D.max((got.get(l.productId) ?? new D(0)).minus(l.qty), 0));
+        const k = `${o.storeId}|${l.productId}`;
+        res.set(k, (res.get(k) ?? new D(0)).plus(left));
+      }
+    }
+    return res;
+  }
+
+  /**
+   * Остатки: по товару и складу — факт, резерв, свободно, ожидается (заказы поставщикам), точка заказа и уровень
+   * пополнения из правил. Поиск — название, код, артикул, штрихкод. Без стоимости (она в отчёте «Остатки и себестоимость»).
+   */
+  async balance(ctx: OrgContext, q: { storeId?: string; search?: string; filter?: string; sort?: string; page?: string | number; limit?: string | number }) {
+    const limit = Math.min(Math.max(Number(q.limit) || 50, 1), 200);
+    const page = Math.max(Number(q.page) || 1, 1);
+    const search = String(q.search ?? '').trim();
+    const like = `%${search.replace(/[\\%_]/g, (c) => '\\' + c)}%`;
+    const conds: Prisma.Sql[] = [];
+    if (search) {
+      conds.push(Prisma.sql`(p.name ILIKE ${like} OR p.code ILIKE ${like} OR p.article ILIKE ${like}
+        OR EXISTS (SELECT 1 FROM product_barcodes pb WHERE pb.product_id = p.id AND pb.barcode = ${search}))`);
+    }
+    if (q.filter === 'below') conds.push(Prisma.sql`rr.min_qty IS NOT NULL AND (b.q - b.r) < rr.min_qty`);
+    else if (q.filter === 'negative') conds.push(Prisma.sql`b.q < 0`);
+    else if (q.filter === 'reserved') conds.push(Prisma.sql`b.r > 0`);
+    else if (q.filter !== 'all') conds.push(Prisma.sql`(b.q <> 0 OR b.r <> 0)`);
+    const where = conds.length ? Prisma.sql`WHERE ${Prisma.join(conds, ' AND ')}` : Prisma.empty;
+    const order = q.sort === 'qty_desc' ? Prisma.sql`b.q DESC, p.name` : q.sort === 'qty_asc' ? Prisma.sql`b.q ASC, p.name`
+      : q.sort === 'store' ? Prisma.sql`st.name, p.name` : Prisma.sql`p.name, st.name`;
+    const store = q.storeId ? Prisma.sql`AND s.store_id = ${q.storeId}` : Prisma.empty;
+    const rows = await this.prisma.$queryRaw<any[]>`
+      WITH b AS (
+        SELECT s.product_id, s.store_id, sum(s.qty) AS q, sum(s.reserved) AS r
+        FROM stock s JOIN stores st ON st.id = s.store_id
+        WHERE st.organization_id = ${ctx.organizationId} AND st.deleted = false ${store}
+        GROUP BY s.product_id, s.store_id
+      )
+      SELECT b.product_id, b.store_id, b.q::text AS qty, b.r::text AS reserved, (b.q - b.r)::text AS free,
+             p.code, p.article, p.name, u.short_name AS uom, st.name AS store_name, st.is_transit,
+             rr.min_qty::text AS min_qty, rr.max_qty::text AS max_qty, count(*) OVER () AS total
+      FROM b JOIN products p ON p.id = b.product_id JOIN stores st ON st.id = b.store_id
+      LEFT JOIN uoms u ON u.id = p.uom_id
+      LEFT JOIN replenishment_rules rr ON rr.store_id = b.store_id AND rr.product_id = b.product_id
+      ${where}
+      ORDER BY ${order}
+      LIMIT ${limit} OFFSET ${(page - 1) * limit}`;
+    const [below] = await this.prisma.$queryRaw<{ n: bigint }[]>`
+      SELECT count(*) AS n FROM replenishment_rules rr
+      JOIN stores st ON st.id = rr.store_id AND st.organization_id = ${ctx.organizationId} AND st.deleted = false
+      WHERE (SELECT coalesce(sum(s.qty - s.reserved), 0) FROM stock s WHERE s.product_id = rr.product_id AND s.store_id = rr.store_id) < rr.min_qty`;
+    const ord = rows.length ? await this.onOrder(ctx) : new Map<string, Dec>();
+    return {
+      items: rows.map((r) => ({
+        productId: r.product_id, storeId: r.store_id, code: r.code, article: r.article, name: r.name, uom: r.uom,
+        store: r.store_name, inTransit: r.is_transit, qty: r.qty, reserved: r.reserved, free: r.free,
+        onOrder: (ord.get(`${r.store_id}|${r.product_id}`) ?? new D(0)).toString(), minQty: r.min_qty, maxQty: r.max_qty,
+        below: r.min_qty !== null && new D(r.free).lt(r.min_qty),
+      })),
+      total: rows.length ? Number(rows[0].total) : 0, page, limit, belowMin: Number(below?.n ?? 0),
+    };
   }
 
   /** Последняя цена поступления товара: от этого поставщика, иначе от любого. */

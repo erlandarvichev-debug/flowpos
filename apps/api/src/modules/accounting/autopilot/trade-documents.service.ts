@@ -16,8 +16,11 @@ import { applyBasis, assertBasisLimits, snapshotOrder } from './sales-flow';
 import { CountError, bookQty, checkInventoryLine, checkLossLine, inventoryValue, stockPositions } from '../../inventory/count';
 import { ReserveError, activeReservations, assertReservesCovered, consumeForShipment, releaseReservations, reserveOrder } from '../../inventory/reservations';
 import { ReceiptError, checkReceiptLine, receiptSummary } from '../../inventory/receipt';
+import { splitVat, standardVatRate } from './vat';
 
 type Tx = Prisma.TransactionClient;
+/** Документы, в которых цена может быть «без НДС» и НДС начисляется сверху (как в tradeLineAmounts). */
+const VAT_ON_TOP_TYPES = new Set(['SUPPLY', 'DEMAND', 'RETAIL_DEMAND', 'SALES_RETURN', 'RETAIL_RETURN', 'LANDED_COST', 'PURCHASE_RETURN', 'CUSTOMER_ORDER', 'PURCHASE_ORDER']);
 
 const PREFIX: Record<string, string> = {
   PURCHASE_ORDER: 'ЗП', SUPPLY: 'ПТ', PURCHASE_RETURN: 'ВП', LANDED_COST: 'ДР', CUSTOMER_ORDER: 'ЗК', DEMAND: 'РТ', SALES_RETURN: 'ВК',
@@ -225,6 +228,29 @@ export class TradeDocumentsService {
   }
 
   /**
+   * Итог к оплате. Цены «без НДС» у плательщика НДС: покупатель должен сумму строк + НДС сверху — ровно как в
+   * проводках (tradeLineAmounts: ставка строки → ставка товара → стандартная на дату). Раньше итог был без НДС,
+   * и экран показывал меньше, чем начислено в расчётах.
+   */
+  private async docTotal(tx: Tx, organizationId: string, docType: string, date: Date, vatIncluded: boolean | undefined, lines: ReturnType<TradeDocumentsService['buildLines']>, amount?: unknown) {
+    const base = this.totalOf(docType, lines, amount);
+    if (vatIncluded !== false || !VAT_ON_TOP_TYPES.has(docType) || !lines.length) return base;
+    const policy = await tx.accPolicy.findFirst({ where: { organizationId, validFrom: { lte: date } }, orderBy: { validFrom: 'desc' } });
+    if (!policy?.vatPayer) return base;
+    const ids = [...new Set(lines.filter((l) => l.vatRate === null).map((l) => l.productId))];
+    const products = ids.length ? await tx.product.findMany({ where: { id: { in: ids } }, select: { id: true, vatRate: true } }) : [];
+    const productRate = new Map(products.map((p) => [p.id, p.vatRate]));
+    let std: Prisma.Decimal | null = null;
+    let sum = new D(0);
+    for (const l of lines) {
+      let rate: Prisma.Decimal | null = l.vatRate ?? (productRate.get(l.productId) != null ? new D(productRate.get(l.productId) as any) : null);
+      if (rate === null) rate = std ??= await standardVatRate(tx, date);
+      sum = sum.plus(splitVat(l.amount, rate, false).gross);
+    }
+    return sum;
+  }
+
+  /**
    * FP-033: подготовка строк перед сохранением — учётное количество инвентаризации (сервер, на конец даты документа,
    * без его собственных движений) и обязательность партии/срока для партионного прихода.
    */
@@ -378,7 +404,7 @@ export class TradeDocumentsService {
       await snapshotOrder(tx, ctx, input);
       await this.prepareLines(tx, input);
       const lines = this.buildLines(input);
-      const total = this.totalOf(input.docType, lines, input.amount);
+      const total = await this.docTotal(tx, ctx.organizationId, input.docType, date, input.vatIncluded, lines, input.amount);
       const number = await this.number(tx, ctx, input.docType, date);
       const doc = await tx.document.create({
         data: {
@@ -448,7 +474,8 @@ export class TradeDocumentsService {
       // FP-029: сохранение без изменения содержимого — не новая версия (иначе «Провести» на экране, которое сначала
       // сохраняет, отменяло бы согласование этой же версии).
       const lines0 = this.buildLines(merged);
-      const total0 = this.totalOf(doc.docType, lines0, merged.amount);
+      const vatIncl = merged.vatIncluded ?? (doc.attributes as any)?.vatIncluded;
+      const total0 = await this.docTotal(tx, ctx.organizationId, doc.docType, new Date(merged.date), vatIncl, lines0, merged.amount);
       const candidate = {
         ...doc, date: new Date(merged.date), counterpartyId: merged.counterpartyId ?? null, contractId: merged.contractId ?? null, storeId: merged.storeId ?? null,
         storeToId: merged.storeToId ?? null, total: total0, comment: merged.comment ?? doc.comment, attributes: this.attrs(input as TradeDocInput, doc.attributes ?? {}), lines: lines0,
@@ -462,7 +489,7 @@ export class TradeDocumentsService {
         await tx.document.update({ where: { id }, data: { status: 'DRAFT' } });
       }
       const lines = this.buildLines(merged);
-      const total = this.totalOf(doc.docType, lines, merged.amount);
+      const total = await this.docTotal(tx, ctx.organizationId, doc.docType, new Date(merged.date), vatIncl, lines, merged.amount);
       await tx.documentLine.deleteMany({ where: { documentId: id } });
       await tx.document.update({
         where: { id },
@@ -484,7 +511,7 @@ export class TradeDocumentsService {
         const fresh = await tx.document.findUnique({ where: { id }, include: { lines: true } });
         await tx.document.update({ where: { id }, data: { status: 'POSTED', postedVersion: fresh!.version } });
         await assertBasisLimits(tx, fresh! as any);
-        await this.autopilot.syncTradeDocument(tx, id, { userId: ctx.userId, override, organizationId: ctx.organizationId });
+        await this.autopilot.syncTradeDocument(tx, id, { userId: ctx.userId, override, organizationId: ctx.organizationId, force: true });
         await this.moveStock(tx, ctx, fresh!, input.reason);
         await this.writeVersion(tx, ctx, id, 'POST', input.reason);
       }
@@ -627,14 +654,17 @@ export class TradeDocumentsService {
     for (const c of children) for (const l of c.lines) done.set(l.productId, (done.get(l.productId) ?? new D(0)).plus(l.qty));
     const lines: TradeLineInput[] = [];
     for (const l of base.lines) {
-      const left = new D(l.qty).minus(done.get(l.productId) ?? 0);
+      // Исполненное по товару списывается со строк основания по порядку: строки 5 + 3, исполнено 6 → остаток 0 + 2.
+      const qty = new D(l.qty);
+      const used = D.min(qty, done.get(l.productId) ?? new D(0));
+      done.set(l.productId, (done.get(l.productId) ?? new D(0)).minus(used));
+      const left = qty.minus(used);
       if (left.gt(0)) {
         // FP-030: поступление по заказу — ожидается остаток заказа; принятое по умолчанию = ожидаемому (правится при приёмке).
         lines.push({
           productId: l.productId, qty: left.toFixed(3), price: l.price?.toString(), discount: l.discount?.toString(), vatRate: l.vatRate?.toString() ?? null,
           ...(targetType === 'SUPPLY' ? { expectedQty: left.toFixed(3) } : {}),
         });
-        done.set(l.productId, new D(0));
       }
     }
     if (!lines.length) throw new AccError('BASE_FULFILLED', `По документу ${base.number} всё уже исполнено`);

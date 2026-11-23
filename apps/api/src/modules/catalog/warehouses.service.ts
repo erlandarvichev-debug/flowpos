@@ -24,17 +24,34 @@ export class WarehousesService {
     return w;
   }
 
+  /**
+   * Поля склада, которые меняет пользователь. Служебные (обмен с МойСклад/1С, «В пути», пометка удаления, владелец)
+   * из запроса не принимаются — раньше их можно было записать любым запросом.
+   */
+  private storeData(body: any, creating: boolean) {
+    const d: Record<string, unknown> = {};
+    if (body?.name !== undefined || creating) {
+      const name = String(body?.name ?? '').trim();
+      if (!name) throw new BadRequestException('Укажите название склада');
+      if (name.length > 200) throw new BadRequestException('Название склада — не длиннее 200 символов');
+      d.name = name;
+    }
+    for (const k of ['code', 'address'] as const) if (body?.[k] !== undefined) d[k] = String(body[k] ?? '').trim() || null;
+    for (const k of ['isRetail', 'isActive'] as const) if (body?.[k] !== undefined) d[k] = !!body[k];
+    return d;
+  }
+
   async create(s: Scope, body: any) {
-    const { data } = writable(body, s);
-    delete (data as any).isTransit; // «В пути» создаёт только система
+    writable(body, s); // запись в чужую организацию — 403
+    const data = this.storeData(body, true);
     return this.prisma.store.create({ data: { ...(data as any), tenantId: s.tenantId, organizationId: s.organizationId } }).catch(scopeError);
   }
 
   async update(s: Scope, id: string, body: any) {
-    await this.findOne(s, id);
-    const { data } = writable(body, s);
-    delete (data as any).isTransit;
-    return this.prisma.store.update({ where: { id }, data: data as any }).catch(scopeError);
+    const cur = await this.findOne(s, id);
+    writable(body, s);
+    if (cur.isTransit) throw new BadRequestException('Служебный склад «В пути» не изменяется');
+    return this.prisma.store.update({ where: { id }, data: this.storeData(body, false) as any }).catch(scopeError);
   }
 
   // ── FP-032: ячейки (адреса хранения) ──

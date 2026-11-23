@@ -38,7 +38,7 @@ const appRoutes: RouteRecordRaw[] = [
           path: 'dashboard',
           name: 'dashboard',
           component: () => import('@/views/DashboardView.vue'),
-          meta: { title: 'Дашборд', icon: 'Odometer' },
+          meta: { title: 'Показатели', icon: 'Odometer' },
         },
         // Каталог
         {
@@ -121,12 +121,8 @@ const appRoutes: RouteRecordRaw[] = [
           component: () => import('@/views/pos/ShiftsView.vue'),
           meta: { title: 'Смены', icon: 'Clock' },
         },
-        {
-          path: 'pos/receipts',
-          name: 'receipts',
-          component: () => import('@/views/pos/ReceiptsView.vue'),
-          meta: { title: 'Чеки', icon: 'Ticket' },
-        },
+        // Чеки — журнал розничных продаж и возвратов (учётный, с проведением); старый экран читал несуществующие поля.
+        { path: 'pos/receipts', name: 'receipts', redirect: '/sales/retail' },
         // HR
         {
           path: 'hr/employees',

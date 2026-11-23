@@ -14,12 +14,8 @@ export class AnalyticsController {
 
   @Get('dashboard')
   @RequirePermission('analytics.read')
-  getDashboard(@CurrentScope() s: Scope, @Query('from') from: string, @Query('to') to: string) {
-    const period = {
-      from: from || new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString(),
-      to: to || new Date().toISOString(),
-    };
-    return this.analytics.getDashboard(s, period);
+  getDashboard(@CurrentScope() s: Scope, @Query('from') from?: string, @Query('to') to?: string) {
+    return this.analytics.getDashboard(s, { from, to });
   }
 
   @Get('stocks')

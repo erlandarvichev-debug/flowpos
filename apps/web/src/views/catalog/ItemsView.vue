@@ -33,7 +33,7 @@
         </el-table-column>
         <el-table-column prop="uom.shortName" label="Ед." width="60" />
         <el-table-column prop="group.name" label="Группа" />
-        <el-table-column label="Цена (розница)" width="130" align="right">
+        <el-table-column label="Цена сегодня" width="130" align="right">
           <template #default="{ row }">
             {{ getRetailPrice(row) }}
           </template>
@@ -166,25 +166,46 @@ async function loadItems() {
     }) as any
     items.value = res.items
     total.value = res.total
-  } catch {}
-  loading.value = false
+    loadPrices(res.items)
+  } catch (e: any) {
+    ElMessage.error(e?.message || 'Не удалось загрузить товары')
+  } finally {
+    loading.value = false
+  }
+}
+
+// Цена — по действующим прайс-листам на сегодня (как в заказе и на кассе), а не из старой таблицы цен.
+const prices = ref<Record<string, number | null>>({})
+async function loadPrices(list: any[]) {
+  const ids = list.map((i) => i.id)
+  if (!ids.length) return
+  try {
+    const res = (await api.post('/pricing/preview', { lines: ids.map((id) => ({ productId: id, qty: 1 })) })) as any
+    const map: Record<string, number | null> = {}
+    ;(res.lines ?? []).forEach((l: any, i: number) => { map[ids[i]] = l.basePrice === null || l.basePrice === undefined ? null : Number(l.basePrice) })
+    prices.value = map
+  } catch { prices.value = {} }
 }
 
 async function loadMeta() {
-  const [g, u, w] = await Promise.all([
-    api.get('/catalog/items/groups'),
-    api.get('/catalog/items/units'),
-    api.get('/catalog/items/settings'),
-  ]) as any[]
-  groups.value = g
-  units.value = u
-  weight.value = w
+  try {
+    const [g, u, w] = await Promise.all([
+      api.get('/catalog/items/groups'),
+      api.get('/catalog/items/units'),
+      api.get('/catalog/items/settings'),
+    ]) as any[]
+    groups.value = g
+    units.value = u
+    weight.value = w
+  } catch (e: any) {
+    ElMessage.error(e?.message || 'Не удалось загрузить справочники')
+  }
 }
 
 function getRetailPrice(item: any) {
-  const p = item.prices?.find((pr: any) => pr.priceType?.isDefault)
-  if (!p) return '—'
-  return new Intl.NumberFormat('ru-KZ', { style: 'currency', currency: 'KZT', minimumFractionDigits: 0 }).format(p.price)
+  const p = prices.value[item.id]
+  if (p === null || p === undefined) return '—'
+  return p.toLocaleString('ru-RU', { maximumFractionDigits: 2 }) + ' ₸'
 }
 
 // FP-025: форма — в полях API (uomId, kind); НДС по умолчанию — ставка НК РК 2026 (16%).

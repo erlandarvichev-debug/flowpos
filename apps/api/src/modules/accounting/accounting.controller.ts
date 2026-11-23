@@ -318,6 +318,10 @@ export class AccountingController {
   @Delete('replenishment-rules/:id') @RequirePermission('catalog.manage')
   replenishmentRuleDelete(@Org() ctx: OrgContext, @Param('id') id: string) { return this.purchasing.deleteRule(ctx, id); }
 
+  /** Остатки: факт, резерв, свободно, ожидается, точка заказа — по товару и складу (без стоимости). */
+  @Get('stock-balance') @RequirePermission('stock.read')
+  stockBalance(@Org() ctx: OrgContext, @Query() q: any) { return this.purchasing.balance(ctx, q); }
+
   @Get('purchase-needs') @RequirePermission('stock.read')
   purchaseNeeds(@Org() ctx: OrgContext, @Query() q: any) { return this.purchasing.needs(ctx, q); }
 

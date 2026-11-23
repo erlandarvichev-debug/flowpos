@@ -238,3 +238,16 @@ describe('FP-025: версии и внешние сопоставления', ()
     expect(await prisma.product.findUniqueOrThrow({ where: { id: p.id } })).toMatchObject({ msId: second, onecGuid: guid, deleted: false });
   });
 });
+
+describe('Склады: служебные поля из запроса не принимаются', () => {
+  it('msId, удаление, владелец, обмен — не записываются; пустое название — ошибка', async () => {
+    const w = await stores.create(A, { name: `Склад ${uid()}`, msId: 'чужой', deleted: true, owner: 'MOYSKLAD', syncStatus: 'ERROR', address: ' ул. Абая, 1 ' });
+    const row = await prisma.store.findUniqueOrThrow({ where: { id: w.id } });
+    expect([row.msId, row.deleted, row.owner, row.syncStatus, row.address]).toEqual([null, false, 'C1', 'SYNCED', 'ул. Абая, 1']);
+    await stores.update(A, w.id, { deleted: true, onecGuid: 'x', name: 'Новый' });
+    const upd = await prisma.store.findUniqueOrThrow({ where: { id: w.id } });
+    expect([upd.deleted, upd.onecGuid, upd.name]).toEqual([false, null, 'Новый']);
+    expect(await code(stores.create(A, { name: '  ' }))).toBe(400);
+    await prisma.store.delete({ where: { id: w.id } });
+  });
+});

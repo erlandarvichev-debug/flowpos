@@ -145,7 +145,11 @@
           <el-checkbox v-if="docType === 'SUPPLY'" v-model="receiptMode" :disabled="readonly">Приёмка с расхождениями (по документу поставщика, отказ, причина)</el-checkbox>
           <el-checkbox v-if="lotCapable" v-model="lotMode" :disabled="readonly">Партии и сроки годности</el-checkbox>
           <span v-if="docType === 'INVENTORY'" class="hint0">Учётное считает система на конец даты инвентаризации; при проведении оно сверяется заново. Расхождения проводятся после согласования.</span>
-          <span class="totals" v-if="hasPrices">{{ t('total') }}: <b>{{ fmtMoney(total) }}</b> ₸</span>
+          <span class="totals" v-if="hasPrices && form.vatIncluded">{{ t('total') }}: <b>{{ fmtMoney(total) }}</b> ₸</span>
+          <span class="totals" v-else-if="hasPrices">
+            Сумма без НДС: <b>{{ fmtMoney(total) }}</b> ₸ · НДС начисляется сверху<template v-if="doc.id && doc.attributes?.vatIncluded === false">
+            · к оплате с НДС (по сохранённому): <b>{{ fmtMoney(doc.total) }}</b> ₸</template>
+          </span>
         </div>
       </template>
       <div class="lines" ref="linesEl">
@@ -444,7 +448,8 @@ const receiptMode = ref(false)
 const isReturn = computed(() => docType.value === 'SALES_RETURN' || docType.value === 'RETAIL_RETURN' || docType.value === 'PURCHASE_RETURN')
 /** FP-035: бюджет закупок месяца для заказа поставщику. */
 const budget = ref<any>(null)
-const priceLocked = computed(() => !!(doc.value.attributes?.baseId || route.query.baseId) && (docType.value === 'DEMAND' || isReturn.value))
+const priceFromLists = computed(() => docType.value === 'CUSTOMER_ORDER' || (docType.value === 'DEMAND' && !priceLocked.value))
+const priceLocked = computed(() =>!!(doc.value.attributes?.baseId || route.query.baseId) && (docType.value === 'DEMAND' || isReturn.value))
 async function loadBudget() {
   budget.value = null
   if (docType.value !== 'PURCHASE_ORDER' || !doc.value.id) return
@@ -518,7 +523,8 @@ function payload() {
     }
     if (hasPrices.value) {
       // FP-034: пустая цена заказа — по прайс-листам на дату заказа (сервер фиксирует снимок)
-      o.price = normAmount(l.price) || (docType.value === 'CUSTOMER_ORDER' ? undefined : '0')
+      // реализация без основания — тоже по прайс-листам; остальные документы — 0 только после подтверждения (save)
+      o.price = normAmount(l.price) || (priceFromLists.value ? undefined : '0')
       if (normAmount(l.discount)) o.discount = normAmount(l.discount)
       o.vatRate = normAmount(l.vatRate) || null
     }
@@ -600,6 +606,15 @@ async function save(silent = false): Promise<boolean> {
   if (doc.value.status === 'POSTED' && !form.value.reason) {
     ElMessage.warning('Укажите причину изменения проведённого документа')
     return false
+  }
+  // Строки без цены: заказ и реализация без основания — цена из прайс-листов; в остальных — 0 ₸, только явно.
+  if (hasPrices.value && !priceFromLists.value && !priceLocked.value) {
+    const empty = form.value.lines.filter((l: any) => l.productId && !normAmount(l.price)).length
+    if (empty) {
+      try {
+        await ElMessageBox.confirm(`В ${empty} строк(е) не указана цена — сумма будет 0 ₸. Сохранить так?`, 'Нет цены', { type: 'warning', confirmButtonText: 'Сохранить с 0', cancelButtonText: 'Указать цены' })
+      } catch { return false }
+    }
   }
   busy.value = true
   try {

@@ -37,7 +37,10 @@ interface DocIn {
  * фиксируется явно (товара или стандартная на дату). Источник цен — в реквизитах заказа (pricing).
  */
 export async function snapshotOrder(tx: Tx, ctx: OrgContext, input: DocIn) {
-  if (input.docType !== 'CUSTOMER_ORDER') return;
+  // Реализация без основания — так же: пустая цена берётся из прайс-листов, а не молча 0 (у реализации по заказу
+  // цены и НДС приходят из заказа — applyBasis).
+  const directDemand = input.docType === 'DEMAND' && !input.baseId;
+  if (input.docType !== 'CUSTOMER_ORDER' && !directDemand) return;
   const lines = input.lines ?? [];
   const date = String(input.date).slice(0, 10);
   const need = lines.filter((l) => l.price === undefined || l.price === null || l.price === '');

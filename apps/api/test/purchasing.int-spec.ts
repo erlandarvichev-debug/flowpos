@@ -135,3 +135,31 @@ describe('FP-035: поступление по заказу и возврат п�
     expect(split.lines.map((l: any) => [l.lotNumber, l.qty.toString()])).toEqual([['Q1', '2'], ['Q2', '1']]);
   });
 });
+
+describe('Остатки (stock-balance): факт, резерв, свободно, ожидается, точка заказа', () => {
+  afterAll(() => prisma.$disconnect());
+
+  it('считает по товару и складу, ищет и фильтрует «ниже минимума»', async () => {
+    const ctx = await makeOrg(prisma);
+    const t = await makeTrade(prisma, ctx, { vatPayer: true });
+    await s.trade.create(ctx, { docType: 'SUPPLY', date: '2026-10-01', counterpartyId: t.supplier.id, storeId: t.s1.id, status: 'POSTED', lines: [{ productId: t.goods.id, qty: '10', price: '500' }, { productId: t.goods2.id, qty: '4', price: '100' }] });
+    const order = await s.trade.create(ctx, { docType: 'CUSTOMER_ORDER', date: '2026-10-02', counterpartyId: t.customer.id, storeId: t.s1.id, status: 'POSTED', lines: [{ productId: t.goods.id, qty: '3', price: '1000' }] });
+    await s.trade.reserve(ctx, order.id);
+    await s.trade.create(ctx, { docType: 'PURCHASE_ORDER', date: '2026-10-02', counterpartyId: t.supplier.id, storeId: t.s1.id, status: 'POSTED', lines: [{ productId: t.goods.id, qty: '5', price: '500' }] });
+    await purchasing.setRule(ctx, { storeId: t.s1.id, productId: t.goods.id, minQty: '9', maxQty: '20' });
+
+    const all = await purchasing.balance(ctx, {});
+    expect(all.total).toBe(2);
+    const g = all.items.find((i) => i.productId === t.goods.id)!;
+    expect([g.qty, g.reserved, g.free, g.onOrder, g.minQty, g.below]).toEqual(['10.000', '3.000', '7.000', '5', '9.000', true]);
+    expect(all.belowMin).toBe(1);
+
+    const below = await purchasing.balance(ctx, { filter: 'below' });
+    expect(below.items.map((i) => i.productId)).toEqual([t.goods.id]);
+    const found = await purchasing.balance(ctx, { search: 'Товар-2' });
+    expect(found.items.map((i) => i.productId)).toEqual([t.goods2.id]);
+    // чужая организация не видит ничего
+    const other = await makeOrg(prisma);
+    expect((await purchasing.balance(other, { storeId: t.s1.id })).total).toBe(0);
+  });
+});

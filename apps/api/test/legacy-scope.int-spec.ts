@@ -72,6 +72,7 @@ afterAll(async () => {
   await prisma.pOSShift.deleteMany({ where: { terminal: { tenantId: t2 } } });
   await prisma.pOSTerminal.deleteMany({ where: { tenantId: t2 } });
   await purgeStock(prisma, { tenantId: t2 });
+  await prisma.replenishmentRule.deleteMany({ where: { tenantId: t2 } });
   await prisma.productBarcode.deleteMany({ where: { tenantId: t2 } });
   await prisma.product.deleteMany({ where: { tenantId: t2 } });
   await prisma.counterparty.deleteMany({ where: { tenantId: t2 } });
@@ -178,13 +179,16 @@ describe('FP-007: аналитика', () => {
     const productB = await items.create(B, { name: `Товар B ${uid()}`, uomId: uomB });
     await prisma.document.create({ data: { docType: 'DEMAND', date: day, status: 'POSTED', total: 1_000_000, organizationId: B.organizationId, storeId: storeB.id } });
     await stockIn(prisma, [{ productId: productB.id, storeId: storeB.id, qty: 1 }]);
-    const period = { from: new Date(day.getTime() - 86_400_000).toISOString(), to: new Date(day.getTime() + 86_400_000).toISOString() };
+    await prisma.replenishmentRule.create({ data: { organizationId: B.organizationId, storeId: storeB.id, productId: productB.id, minQty: 5, maxQty: 10 } });
+    const kz = (d: Date) => new Date(d.getTime() + 5 * 3600e3).toISOString().slice(0, 10);
+    const period = { from: kz(new Date(day.getTime() - 86_400_000)), to: kz(new Date(day.getTime() + 86_400_000)) };
 
     const a = await analytics.getDashboard(A, period);
     const b = await analytics.getDashboard(B, period);
-    expect(b.kpi.totalSalesAmount).toBe(1_000_000);
-    expect(b.kpi.lowStockCount).toBe(1);
-    expect(a.kpi.totalSalesAmount).toBe(0);
+    expect(b.kpi.revenue).toBe(1_000_000);
+    expect(b.attention.belowMin).toBe(1);
+    expect(a.kpi.revenue).toBe(0);
+    expect(a.attention.belowMin).toBe(0);
     expect((await analytics.getStockReport(A)).map((x) => x.storeId)).not.toContain(storeB.id);
   });
 });
@@ -230,7 +234,7 @@ describe('FP-007: торговля и касса', () => {
   it('касса: чужая касса и смена недоступны; продажи смены — только свои чеки с момента открытия', async () => {
     const w = await setup();
     const tA = await pos.createTerminal(A, { name: 'Касса A', code: `KA-${uid()}`, storeId: w.storeA.id, apiKey: 'подмена' });
-    expect(tA.apiKey).not.toBe('подмена');
+    expect((await prisma.pOSTerminal.findUniqueOrThrow({ where: { id: tA.id } })).apiKey).not.toBe('подмена');
     expect(await code(pos.createTerminal(A, { name: 'Касса', code: `K-${uid()}`, storeId: w.storeA2.id }))).toBe('REF_FOREIGN');
     expect(await code(pos.openShift(B, tA.id, {}))).toBe(404);
 

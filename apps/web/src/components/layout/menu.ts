@@ -79,7 +79,7 @@ export function buildMenu(c: MenuCtx): MenuSection[] {
       items: when(c.showTrade,
         { path: '/pos/terminals', title: 'Кассы', desc: 'Кассы магазинов', icon: 'Monitor' },
         { path: '/pos/shifts', title: 'Смены', desc: 'Открытые и закрытые смены', icon: 'Clock' },
-        { path: '/pos/receipts', title: 'Чеки', desc: 'Все чеки продаж и возвратов', icon: 'Tickets' },
+        { path: '/sales/retail', title: 'Чеки', desc: 'Все чеки продаж и возвратов', icon: 'Tickets' },
       ),
     },
     {
