@@ -95,7 +95,10 @@ export async function buildTradeEntry(doc: TradeDoc, rc: TradeRuleCtx): Promise<
   const a = rc.accounts;
   const P: PostingInput[] = [];
   const M: StockMoveInput[] = [];
-  const cp = () => ({ COUNTERPARTY: need(doc.counterpartyId, 'COUNTERPARTY_REQUIRED', `Документ ${doc.number ?? ''}: не указан контрагент`, 'Укажите контрагента в документе.'), CONTRACT: doc.contractId ?? undefined, SETTLEMENT_DOC: doc.id });
+  const cp = (settle: string = doc.id) => ({ COUNTERPARTY: need(doc.counterpartyId, 'COUNTERPARTY_REQUIRED', `Документ ${doc.number ?? ''}: не указан контрагент`, 'Укажите контрагента в документе.'), CONTRACT: doc.contractId ?? undefined, SETTLEMENT_DOC: settle });
+  // Возврат на основании уменьшает долг именно по документу-основанию (реализации / поступлению): иначе основание
+  // оставалось открытым на полную сумму, а возврат — отдельной позицией с обратным знаком, и они не закрывались.
+  const settleReturn = () => cp(doc.attributes?.baseId ?? doc.id);
   const store = (id: string | null, what = 'склад') => need(id, 'STORE_REQUIRED', `Документ ${doc.number ?? ''}: не указан ${what}`, `Укажите ${what}.`);
   const inv = (productId: string, storeId: string): Record<string, string> => ({ PRODUCT: productId, STORE: storeId });
   const dept = doc.attributes?.departmentId;
@@ -169,7 +172,7 @@ export async function buildTradeEntry(doc: TradeDoc, rc: TradeRuleCtx): Promise<
         if (pay === 'CASH') P.push({ side: 'C', account: a.cash, amount: total.toFixed(2), dims: { CASHBOX: await rc.resolveCashbox(doc.storeId) }, memo: `Возврат покупателю ${doc.number ?? ''}` });
         else P.push({ side: 'C', account: a.cashInTransit, amount: total.toFixed(2), memo: `Возврат на карту ${doc.number ?? ''}` });
       } else {
-        P.push({ side: 'C', account: a.receivable, amount: total.toFixed(2), dims: cp(), memo: 'Уменьшение задолженности покупателя' });
+        P.push({ side: 'C', account: a.receivable, amount: total.toFixed(2), dims: settleReturn(), memo: 'Уменьшение задолженности покупателя' });
       }
       break;
     }
@@ -251,7 +254,7 @@ export async function buildTradeEntry(doc: TradeDoc, rc: TradeRuleCtx): Promise<
         }
         if (!vat.isZero()) P.push({ side: 'C', account: a.vatIn, amount: vat.toFixed(2), dims: { COUNTERPARTY: doc.counterpartyId ?? undefined, SETTLEMENT_DOC: doc.id }, memo: 'Сторно НДС к зачёту' });
       }
-      P.push({ side: 'D', account: a.payable, amount: total.toFixed(2), dims: cp(), memo: 'Уменьшение задолженности поставщику' });
+      P.push({ side: 'D', account: a.payable, amount: total.toFixed(2), dims: settleReturn(), memo: 'Уменьшение задолженности поставщику' });
       break;
     }
     case 'ENTER': {

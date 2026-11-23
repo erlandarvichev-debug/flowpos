@@ -251,3 +251,22 @@ describe('Склады: служебные поля из запроса не п�
     await prisma.store.delete({ where: { id: w.id } });
   });
 });
+
+describe('Номенклатура: архив, массовые действия, остаток в списке', () => {
+  it('в архив и обратно — по одному и пачкой; группа и НДС пачкой; чужие товары не трогаются', async () => {
+    const p1 = await product(A, { name: `Масс-1 ${uid()}` });
+    const p2 = await product(A, { name: `Масс-2 ${uid()}` });
+    const foreign = await product(B, { name: `Чужой ${uid()}`, vatRate: 16 });
+    expect((await items.bulk(A, { ids: [p1.id, p2.id, foreign.id], action: 'vat', vatRate: 0 })).updated).toBe(2);
+    expect(Number((await prisma.product.findUniqueOrThrow({ where: { id: foreign.id } })).vatRate)).toBe(16);
+    await items.bulk(A, { ids: [p1.id, p2.id], action: 'archive' });
+    const active = await items.findAll(A, { search: 'Масс-' });
+    expect(active.items.map((i: any) => i.id)).not.toContain(p1.id);
+    const archived = await items.findAll(A, { search: 'Масс-', archived: '1' });
+    expect(archived.items.map((i: any) => i.id)).toEqual(expect.arrayContaining([p1.id, p2.id]));
+    await items.restore(A, p1.id);
+    expect((await prisma.product.findUniqueOrThrow({ where: { id: p1.id } })).deleted).toBe(false);
+    expect(await code(items.bulk(A, { ids: [p1.id], action: 'всё удалить' }))).toBe(400);
+    expect(await code(items.bulk(A, { ids: [], action: 'archive' }))).toBe(400);
+  });
+});

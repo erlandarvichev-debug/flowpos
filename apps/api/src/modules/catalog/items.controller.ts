@@ -104,6 +104,18 @@ export class ItemsController {
     return this.items.update(s, id, body);
   }
 
+  @Post('bulk')
+  @RequirePermission('catalog.manage')
+  bulk(@CurrentScope() s: Scope, @Body() body: any) {
+    return this.items.bulk(s, body);
+  }
+
+  @Post(':id/restore')
+  @RequirePermission('catalog.manage')
+  restore(@CurrentScope() s: Scope, @Param('id') id: string) {
+    return this.items.restore(s, id);
+  }
+
   @Delete(':id')
   @RequirePermission('catalog.manage')
   archive(@CurrentScope() s: Scope, @Param('id') id: string) {

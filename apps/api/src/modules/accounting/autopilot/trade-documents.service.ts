@@ -356,6 +356,25 @@ export class TradeDocumentsService {
       const docs = await tx.accDocument.findMany({ where: { id: { in: paid.map((p) => p.paymentDocId) } }, select: { number: true } });
       throw new AccError('PAYMENTS_ALLOCATED', `На документ ${doc.number ?? ''} разнесены оплаты ${docs.map((d) => d.number).join(', ')} — сначала перенесите или снимите их`, { status: 409, fix: 'Откройте платёж, укажите разнесение на другой документ (или снимите проведение платежа), затем меняйте этот документ.' });
     }
+    // Проведённые возвраты на основании этого документа: снять/изменить основание — возврат повиснет (вернули больше,
+    // чем отгружено; долг уйдёт в минус).
+    if (['DEMAND', 'SUPPLY', 'RETAIL_DEMAND'].includes(doc.docType)) {
+      const rets = await tx.document.findMany({ where: { docType: { in: ['SALES_RETURN', 'RETAIL_RETURN', 'PURCHASE_RETURN'] as any }, status: 'POSTED', deleted: false, attributes: { path: ['baseId'], equals: doc.id } }, select: { number: true } });
+      if (rets.length) throw new AccError('RETURNS_DEPEND', `По документу ${doc.number ?? ''} проведены возвраты ${rets.map((d) => d.number).join(', ')}`, { status: 409, fix: 'Сначала снимите с проведения возвраты, затем меняйте этот документ.' });
+    }
+    // Оплаты, разнесённые на этот документ проводками других документов (платёж торговым документом, выписка):
+    // раньше видны были только разнесения из банка, а платёж «Поступление оплаты» — нет, и оплата повисала.
+    if (!doc.docType.startsWith('PAYMENT_')) {
+      const foreign = await tx.accPosting.findMany({
+        where: { settlementDocId: doc.id, isActive: true, entry: { status: 'ACTIVE', NOT: { sourceType: TRADE_SOURCE, sourceId: doc.id } } },
+        select: { entry: { select: { sourceType: true, sourceId: true } } }, take: 50,
+      });
+      const srcIds = [...new Set(foreign.filter((p) => p.entry.sourceType === TRADE_SOURCE).map((p) => p.entry.sourceId))];
+      if (srcIds.length) {
+        const deps = await tx.document.findMany({ where: { id: { in: srcIds }, status: 'POSTED', deleted: false, docType: { in: ['PAYMENT_IN', 'PAYMENT_OUT'] as any } }, select: { number: true } });
+        if (deps.length) throw new AccError('PAYMENTS_ALLOCATED', `На документ ${doc.number ?? ''} разнесены оплаты ${deps.map((d) => d.number).join(', ')} — сначала перенесите или снимите их`, { status: 409, fix: 'Снимите с проведения платёж (или разнесите его на другой документ), затем меняйте этот документ.' });
+      }
+    }
     if (doc.docType === 'MOVE' && doc.attributes?.twoStage) {
       const rec = await tx.document.findMany({ where: { docType: 'MOVE', status: 'POSTED', deleted: false, attributes: { path: ['baseId'], equals: doc.id } }, select: { number: true } });
       if (rec.length) throw new AccError('TRANSFER_RECEIVED_DEPENDS', `По перемещению ${doc.number ?? ''} проведены приёмки ${rec.map((d) => d.number).join(', ')}`, { status: 409, fix: 'Сначала снимите с проведения приёмки, затем меняйте отгрузку.' });
@@ -511,7 +530,7 @@ export class TradeDocumentsService {
         const fresh = await tx.document.findUnique({ where: { id }, include: { lines: true } });
         await tx.document.update({ where: { id }, data: { status: 'POSTED', postedVersion: fresh!.version } });
         await assertBasisLimits(tx, fresh! as any);
-        await this.autopilot.syncTradeDocument(tx, id, { userId: ctx.userId, override, organizationId: ctx.organizationId, force: true });
+        await this.autopilot.syncTradeDocument(tx, id, { userId: ctx.userId, override, organizationId: ctx.organizationId, force: true, actor: ctx });
         await this.moveStock(tx, ctx, fresh!, input.reason);
         await this.writeVersion(tx, ctx, id, 'POST', input.reason);
       }
@@ -537,7 +556,7 @@ export class TradeDocumentsService {
     await this.approvals.consumeForPost(tx, ctx, await this.approvals.docState(tx, ctx, 'TRADE', id));
     await tx.document.update({ where: { id }, data: { status: 'POSTED', postedVersion: doc.version, updatedBy: ctx.userId } });
     // FP-030: сначала учёт (стоимость прихода — из него), затем движения склада с источником.
-    await this.autopilot.syncTradeDocument(tx, id, { userId: ctx.userId, override, organizationId: ctx.organizationId });
+    await this.autopilot.syncTradeDocument(tx, id, { userId: ctx.userId, override, organizationId: ctx.organizationId, actor: ctx });
     await this.moveStock(tx, ctx, doc);
     await this.writeVersion(tx, ctx, id, 'POST');
     return this.view(tx, id);
@@ -607,7 +626,7 @@ export class TradeDocumentsService {
       await this.assertNoLandedCosts(tx, doc);
       await tx.document.update({ where: { id }, data: { status: 'DRAFT', postedVersion: null, updatedBy: ctx.userId } });
       await this.reverse(tx, doc, { userId: ctx.userId, reason: 'Снятие проведения' });
-      await this.autopilot.syncTradeDocument(tx, id, { userId: ctx.userId, override, organizationId: ctx.organizationId });
+      await this.autopilot.syncTradeDocument(tx, id, { userId: ctx.userId, override, organizationId: ctx.organizationId, actor: ctx });
       await this.writeVersion(tx, ctx, id, 'UNPOST');
       return this.view(tx, id);
     }, { timeout: 60000 });
@@ -622,7 +641,7 @@ export class TradeDocumentsService {
       if (doc.status === 'POSTED') await this.reverse(tx, doc, { userId: ctx.userId, reason: 'Пометка на удаление' });
       if (doc.docType === 'CUSTOMER_ORDER') await releaseReservations(tx, id, 'ORDER_CANCELLED');
       await tx.document.update({ where: { id }, data: { status: 'CANCELLED', deleted: true, postedVersion: null, updatedBy: ctx.userId } });
-      await this.autopilot.syncTradeDocument(tx, id, { userId: ctx.userId, override, organizationId: ctx.organizationId });
+      await this.autopilot.syncTradeDocument(tx, id, { userId: ctx.userId, override, organizationId: ctx.organizationId, actor: ctx });
       await this.writeVersion(tx, ctx, id, 'CANCEL');
       return this.view(tx, id);
     }, { timeout: 60000 });
@@ -830,20 +849,38 @@ export class TradeDocumentsService {
     return out;
   }
 
-  async list(ctx: OrgContext, q: { docType?: string; status?: string; from?: string; to?: string; search?: string; page?: number; limit?: number }) {
+  /**
+   * Журнал торговых документов: фильтры (вид, статус, период по дням Казахстана, контрагент, склад, товар, поиск по номеру
+   * и контрагенту), сортировка и итог суммы по всей выборке (не только по странице).
+   */
+  async list(ctx: OrgContext, q: { docType?: string; status?: string; from?: string; to?: string; search?: string; counterpartyId?: string; storeId?: string; productId?: string; sort?: string; page?: number; limit?: number }) {
     const stores = (await this.prisma.store.findMany({ where: { organizationId: ctx.organizationId }, select: { id: true } })).map((s) => s.id);
     const where: Prisma.DocumentWhereInput = { OR: [{ organizationId: ctx.organizationId }, { organizationId: null, storeId: { in: stores } }] };
     const and: Prisma.DocumentWhereInput[] = [];
+    const day = (v: string, what: string) => {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) throw new AccError('BAD_DATE', `${what}: дата ГГГГ-ММ-ДД`);
+      return new Date(`${v}T00:00:00+05:00`);
+    };
     if (q.docType) and.push({ docType: q.docType.includes(',') ? { in: q.docType.split(',') as any } : (q.docType as any) }); // журнал раздела: несколько типов
     if (q.status) and.push({ status: q.status as any });
-    if (q.from || q.to) and.push({ date: { ...(q.from ? { gte: new Date(q.from) } : {}), ...(q.to ? { lte: new Date(q.to + 'T23:59:59.999Z') } : {}) } });
-    if (q.search) and.push({ OR: [{ number: { contains: q.search, mode: 'insensitive' } }, { counterparty: { name: { contains: q.search, mode: 'insensitive' } } }] });
+    // Период — по дням Казахстана (UTC+5), обе даты включительно.
+    if (q.from || q.to) and.push({ date: { ...(q.from ? { gte: day(q.from, 'Начало периода') } : {}), ...(q.to ? { lt: new Date(day(q.to, 'Конец периода').getTime() + 86400000) } : {}) } });
+    if (q.search) and.push({ OR: [{ number: { contains: q.search, mode: 'insensitive' } }, { counterparty: { name: { contains: q.search, mode: 'insensitive' } } }, { comment: { contains: q.search, mode: 'insensitive' } }] });
+    if (q.counterpartyId) and.push({ counterpartyId: q.counterpartyId });
+    if (q.storeId) and.push({ OR: [{ storeId: q.storeId }, { storeToId: q.storeId }] });
+    if (q.productId) and.push({ lines: { some: { productId: q.productId } } });
     if (and.length) where.AND = and;
-    const limit = Math.min(200, Number(q.limit) || 50);
+    const limit = Math.min(200, Math.max(1, Number(q.limit) || 50));
     const page = Math.max(1, Number(q.page) || 1);
-    const [items, total] = await Promise.all([
-      this.prisma.document.findMany({ where, include: { counterparty: { select: { id: true, name: true } } }, orderBy: [{ date: 'desc' }, { number: 'desc' }], skip: (page - 1) * limit, take: limit }),
+    const [field, dir] = String(q.sort || 'date_desc').split('_') as [string, string];
+    const d: Prisma.SortOrder = dir === 'asc' ? 'asc' : 'desc';
+    const orderBy: Prisma.DocumentOrderByWithRelationInput[] =
+      field === 'number' ? [{ number: d }] : field === 'total' ? [{ total: { sort: d, nulls: 'last' } }, { date: 'desc' }]
+        : field === 'counterparty' ? [{ counterparty: { name: d } }, { date: 'desc' }] : [{ date: d }, { number: d }];
+    const [items, total, sum] = await Promise.all([
+      this.prisma.document.findMany({ where, include: { counterparty: { select: { id: true, name: true } }, store: { select: { id: true, name: true } } }, orderBy, skip: (page - 1) * limit, take: limit }),
       this.prisma.document.count({ where }),
+      this.prisma.document.aggregate({ where: { AND: [where, { deleted: false, status: { not: 'CANCELLED' } }] }, _sum: { total: true } }),
     ]);
     const entries = await this.prisma.accEntry.findMany({ where: { organizationId: ctx.organizationId, sourceType: TRADE_SOURCE, sourceId: { in: items.map((i) => i.id) }, status: 'ACTIVE' }, select: { sourceId: true } });
     const issues = await this.prisma.accAutopilotIssue.findMany({ where: { sourceType: TRADE_SOURCE, sourceId: { in: items.map((i) => i.id) }, resolvedAt: null } });
@@ -853,7 +890,7 @@ export class TradeDocumentsService {
         accounting: entries.some((e) => e.sourceId === i.id) ? 'REFLECTED' : issues.find((x) => x.sourceId === i.id) ? 'ISSUE' : 'NONE',
         issue: issues.find((x) => x.sourceId === i.id) ?? null,
       })),
-      total, page, limit,
+      total, page, limit, sum: (sum._sum.total ?? new D(0)).toFixed(2),
     };
   }
 

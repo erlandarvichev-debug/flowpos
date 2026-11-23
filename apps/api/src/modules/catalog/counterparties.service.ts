@@ -28,7 +28,7 @@ export class CounterpartiesService {
 
   async findAll(s: Scope, query: { search?: string; type?: string; page?: number; limit?: number }) {
     const page = Number(query.page) || 1;
-    const limit = Number(query.limit) || 50;
+    const limit = Math.min(Math.max(Number(query.limit) || 50, 1), 200);
     const skip = (page - 1) * limit;
 
     const where: any = { ...tenantCatalog(s), deleted: false };
@@ -53,7 +53,8 @@ export class CounterpartiesService {
       this.prisma.counterparty.count({ where }),
     ]);
 
-    return { counterparties, total, page, limit, pages: Math.ceil(total / limit) };
+    // items — единое имя списка для всех экранов; counterparties оставлено для старых вызовов.
+    return { items: counterparties, counterparties, total, page, limit, pages: Math.ceil(total / limit) };
   }
 
   /** Карточка: реквизиты с историей и договоры только своей организации (договоры других организаций клиента не видны). */

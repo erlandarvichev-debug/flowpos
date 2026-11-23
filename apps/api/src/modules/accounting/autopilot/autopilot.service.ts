@@ -100,7 +100,7 @@ export class AutopilotService implements OnModuleInit, OnModuleDestroy {
    * force — содержимое документа точно изменилось (правка проведённого документа на платформе): перепровести, даже если
    * отметка времени до секунды совпала с прежним отражением (иначе правка в ту же секунду оставляла старые проводки).
    */
-  async syncTradeDocument(tx: Tx, id: string, opts: { userId?: string | null; override?: OverrideRequest; organizationId?: string; force?: boolean } = {}): Promise<SyncResult> {
+  async syncTradeDocument(tx: Tx, id: string, opts: { userId?: string | null; override?: OverrideRequest; organizationId?: string; force?: boolean; actor?: OrgContext } = {}): Promise<SyncResult> {
     await tx.$queryRaw`SELECT id FROM documents WHERE id = ${id} FOR UPDATE`;
     const doc = await this.loadDoc(tx, id);
     if (!doc) throw new AccError('DOC_NOT_FOUND', 'Документ не найден', { status: 404 });
@@ -108,6 +108,9 @@ export class AutopilotService implements OnModuleInit, OnModuleDestroy {
     if (!organizationId) throw new AccError('ORG_UNKNOWN', `Документ ${doc.number ?? id}: не определена организация`, { fix: 'Укажите организацию документа или склада.' });
     if (opts.organizationId && opts.organizationId !== organizationId) throw new AccError('DOC_NOT_FOUND', 'Документ не найден', { status: 404 });
     const ctx = systemCtx((doc as any).tenantId, organizationId, opts.userId);
+    // Закрытый период переопределяет только пользователь с правом (главбух) и с причиной — его права, а не автопилота.
+    // Фоновый автопилот (без actor) закрытый период не трогает.
+    const periodCtx: OrgContext = opts.actor && opts.actor.organizationId === organizationId ? opts.actor : ctx;
     const settings = await this.accountsFor(tx, organizationId, doc.date);
     const existing = await tx.accEntry.findFirst({ where: { organizationId, sourceType: TRADE_SOURCE, sourceId: id, status: 'ACTIVE' } });
     const oldProducts = existing ? (await tx.accStockMove.findMany({ where: { entryId: existing.id }, select: { productId: true } })).map((m) => m.productId) : [];
@@ -117,9 +120,9 @@ export class AutopilotService implements OnModuleInit, OnModuleDestroy {
     const shouldPost = doc.status === 'POSTED' && !doc.deleted && settings.enabled && !settings.skipOwners.includes(doc.owner) && !NO_ACCOUNTING.includes(doc.docType) && !binMove;
     if (!shouldPost) {
       if (existing) {
-        await this.periods.assertOpen(tx, ctx, [existing.date], opts.override, 'отмена отражения документа');
+        await this.periods.assertOpen(tx, periodCtx, [existing.date], opts.override, 'отмена отражения документа');
         await this.posting.cancelSource(tx, organizationId, TRADE_SOURCE, id);
-        await this.cost.recalcProducts(tx, ctx, oldProducts, opts.override);
+        await this.cost.recalcProducts(tx, periodCtx, oldProducts, opts.override);
       }
       await this.resolveIssue(tx, id);
       return { status: existing ? 'CANCELLED' : 'SKIPPED', reason: NO_ACCOUNTING.includes(doc.docType) || binMove ? 'документ без бухгалтерских последствий' : undefined };
@@ -131,7 +134,7 @@ export class AutopilotService implements OnModuleInit, OnModuleDestroy {
       await this.resolveIssue(tx, id);
       return { status: 'UNCHANGED', entryId: existing.id };
     }
-    await this.periods.assertOpen(tx, ctx, [doc.date, ...(existing ? [existing.date] : [])], opts.override, 'отражение документа');
+    await this.periods.assertOpen(tx, periodCtx, [doc.date, ...(existing ? [existing.date] : [])], opts.override, 'отражение документа');
     const { postings, moves } = await buildTradeEntry({ ...doc, organizationId }, {
       tx, organizationId, posting: this.posting, accounts: settings.accounts, vatPayer: settings.vatPayer,
       resolveCashbox: (s) => this.resolveCashbox(tx, ctx, s),
@@ -141,7 +144,7 @@ export class AutopilotService implements OnModuleInit, OnModuleDestroy {
     if (!postings.length && !moves.length) {
       if (existing) {
         await this.posting.cancelSource(tx, organizationId, TRADE_SOURCE, id);
-        await this.cost.recalcProducts(tx, ctx, oldProducts, opts.override);
+        await this.cost.recalcProducts(tx, periodCtx, oldProducts, opts.override);
       }
       await this.resolveIssue(tx, id);
       return { status: existing ? 'CANCELLED' : 'SKIPPED', reason: 'нет бухгалтерских последствий' };
@@ -150,7 +153,7 @@ export class AutopilotService implements OnModuleInit, OnModuleDestroy {
       sourceType: TRADE_SOURCE, sourceId: id, sourceVersion: version, ruleCode: `TRADE_${doc.docType}`, ruleVersion: TRADE_RULE_VERSION,
       date: doc.date, postings, moves, allowEmpty: moves.length > 0,
     });
-    await this.cost.recalcProducts(tx, ctx, [...oldProducts, ...moves.map((m) => m.productId)], opts.override);
+    await this.cost.recalcProducts(tx, periodCtx, [...oldProducts, ...moves.map((m) => m.productId)], opts.override);
     await this.resolveIssue(tx, id);
     return { status: 'POSTED', entryId: entry.id };
   }

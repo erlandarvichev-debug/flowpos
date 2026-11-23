@@ -1,57 +1,43 @@
 <template>
   <div>
-    <div class="page-header">
-      <h1>Контрагенты</h1>
+    <PageHeader title="Контрагенты" subtitle="Покупатели и поставщики: реквизиты, договоры, долги">
       <el-button type="primary" :icon="Plus" @click="openForm()">Добавить</el-button>
-    </div>
+    </PageHeader>
 
-    <el-card>
-      <el-row :gutter="12" style="margin-bottom: 16px;">
-        <el-col :span="10">
-          <el-input v-model="search" placeholder="Название, ИИН/БИН, телефон..." :prefix-icon="Search" clearable @input="debouncedLoad" />
-        </el-col>
-        <el-col :span="6">
-          <el-select v-model="typeFilter" placeholder="Тип" clearable @change="loadList">
-            <el-option label="Покупатели" value="CUSTOMER" />
-            <el-option label="Поставщики" value="SUPPLIER" />
-            <el-option label="Оба" value="BOTH" />
-          </el-select>
-        </el-col>
-      </el-row>
-
-      <el-table :data="list" v-loading="loading" @row-click="(r: any) => router.push(`/catalog/counterparties/${r.id}`)" style="cursor: pointer;">
-        <el-table-column label="Наименование" min-width="220">
-          <template #default="{ row }">
-            {{ row.name }}
-            <el-tag v-if="row.kind && row.kind !== 'LEGAL'" size="small" effect="plain">{{ kindLabels[row.kind] }}</el-tag>
-            <el-tag v-if="row.organizationId" size="small" type="info" effect="plain">личный</el-tag>
+    <el-card shadow="never">
+      <DataTable
+        :columns="columns" :rows="list" :loading="loading" :error="error" :total="total" v-model:page="page" v-model:limit="limit"
+        storage-key="counterparties" clickable export-name="контрагенты" :fetch-all="fetchAll" :unit="['контрагент', 'контрагента', 'контрагентов']"
+        :empty-text="search || typeFilter ? 'Ничего не найдено' : 'Контрагентов пока нет — добавьте первого'"
+        @row-click="(r: any) => router.push(`/catalog/counterparties/${r.id}`)" @retry="loadList"
+      >
+        <template #filters>
+          <el-input v-model="search" placeholder="Название, ИИН/БИН, телефон" :prefix-icon="Search" clearable class="w-search" @input="debouncedLoad" @clear="reload" />
+          <el-radio-group v-model="typeFilter" @change="reload">
+            <el-radio-button value="">Все</el-radio-button>
+            <el-radio-button value="CUSTOMER">Покупатели</el-radio-button>
+            <el-radio-button value="SUPPLIER">Поставщики</el-radio-button>
+          </el-radio-group>
+        </template>
+        <template #cell-name="{ row }">
+          <span class="name">{{ row.name }}</span>
+          <el-tag v-if="row.kind && row.kind !== 'LEGAL'" size="small" effect="plain" class="ml">{{ kindLabels[row.kind] }}</el-tag>
+          <el-tag v-if="row.organizationId" size="small" type="info" effect="plain" class="ml">личный</el-tag>
+        </template>
+        <template #cell-type="{ row }">
+          <el-tag :type="row.type === 'CUSTOMER' ? 'success' : row.type === 'SUPPLIER' ? 'warning' : 'info'" size="small" effect="light">{{ typeLabels[row.type] }}</el-tag>
+        </template>
+        <template #cell-balance="{ row }">
+          <template v-if="balances[row.id]">
+            <span v-if="balances[row.id] > 0" class="owe-us" title="Должен нам">{{ fmtMoney(balances[row.id]) }}</span>
+            <span v-else class="we-owe" title="Мы должны">−{{ fmtMoney(-balances[row.id]) }}</span>
           </template>
-        </el-table-column>
-        <el-table-column label="Тип" width="120">
-          <template #default="{ row }">
-            <el-tag :type="row.type === 'CUSTOMER' ? 'success' : row.type === 'SUPPLIER' ? 'warning' : 'info'" size="small">
-              {{ typeLabels[row.type] }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="inn" label="ИИН/БИН" width="140" />
-        <el-table-column prop="phone" label="Телефон" />
-        <el-table-column prop="email" label="Email" />
-        <el-table-column label="" width="80">
-          <template #default="{ row }">
-            <el-button size="small" text :icon="Edit" aria-label="Редактировать" @click.stop="openForm(row)" />
-          </template>
-        </el-table-column>
-      </el-table>
-
-      <el-pagination
-        style="margin-top: 16px;"
-        v-model:current-page="page"
-        :page-size="50"
-        :total="total"
-        layout="total, prev, pager, next"
-        @current-change="loadList"
-      />
+          <span v-else class="muted">—</span>
+        </template>
+        <template #actions="{ row }">
+          <el-button size="small" text :icon="Edit" aria-label="Редактировать" @click="openForm(row)" />
+        </template>
+      </DataTable>
     </el-card>
 
     <el-dialog v-model="formVisible" :title="editItem ? 'Редактировать' : 'Новый контрагент'" width="560px">
@@ -89,19 +75,36 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted, watch } from 'vue'
 import { Plus, Search, Edit } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
 import api from '@/api/client'
 import { useOrgStore } from '@/stores/org'
 import { showError } from '../accounting/acc'
+import PageHeader from '@/components/ui/PageHeader.vue'
+import DataTable, { type Col } from '@/components/ui/DataTable.vue'
+import { fmtMoney } from '@/utils/format'
 
 const loading = ref(false)
 const saving = ref(false)
 const list = ref<any[]>([])
 const total = ref(0)
 const page = ref(1)
+const limit = ref(50)
+const error = ref('')
+/** Сальдо расчётов: + должен нам, − мы должны (из взаиморасчётов; только при праве на отчёты). */
+const balances = ref<Record<string, number>>({})
+const columns = computed<Col[]>(() => [
+  { key: 'name', label: 'Наименование', minWidth: 240, required: true, export: (r) => r.name },
+  { key: 'type', label: 'Роль', width: 130, export: (r) => typeLabels[r.type] ?? r.type },
+  { key: 'inn', label: 'ИИН/БИН', width: 140 },
+  { key: 'balance', label: 'Сальдо, ₸', width: 140, align: 'right', hidden: !org.can('acc.reports.read'), export: (r) => (balances.value[r.id] ?? 0) },
+  { key: 'phone', label: 'Телефон', width: 150 },
+  { key: 'email', label: 'Email', minWidth: 180, ellipsis: true },
+  { key: 'fullName', label: 'Полное наименование', minWidth: 220, hidden: true, ellipsis: true },
+  { key: 'kbe', label: 'КБе', width: 70, hidden: true },
+])
 const search = ref('')
 const typeFilter = ref('')
 const formVisible = ref(false)
@@ -119,17 +122,45 @@ function onKind(k: string) {
 let debounceTimer: ReturnType<typeof setTimeout>
 function debouncedLoad() {
   clearTimeout(debounceTimer)
-  debounceTimer = setTimeout(() => { page.value = 1; loadList() }, 400)
+  debounceTimer = setTimeout(reload, 350)
 }
+function reload() { if (page.value !== 1) page.value = 1; else loadList() }
+watch([page, limit], () => loadList())
 
+const params = (extra: Record<string, unknown> = {}) => ({ search: search.value || undefined, type: typeFilter.value || undefined, page: page.value, limit: limit.value, ...extra })
+let seq = 0
 async function loadList() {
+  const my = ++seq
   loading.value = true
-  const res = await api.get('/catalog/counterparties', {
-    params: { search: search.value || undefined, type: typeFilter.value || undefined, page: page.value },
-  }) as any
-  list.value = res.items ?? res.counterparties ?? res.data ?? []
-  total.value = res.total ?? 0
-  loading.value = false
+  error.value = ''
+  try {
+    const res = (await api.get('/catalog/counterparties', { params: params() })) as any
+    if (my !== seq) return
+    list.value = res.items ?? []
+    total.value = res.total ?? 0
+  } catch (e: any) {
+    if (my === seq) error.value = e?.message || 'Не удалось загрузить контрагентов'
+  } finally {
+    if (my === seq) loading.value = false
+  }
+}
+async function fetchAll() {
+  const all: any[] = []
+  for (let p = 1; p <= 50; p++) {
+    const res = (await api.get('/catalog/counterparties', { params: params({ page: p, limit: 200 }) })) as any
+    all.push(...(res.items ?? []))
+    if (all.length >= res.total || !res.items?.length) break
+  }
+  return all
+}
+async function loadBalances() {
+  // права организации подгружаются позже страницы — запрос без проверки, отказ в доступе просто без сальдо
+  try {
+    const r = (await api.get('/accounting/reports/settlements')) as any
+    const m: Record<string, number> = {}
+    for (const l of r.lines ?? []) m[l.counterpartyId] = Number(l.receivable) - Number(l.advanceReceived) - Number(l.payable) + Number(l.advancePaid)
+    balances.value = m
+  } catch { /* без сальдо */ }
 }
 
 function openForm(item?: any) {
@@ -160,9 +191,16 @@ async function save() {
   saving.value = false
 }
 
-onMounted(loadList)
+onMounted(() => { loadList(); loadBalances() })
 </script>
 
 <style scoped>
 .hint { color: var(--el-text-color-secondary); font-size: 12px; margin-left: 130px; }
+.w-search { width: 300px; }
+.name { font-weight: 500; }
+.ml { margin-left: 6px; }
+.owe-us { color: var(--el-color-success-dark-2); font-weight: 500; font-variant-numeric: tabular-nums; }
+.we-owe { color: var(--el-color-danger); font-weight: 500; font-variant-numeric: tabular-nums; }
+.muted { color: var(--el-text-color-placeholder); }
+@media (max-width: 640px) { .w-search { width: 100%; } }
 </style>

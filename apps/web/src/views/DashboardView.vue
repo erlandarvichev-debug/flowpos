@@ -239,5 +239,5 @@ onMounted(load)
 .ell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 :deep(.clickable) { cursor: pointer; }
 @media (max-width: 1100px) { .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } .row, .row.two { grid-template-columns: 1fr; } }
-@media (max-width: 520px) { .kpis { grid-template-columns: 1fr; } }
+@media (max-width: 520px) { .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; } .kpi { padding: 12px; } .k-value { font-size: 19px; } .k-hint { font-size: 11px; } }
 </style>

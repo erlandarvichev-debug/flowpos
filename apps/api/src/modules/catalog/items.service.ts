@@ -24,12 +24,14 @@ export function variantKey(attributes: unknown): string | null {
 export class ItemsService {
   constructor(private prisma: PrismaService) {}
 
-  async findAll(s: Scope, query: { search?: string; groupId?: string; parentId?: string; page?: number; limit?: number }) {
+  async findAll(s: Scope, query: { search?: string; groupId?: string; parentId?: string; kind?: string; archived?: string; sort?: string; page?: number; limit?: number }) {
     const page = Math.max(Number(query.page) || 1, 1);
     const limit = Math.min(Math.max(Number(query.limit) || 50, 1), 200); // без потолка можно было запросить всю номенклатуру разом
     const skip = (page - 1) * limit;
 
-    const where: any = { ...tenantCatalog(s), deleted: false };
+    // archived=1 — архив (помеченные), иначе — действующие.
+    const where: any = { ...tenantCatalog(s), deleted: query.archived === '1' };
+    if (query.kind && ['PRODUCT', 'SERVICE', 'BUNDLE'].includes(query.kind)) where.kind = query.kind;
     if (query.search) {
       const code = normalizeBarcode(query.search);
       where.AND = [{ OR: [
@@ -48,12 +50,14 @@ export class ItemsService {
         skip,
         take: limit,
         include: { uom: true, group: true, barcodes: true, prices: { include: { priceType: true } }, _count: { select: { variants: { where: { deleted: false } } } } },
-        orderBy: { name: 'asc' },
+        orderBy: this.itemsOrder(query.sort),
       }),
       this.prisma.product.count({ where }),
     ]);
-
-    return { items, total, page, limit, pages: Math.ceil(total / limit) };
+    // Остаток по складам своей организации — для колонки «Остаток» списка.
+    const stock = items.length ? await this.prisma.stock.groupBy({ by: ['productId'], where: { productId: { in: items.map((i) => i.id) }, store: { organizationId: s.organizationId, deleted: false } }, _sum: { qty: true, reserved: true } }) : [];
+    const st = new Map(stock.map((r) => [r.productId, r._sum]));
+    return { items: items.map((i) => ({ ...i, stockQty: st.get(i.id)?.qty?.toString() ?? null, stockReserved: st.get(i.id)?.reserved?.toString() ?? null })), total, page, limit, pages: Math.ceil(total / limit) };
   }
 
   async findOne(s: Scope, id: string) {
@@ -159,6 +163,46 @@ export class ItemsService {
       data,
       include: { uom: true, group: true, barcodes: true },
     }).catch((e) => this.uniqueError(e));
+  }
+
+  private itemsOrder(sort?: string): any {
+    const [f, d0] = String(sort || 'name_asc').split('_');
+    const d = d0 === 'desc' ? 'desc' : 'asc';
+    if (f === 'code') return [{ code: { sort: d, nulls: 'last' } }, { name: 'asc' }];
+    if (f === 'updated') return [{ updatedAt: d }];
+    return [{ name: d }];
+  }
+
+  /** Вернуть из архива. */
+  async restore(s: Scope, id: string) {
+    await this.findOne(s, id);
+    return this.prisma.product.update({ where: { id }, data: { deleted: false, updatedBy: s.userId } });
+  }
+
+  /**
+   * Массовые действия над выбранными товарами: в архив, из архива, в группу, ставка НДС. Только товары своего клиента
+   * (общие и своей организации); история изменений пишется триггером по каждой строке.
+   */
+  async bulk(s: Scope, body: { ids?: string[]; action?: string; groupId?: string | null; vatRate?: number | string | null }) {
+    const ids = [...new Set((body?.ids ?? []).map(String))].slice(0, 1000);
+    if (!ids.length) throw new BadRequestException('Выберите товары');
+    const where = { id: { in: ids }, ...tenantCatalog(s) };
+    let data: any;
+    if (body.action === 'archive') data = { deleted: true };
+    else if (body.action === 'restore') data = { deleted: false };
+    else if (body.action === 'group') {
+      if (body.groupId) {
+        const g = await this.prisma.productGroup.findFirst({ where: { id: body.groupId, tenantId: s.tenantId } });
+        if (!g) throw new BadRequestException('Группа не найдена');
+      }
+      data = { groupId: body.groupId || null };
+    } else if (body.action === 'vat') {
+      const v = body.vatRate === null || body.vatRate === '' || body.vatRate === undefined ? null : Number(body.vatRate);
+      if (v !== null && (!Number.isFinite(v) || v < 0 || v > 100)) throw new BadRequestException('Ставка НДС — от 0 до 100');
+      data = { vatRate: v };
+    } else throw new BadRequestException('Неизвестное действие');
+    const r = await this.prisma.product.updateMany({ where, data: { ...data, updatedBy: s.userId } });
+    return { updated: r.count };
   }
 
   async archive(s: Scope, id: string) {

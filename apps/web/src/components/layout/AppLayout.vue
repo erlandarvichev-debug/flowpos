@@ -1,15 +1,16 @@
 <template>
   <el-container class="app-layout" style="height: 100vh;">
-    <el-aside :width="`${sidebarWidth}px`" class="sidebar">
+    <div v-if="isMobile && mobileOpen" class="sidebar-backdrop" @click="mobileOpen = false" />
+    <el-aside :width="`${sidebarWidth}px`" class="sidebar" :class="{ mobile: isMobile, open: mobileOpen }">
       <div class="sidebar-logo">
-        <img v-if="collapsed" src="/brand/flowpos-icon-64.png" alt="FlowPOS" class="logo-icon-img" />
+        <img v-if="collapsed && !isMobile" src="/brand/flowpos-icon-64.png" alt="FlowPOS" class="logo-icon-img" />
         <img v-else src="/brand/flowpos-wordmark.png" alt="FlowPOS" class="logo-wordmark" />
       </div>
       <el-menu
         :default-active="activeMenu"
         router
         unique-opened
-        :collapse="collapsed"
+        :collapse="collapsed && !isMobile"
         class="sidebar-menu"
         background-color="#001529"
         text-color="#a6adb4"
@@ -40,7 +41,7 @@
         </el-menu-item>
       </el-menu>
 
-      <div class="sidebar-footer">
+      <div v-if="!isMobile" class="sidebar-footer">
         <el-button
           text
           :icon="collapsed ? 'Expand' : 'Fold'"
@@ -56,10 +57,12 @@
     <el-container>
       <el-header class="app-header" height="56px">
         <div class="header-left">
-          <el-breadcrumb separator="/">
+          <el-button v-if="isMobile" text class="burger" @click="mobileOpen = true"><el-icon :size="20"><Menu /></el-icon></el-button>
+          <el-breadcrumb v-if="!isMobile" separator="/">
             <el-breadcrumb-item :to="{ path: '/dashboard' }">FlowPOS</el-breadcrumb-item>
             <el-breadcrumb-item>{{ currentTitle }}</el-breadcrumb-item>
           </el-breadcrumb>
+          <GlobalSearch class="header-search" />
         </div>
         <div class="header-right">
           <el-select
@@ -78,7 +81,7 @@
               <el-avatar :size="32" style="background: #409eff;">
                 {{ userInitials }}
               </el-avatar>
-              <span class="user-name" v-if="!collapsed">{{ auth.user?.firstName }}</span>
+              <span class="user-name" v-if="!collapsed && !isMobile">{{ auth.user?.firstName }}</span>
               <el-icon><ArrowDown /></el-icon>
             </span>
             <template #dropdown>
@@ -127,7 +130,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRoute, useRouter, RouterView } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useOrgStore } from '@/stores/org'
@@ -138,6 +141,8 @@ import { ElMessage } from 'element-plus'
 import api from '@/api/client'
 import { signChallengeCms, NcaLayerError, NCALAYER_DOWNLOAD } from '@/utils/ncalayer'
 import { buildMenu } from './menu'
+import GlobalSearch from './GlobalSearch.vue'
+import { Menu } from '@element-plus/icons-vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -188,11 +193,17 @@ async function createOrgEcp() {
 }
 
 const collapsed = ref(false)
+// Телефон и узкий экран: меню — выезжающая шторка поверх страницы, закрывается после перехода.
+const mq = typeof window !== 'undefined' ? window.matchMedia('(max-width: 900px)') : null
+const isMobile = ref(!!mq?.matches)
+const mobileOpen = ref(false)
+mq?.addEventListener?.('change', (e) => { isMobile.value = e.matches; if (!e.matches) mobileOpen.value = false })
+watch(() => route.fullPath, () => { mobileOpen.value = false })
 const autopilotIssues = ref(0)
 async function loadAutopilotIssues() {
   try { autopilotIssues.value = ((await api.get('/accounting/autopilot/status')) as any).openIssues || 0 } catch { autopilotIssues.value = 0 }
 }
-const sidebarWidth = computed(() => collapsed.value ? 64 : 220)
+const sidebarWidth = computed(() => (isMobile.value ? 240 : collapsed.value ? 64 : 220))
 const activeMenu = computed(() => route.path)
 const currentTitle = computed(() => (route.name === 'section' ? menu.value.find((x) => x.key === route.params.key)?.title : (route.meta?.title as string)) || '')
 const userInitials = computed(() => {
@@ -218,8 +229,10 @@ onMounted(() => {
   org.load()
   solutions.load()
   loadAutopilotIssues()
-  setInterval(() => loadAutopilotIssues(), 60_000)
+  autopilotTimer = setInterval(() => loadAutopilotIssues(), 60_000)
 })
+let autopilotTimer: ReturnType<typeof setInterval> | undefined
+onBeforeUnmount(() => clearInterval(autopilotTimer))
 </script>
 
 <style scoped>
@@ -277,7 +290,20 @@ onMounted(() => {
   box-shadow: 0 1px 4px rgba(0,0,0,0.04);
 }
 
+.header-left { display: flex; align-items: center; gap: 16px; min-width: 0; flex: 1; }
+.header-search { margin-left: 8px; }
+.burger { padding: 6px; margin-left: -8px; }
 .header-right { display: flex; align-items: center; gap: 12px; }
+.sidebar.mobile { position: fixed; top: 0; left: 0; bottom: 0; z-index: 2001; transform: translateX(-100%); transition: transform .25s; }
+.sidebar.mobile.open { transform: none; box-shadow: 4px 0 24px rgba(0,0,0,.25); }
+.sidebar-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 2000; }
+@media (max-width: 900px) {
+  .app-header { padding: 0 10px; gap: 8px; }
+  .header-search { margin-left: 0; }
+  .header-right { gap: 6px; }
+  .app-main { padding: 12px; }
+}
+@media (max-width: 600px) { .header-right :deep(.el-radio-group), .header-right > .el-button { display: none; } }
 .user-info {
   display: flex;
   align-items: center;
@@ -287,7 +313,7 @@ onMounted(() => {
 }
 .user-name { font-size: 14px; }
 .org-select { width: 220px; }
-@media (max-width: 900px) { .org-select { width: 140px; } }
+@media (max-width: 900px) { .org-select { width: 120px; } .user-info :deep(.el-icon) { display: none; } }
 
 .app-main {
   background: #f5f7fa;

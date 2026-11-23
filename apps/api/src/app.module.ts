@@ -14,6 +14,7 @@ import { TradeModule } from './modules/trade/trade.module';
 import { PosModule } from './modules/pos/pos.module';
 import { HrModule } from './modules/hr/hr.module';
 import { AnalyticsModule } from './modules/analytics/analytics.module';
+import { SearchModule } from './modules/search/search.module';
 import { AccountingModule } from './modules/accounting/accounting.module';
 import { PlatformModule } from './modules/platform/platform.module';
 import { FieldModule } from './modules/field/field.module';
@@ -34,6 +35,7 @@ import { FieldModule } from './modules/field/field.module';
     PosModule,
     HrModule,
     AnalyticsModule,
+    SearchModule,
     AccountingModule,
     PlatformModule,
     FieldModule,

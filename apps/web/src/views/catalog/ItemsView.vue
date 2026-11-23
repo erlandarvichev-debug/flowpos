@@ -1,58 +1,74 @@
 <template>
   <div>
-    <div class="page-header">
-      <h1>Номенклатура</h1>
-      <div>
-        <el-button @click="openWeight">Весовые штрихкоды</el-button>
-        <el-button @click="openDuplicates">Дубли штрихкодов</el-button>
-        <el-button type="primary" :icon="Plus" @click="openForm()">Добавить товар</el-button>
-      </div>
-    </div>
+    <PageHeader title="Номенклатура" subtitle="Товары и услуги: цены, остатки, штрихкоды">
+      <el-dropdown trigger="click" @command="(c: string) => (c === 'weight' ? openWeight() : openDuplicates())">
+        <el-button>Ещё<el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
+        <template #dropdown>
+          <el-dropdown-menu>
+            <el-dropdown-item command="weight">Весовые штрихкоды</el-dropdown-item>
+            <el-dropdown-item command="dups">Дубли штрихкодов</el-dropdown-item>
+          </el-dropdown-menu>
+        </template>
+      </el-dropdown>
+      <el-button type="primary" :icon="Plus" @click="openForm()">Добавить товар</el-button>
+    </PageHeader>
 
-    <el-card>
-      <el-row :gutter="12" style="margin-bottom: 16px;">
-        <el-col :span="10">
-          <el-input v-model="search" placeholder="Название, код, артикул или штрихкод..." clearable @input="debouncedLoad" :prefix-icon="Search" />
-        </el-col>
-        <el-col :span="6">
-          <el-select v-model="groupId" placeholder="Группа" clearable @change="loadItems">
+    <el-card shadow="never">
+      <DataTable
+        ref="tableRef" :columns="columns" :rows="items" :loading="loading" :error="error" :total="total" v-model:page="page" v-model:limit="limit" v-model:sort="sort"
+        storage-key="items" clickable :selectable="canManage" export-name="номенклатура" :fetch-all="fetchAll" :unit="['позиция', 'позиции', 'позиций']"
+        :empty-text="search || groupId || kind || archived ? 'Ничего не найдено' : 'Товаров пока нет — добавьте первый'"
+        @row-click="openDetail" @retry="loadItems"
+      >
+        <template #filters>
+          <el-input v-model="search" placeholder="Название, код, артикул или штрихкод" clearable :prefix-icon="Search" class="w-search" @input="debouncedLoad" @clear="reload" />
+          <el-select v-model="groupId" placeholder="Группа" clearable filterable class="w-group" @change="reload">
             <el-option v-for="g in groups" :key="g.id" :label="g.name" :value="g.id" />
           </el-select>
-        </el-col>
-      </el-row>
-
-      <el-table :data="items" v-loading="loading" row-key="id" @row-click="openDetail">
-        <el-table-column prop="code" label="Код" width="100" />
-        <el-table-column label="Наименование" min-width="240">
-          <template #default="{ row }">
-            {{ row.name }}
-            <el-tag v-if="row._count?.variants" size="small" effect="plain">вариантов: {{ row._count.variants }}</el-tag>
-            <el-tag v-if="row.kind === 'VARIANT'" size="small" type="info" effect="plain">вариант</el-tag>
-            <el-tag v-if="row.plu" size="small" type="warning" effect="plain">весовой {{ row.plu }}</el-tag>
+          <el-select v-model="kind" placeholder="Вид" clearable class="w-kind" @change="reload">
+            <el-option label="Товары" value="PRODUCT" /><el-option label="Услуги" value="SERVICE" /><el-option label="Комплекты" value="BUNDLE" />
+          </el-select>
+          <el-checkbox v-model="archived" border @change="reload">Архив</el-checkbox>
+        </template>
+        <template #bulk="{ rows }">
+          <template v-if="!archived">
+            <el-dropdown trigger="click" @command="(g: string) => bulk(rows, 'group', { groupId: g === '-' ? null : g })">
+              <el-button size="small">В группу<el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="-">Без группы</el-dropdown-item>
+                  <el-dropdown-item v-for="g in groups" :key="g.id" :command="g.id">{{ g.name }}</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+            <el-dropdown trigger="click" @command="(v: string) => bulk(rows, 'vat', { vatRate: v === '-' ? null : Number(v) })">
+              <el-button size="small">НДС<el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="16">16%</el-dropdown-item><el-dropdown-item command="0">0%</el-dropdown-item><el-dropdown-item command="-">Без НДС</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+            <el-button size="small" type="danger" plain @click="bulk(rows, 'archive')">В архив</el-button>
           </template>
-        </el-table-column>
-        <el-table-column prop="uom.shortName" label="Ед." width="60" />
-        <el-table-column prop="group.name" label="Группа" />
-        <el-table-column label="Цена сегодня" width="130" align="right">
-          <template #default="{ row }">
-            {{ getRetailPrice(row) }}
-          </template>
-        </el-table-column>
-        <el-table-column label="" width="50">
-          <template #default="{ row }">
-            <el-button size="small" text :icon="Edit" @click.stop="openForm(row)" />
-          </template>
-        </el-table-column>
-      </el-table>
-
-      <el-pagination
-        style="margin-top: 16px;"
-        v-model:current-page="page"
-        :page-size="50"
-        :total="total"
-        layout="total, prev, pager, next"
-        @current-change="loadItems"
-      />
+          <el-button v-else size="small" type="primary" plain @click="bulk(rows, 'restore')">Вернуть из архива</el-button>
+        </template>
+        <template #cell-name="{ row }">
+          <span class="name">{{ row.name }}</span>
+          <el-tag v-if="row._count?.variants" size="small" effect="plain" class="ml">вариантов: {{ row._count.variants }}</el-tag>
+          <el-tag v-if="row.kind === 'SERVICE'" size="small" type="info" effect="plain" class="ml">услуга</el-tag>
+          <el-tag v-if="row.kind === 'BUNDLE'" size="small" type="info" effect="plain" class="ml">комплект</el-tag>
+          <el-tag v-if="row.plu" size="small" type="warning" effect="plain" class="ml">весовой {{ row.plu }}</el-tag>
+        </template>
+        <template #cell-stock="{ row }">
+          <span v-if="row.kind === 'SERVICE'" class="muted">—</span>
+          <span v-else :class="{ neg: Number(row.stockQty) < 0, muted: !Number(row.stockQty) }">{{ row.stockQty === null ? '0' : fmtQty(row.stockQty) }}</span>
+        </template>
+        <template #cell-price="{ row }">{{ getRetailPrice(row) }}</template>
+        <template #actions="{ row }">
+          <el-button v-if="canManage" size="small" text :icon="Edit" aria-label="Изменить" @click="openForm(row)" />
+        </template>
+      </DataTable>
     </el-card>
 
     <el-dialog v-model="formVisible" :title="editItem ? 'Редактировать' : 'Новый товар'" width="560px">
@@ -131,12 +147,16 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { Plus, Search, Edit } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
+import { ArrowDown, Plus, Search, Edit } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '@/api/client'
 import { showError } from '../accounting/acc'
+import PageHeader from '@/components/ui/PageHeader.vue'
+import DataTable, { type Col } from '@/components/ui/DataTable.vue'
+import { fmtQty } from '@/utils/format'
+import { useOrgStore } from '@/stores/org'
 
 const router = useRouter()
 const loading = ref(false)
@@ -146,8 +166,27 @@ const groups = ref<any[]>([])
 const units = ref<any[]>([])
 const total = ref(0)
 const page = ref(1)
+const limit = ref(50)
+const sort = ref('name_asc')
 const search = ref('')
 const groupId = ref('')
+const kind = ref('')
+const archived = ref(false)
+const error = ref('')
+const tableRef = ref<any>()
+const org = useOrgStore()
+const canManage = computed(() => org.can('catalog.manage'))
+const columns = computed<Col[]>(() => [
+  { key: 'code', label: 'Код', width: 110, sortable: true },
+  { key: 'name', label: 'Наименование', minWidth: 260, sortable: true, required: true, export: (r) => r.name },
+  { key: 'article', label: 'Артикул', width: 130, hidden: true },
+  { key: 'uom', label: 'Ед.', width: 70, value: (r) => r.uom?.shortName },
+  { key: 'group', label: 'Группа', minWidth: 150, ellipsis: true, value: (r) => r.group?.name },
+  { key: 'stock', label: 'Остаток', width: 110, align: 'right', export: (r) => r.stockQty ?? '0' },
+  { key: 'price', label: 'Цена сегодня, ₸', width: 140, align: 'right', export: (r) => prices.value[r.id] ?? '' },
+  { key: 'vatRate', label: 'НДС %', width: 90, align: 'right', hidden: true, value: (r) => (r.vatRate === null ? 'без НДС' : Number(r.vatRate)) },
+  { key: 'barcode', label: 'Штрихкод', width: 150, hidden: true, value: (r) => r.barcodes?.[0]?.barcode },
+])
 const formVisible = ref(false)
 const editItem = ref<any>(null)
 const form = ref<any>({})
@@ -155,20 +194,44 @@ const form = ref<any>({})
 let debounceTimer: ReturnType<typeof setTimeout>
 function debouncedLoad() {
   clearTimeout(debounceTimer)
-  debounceTimer = setTimeout(() => { page.value = 1; loadItems() }, 400)
+  debounceTimer = setTimeout(reload, 350)
+}
+function reload() { tableRef.value?.clearSelection(); if (page.value !== 1) page.value = 1; else loadItems() }
+watch([page, limit, sort], () => loadItems())
+const params = (extra: Record<string, unknown> = {}) => ({ search: search.value || undefined, groupId: groupId.value || undefined, kind: kind.value || undefined, archived: archived.value ? '1' : undefined, sort: sort.value || undefined, page: page.value, limit: limit.value, ...extra })
+async function fetchAll() {
+  const all: any[] = []
+  for (let p = 1; p <= 50; p++) {
+    const res = (await api.get('/catalog/items', { params: params({ page: p, limit: 200 }) })) as any
+    all.push(...res.items)
+    if (all.length >= res.total || !res.items.length) break
+  }
+  return all
+}
+async function bulk(rows: any[], action: string, extra: Record<string, unknown> = {}) {
+  if (action === 'archive') {
+    try {
+      await ElMessageBox.confirm(`Убрать в архив ${rows.length} поз.? В документах и на кассе они перестанут предлагаться; вернуть можно из архива.`, 'В архив', { type: 'warning', confirmButtonText: 'В архив', cancelButtonText: 'Отмена' })
+    } catch { return }
+  }
+  try {
+    const r = (await api.post('/catalog/items/bulk', { ids: rows.map((x) => x.id), action, ...extra })) as any
+    ElMessage.success(`Изменено: ${r.updated}`)
+    tableRef.value?.clearSelection()
+    loadItems()
+  } catch (e) { showError(e) }
 }
 
 async function loadItems() {
   loading.value = true
   try {
-    const res = await api.get('/catalog/items', {
-      params: { search: search.value || undefined, groupId: groupId.value || undefined, page: page.value, limit: 50 },
-    }) as any
+    error.value = ''
+    const res = (await api.get('/catalog/items', { params: params() })) as any
     items.value = res.items
     total.value = res.total
     loadPrices(res.items)
   } catch (e: any) {
-    ElMessage.error(e?.message || 'Не удалось загрузить товары')
+    error.value = e?.message || 'Не удалось загрузить товары'
   } finally {
     loading.value = false
   }
@@ -268,3 +331,14 @@ onMounted(() => {
   loadItems()
 })
 </script>
+
+<style scoped>
+.w-search { width: 300px; }
+.w-group { width: 200px; }
+.w-kind { width: 140px; }
+.name { font-weight: 500; }
+.ml { margin-left: 6px; }
+.neg { color: var(--el-color-danger); font-weight: 500; }
+.muted { color: var(--el-text-color-placeholder); }
+@media (max-width: 640px) { .w-search, .w-group, .w-kind { width: 100%; } }
+</style>
