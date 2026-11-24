@@ -499,6 +499,18 @@ async function load() {
     if (ops?.length) money.value.operation = ops[0]
     const list = moneyIsBank.value ? bankAccounts.value : cashboxes.value
     if (isMoney.value && list.length === 1) money.value.selfId = list[0].id
+    // «Оплата по документу» (из реализации / поступления): контрагент, сумма долга и разнесение на этот документ.
+    const q = route.query
+    if (isMoney.value && q.counterpartyId) {
+      if (q.operation) money.value.operation = String(q.operation)
+      money.value.counterpartyId = String(q.counterpartyId)
+      if (q.amount) money.value.amount = String(q.amount)
+      if (q.settle && q.amount) {
+        money.value.allocMode = 'MANUAL'
+        money.value.allocations = { [String(q.settle)]: String(q.amount) }
+      }
+      if (q.comment) form.value.comment = String(q.comment)
+    }
     return
   }
   loading.value = true

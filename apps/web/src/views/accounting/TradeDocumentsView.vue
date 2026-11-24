@@ -56,6 +56,15 @@
           <el-tag :type="STATUS_TYPES[row.status] as any" size="small" effect="light">{{ t(row.status) }}</el-tag>
           <el-tag v-if="row.attributes?.closed" size="small" type="info" class="ml">закрыт</el-tag>
         </template>
+        <template #cell-payment="{ row }">
+          <template v-if="row.payment">
+            <el-tag v-if="row.payment.status === 'PAID'" type="success" size="small" effect="plain">оплачен</el-tag>
+            <el-tooltip v-else :content="`Оплачено ${fmtMoney(row.payment.paid)} ₸, осталось ${fmtMoney(row.payment.debt)} ₸`" placement="top">
+              <span :class="row.payment.status === 'PARTIAL' ? 'pay-part' : 'pay-no'">{{ fmtMoney(row.payment.debt) }}</span>
+            </el-tooltip>
+          </template>
+          <span v-else class="muted">—</span>
+        </template>
         <template #cell-accounting="{ row }">
           <el-tooltip v-if="row.accounting === 'ISSUE'" :content="`${row.issue?.message || ''} ${row.issue?.fix || ''}`" placement="top">
             <el-tag type="danger" size="small">{{ t('ISSUE') }}</el-tag>
@@ -115,6 +124,7 @@ const columns = computed<Col[]>(() => [
   { key: 'store', label: 'Склад', minWidth: 140, hidden: true, value: (r) => r.store?.name, export: (r) => r.store?.name ?? '' },
   { key: 'total', label: `${t('amount')}, ₸`, width: 150, align: 'right', sortable: true, export: (r) => (r.total === null ? '' : String(r.total)) },
   { key: 'status', label: t('status'), width: 150, export: (r) => t(r.status) },
+  { key: 'payment', label: 'К оплате, ₸', width: 130, align: 'right', hidden: !!journal.value && !journal.value.some((k) => k === 'DEMAND' || k === 'SUPPLY'), export: (r) => (r.payment ? (r.payment.status === 'PAID' ? '0' : r.payment.debt) : '') },
   { key: 'accounting', label: t('accountingCol'), width: 140, hidden: !org.can('acc.reports.read'), export: (r) => t(r.accounting) },
   { key: 'comment', label: 'Комментарий', minWidth: 180, hidden: true, ellipsis: true, export: (r) => r.comment ?? '' },
 ])
@@ -223,6 +233,8 @@ onMounted(async () => {
 .num { font-variant-numeric: tabular-nums; }
 .money { font-variant-numeric: tabular-nums; font-weight: 500; }
 .muted { color: var(--el-text-color-placeholder); }
+.pay-part { color: var(--el-color-warning-dark-2); font-weight: 500; font-variant-numeric: tabular-nums; }
+.pay-no { color: var(--el-color-danger); font-weight: 500; font-variant-numeric: tabular-nums; }
 .ml { margin-left: 4px; }
 @media (max-width: 640px) { .w-search, .w-range, .w-type, .w-status, .w-cp, .w-store { width: 100% !important; } }
 </style>

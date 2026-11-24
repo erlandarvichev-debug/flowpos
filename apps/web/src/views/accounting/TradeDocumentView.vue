@@ -8,9 +8,23 @@
         <el-tag v-if="isSaved && doc.status === 'POSTED'" :type="doc.entry || doc.costEntries?.length ? 'success' : doc.issue ? 'danger' : 'info'" style="margin-left: 6px;" effect="plain">
           {{ t('accountingCol') }}: {{ doc.entry || doc.costEntries?.length ? t('REFLECTED') : doc.issue ? t('ISSUE') : t('NONE') }}
         </el-tag>
+        <el-tag v-if="doc.esf?.length" :type="esfType(doc.esf[0])" style="margin-left: 6px; cursor: pointer;" effect="plain" @click="router.push('/accounting/esf')">ЭСФ {{ doc.esf[0].registrationNumber || doc.esf[0].num }}: {{ esfLabel(doc.esf[0]) }}</el-tag>
+        <el-tag v-if="doc.payment" :type="doc.payment.status === 'PAID' ? 'success' : doc.payment.status === 'PARTIAL' ? 'warning' : 'danger'" style="margin-left: 6px;" effect="light">
+          {{ doc.payment.status === 'PAID' ? 'Оплачен' : `Долг ${fmtMoney(doc.payment.debt)} ₸` }}<template v-if="doc.payment.status === 'PARTIAL'"> · оплачено {{ fmtMoney(doc.payment.paid) }}</template>
+        </el-tag>
       </h1>
       <div class="actions">
-        <el-button @click="router.push('/accounting/trade')">{{ t('toList') }}</el-button>
+        <el-button @click="router.push(listPath)">{{ t('toList') }}</el-button>
+        <el-button v-if="docType === 'DEMAND' && doc.status === 'POSTED' && !doc.esf?.length && org.can('acc.esf.send')" :loading="busy" @click="issueEsf">Выписать ЭСФ</el-button>
+        <el-dropdown v-if="doc.payment && doc.payment.status !== 'PAID' && org.can('acc.doc.write')" trigger="click" @command="payByDoc">
+          <el-button type="warning" plain>{{ docType === 'DEMAND' ? 'Принять оплату' : 'Оплатить' }}<el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="BANK">{{ docType === 'DEMAND' ? 'На расчётный счёт' : 'С расчётного счёта' }}</el-dropdown-item>
+              <el-dropdown-item command="CASH">{{ docType === 'DEMAND' ? 'В кассу (ПКО)' : 'Из кассы (РКО)' }}</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
         <template v-if="!readonly">
           <el-button type="primary" plain :loading="busy" @click="save()" v-if="org.can('acc.doc.write')">{{ t('save') }}</el-button>
           <PostingPreview v-if="doc?.id && doc.status !== 'POSTED'" kind="TRADE" :id="doc.id" :version="doc.version" @changed="load" />
@@ -22,6 +36,7 @@
           <el-button>Ещё <el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
           <template #dropdown>
             <el-dropdown-menu>
+              <el-dropdown-item v-if="org.can('acc.doc.write') && !['INVENTORY', 'LANDED_COST'].includes(docType) && !doc.attributes?.twoStage" command="copy">Копировать документ</el-dropdown-item>
               <el-dropdown-item v-for="tt in baseTargets" :key="tt" :command="`based:${tt}`">{{ t('createBased') }}: {{ tl(tt) }}</el-dropdown-item>
               <el-dropdown-item v-if="docType === 'SUPPLY' && doc.status === 'POSTED' && org.can('acc.doc.write')" command="landed">Доп. расходы (доставка, таможня…)</el-dropdown-item>
               <el-dropdown-item v-if="docType === 'INVENTORY' && doc.status === 'DRAFT' && org.can('acc.doc.write')" command="fill" divided>Заполнить по остаткам склада</el-dropdown-item>
@@ -74,6 +89,11 @@
         <el-form-item v-if="needsCounterparty" :label="t('counterparty')">
           <div style="width: 420px;"><DimSelect dim="COUNTERPARTY" v-model="form.counterpartyId" :selected-label="doc?.counterparty?.name" size="default" :disabled="readonly" /></div>
           <span v-if="doc.counterparty && form.counterpartyId === doc.counterparty.id" class="hint">{{ doc.counterparty.name }}{{ doc.counterparty.inn ? ` · ${doc.counterparty.inn}` : '' }}</span>
+        </el-form-item>
+        <el-form-item v-if="needsCounterparty && form.counterpartyId && (contracts.length || form.contractId)" label="Договор">
+          <el-select v-model="form.contractId" clearable placeholder="Без договора" style="width: 420px" :disabled="readonly || priceLocked">
+            <el-option v-for="k in contracts" :key="k.id" :value="k.id" :disabled="!k.isActive" :label="`№ ${k.number}${k.date ? ' от ' + fmtDate(k.date) : ''}${k.isActive ? '' : ' (закрыт)'}`" />
+          </el-select>
         </el-form-item>
         <template v-if="docType === 'LANDED_COST'">
           <el-form-item label="Поступление">
@@ -152,6 +172,12 @@
           </span>
         </div>
       </template>
+      <div v-if="!readonly && !priceLocked" class="scan">
+        <el-input ref="scanEl" v-model="scanCode" placeholder="Сканер: отсканируйте штрихкод — товар добавится строкой (повтор — +1)" clearable class="scan-in" @keydown.enter.prevent="onScan">
+          <template #prefix><el-icon><Aim /></el-icon></template>
+        </el-input>
+        <span v-if="scanMsg" :class="['scan-msg', scanOk ? 'ok' : 'bad']">{{ scanMsg }}</span>
+      </div>
       <div class="lines" ref="linesEl">
         <div class="line head">
           <div class="c-no">№</div><div class="c-prod">{{ t('product') }}</div>
@@ -341,7 +367,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch, nextTick, defineComponent, h } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Plus, Delete, ArrowDown } from '@element-plus/icons-vue'
+import { Plus, Delete, ArrowDown, Aim } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox, ElTable, ElTableColumn } from 'element-plus'
 import dayjs from 'dayjs'
 import api from '@/api/client'
@@ -387,7 +413,7 @@ const linesEl = ref<HTMLElement>()
 let keySeq = 0
 
 const emptyForm = () => ({
-  date: dayjs().format('YYYY-MM-DD'), counterpartyId: undefined as string | undefined, storeId: undefined as string | undefined,
+  date: dayjs().format('YYYY-MM-DD'), counterpartyId: undefined as string | undefined, contractId: undefined as string | undefined, storeId: undefined as string | undefined,
   storeToId: undefined as string | undefined, vatIncluded: true, paymentType: 'CASH', lossAccount: '7170', comment: '', reason: '',
   allocation: 'AMOUNT', baseId: undefined as string | undefined, twoStage: false, lossReason: undefined as string | undefined,
   noBasis: false, returnReason: '',
@@ -448,6 +474,50 @@ const receiptMode = ref(false)
 const isReturn = computed(() => docType.value === 'SALES_RETURN' || docType.value === 'RETAIL_RETURN' || docType.value === 'PURCHASE_RETURN')
 /** FP-035: бюджет закупок месяца для заказа поставщику. */
 const budget = ref<any>(null)
+/** «К списку» — в журнал раздела этого вида документа (Продажи → Реализации и т. п.), а не в общий журнал. */
+const listPath = computed(() => router.getRoutes().find((r) => Array.isArray(r.meta?.docTypes) && (r.meta.docTypes as string[]).includes(docType.value))?.path ?? '/accounting/trade')
+// ── ЭСФ по реализации ──
+const ESF_TEXT: Record<string, [string, string]> = {
+  READY: ['готов к подписи', 'warning'], CREATED: ['создан', 'info'], SENT: ['отправлен', 'primary'], DELIVERED: ['доставлен', 'success'],
+  REJECTED: ['отклонён', 'danger'], FAILED: ['ошибка', 'danger'], DECLINED: ['отклонён', 'danger'], REVOKED: ['отозван', 'info'], CANCELED: ['отменён', 'info'], UNKNOWN: ['статус уточняется', 'warning'],
+}
+const esfKey = (e: any) => (e.esfStatus && e.status === 'SENT' ? e.esfStatus : e.status)
+const esfLabel = (e: any) => ESF_TEXT[esfKey(e)]?.[0] ?? esfKey(e)
+const esfType = (e: any) => (ESF_TEXT[esfKey(e)]?.[1] ?? 'info') as any
+/** Подготовить ЭСФ по реализации — дальше подпись и отправка в разделе «ЭСФ» (нужен вход ключом ЭЦП). */
+async function issueEsf() {
+  busy.value = true
+  try {
+    await api.post(`/accounting/esf/prepare/${doc.value.id}`)
+    ElMessage.success('ЭСФ подготовлен — подпишите и отправьте в разделе «ЭСФ»')
+    await load()
+  } catch (e) { showError(e) } finally { busy.value = false }
+}
+/** Оплата по документу: платёж с контрагентом, суммой долга и разнесением на этот документ. */
+function payByDoc(kind: 'BANK' | 'CASH') {
+  const p = doc.value.payment
+  if (!p) return
+  const incoming = docType.value === 'DEMAND'
+  router.push({ path: '/accounting/documents/new', query: {
+    type: `${kind}_${incoming ? 'IN' : 'OUT'}`, operation: incoming ? 'CUSTOMER' : 'SUPPLIER', counterpartyId: doc.value.counterpartyId,
+    amount: p.debt, settle: doc.value.id, comment: `Оплата по документу ${doc.value.number ?? ''}`,
+  } })
+}
+// Договоры выбранного контрагента (своей организации); один действующий — подставляется сам в новый документ.
+const contracts = ref<any[]>([])
+async function loadContracts() {
+  const id = form.value.counterpartyId
+  contracts.value = []
+  if (!id) { form.value.contractId = undefined; return }
+  try {
+    const cp = (await api.get(`/catalog/counterparties/${id}`)) as any
+    contracts.value = cp.contracts ?? []
+    if (form.value.contractId && !contracts.value.some((k) => k.id === form.value.contractId)) form.value.contractId = undefined
+    const active = contracts.value.filter((k) => k.isActive)
+    if (!isSaved.value && !form.value.contractId && active.length === 1) form.value.contractId = active[0].id
+  } catch { /* нет прав на справочник — без выбора договора */ }
+}
+watch(() => form.value.counterpartyId, loadContracts)
 const priceFromLists = computed(() => docType.value === 'CUSTOMER_ORDER' || (docType.value === 'DEMAND' && !priceLocked.value))
 const priceLocked = computed(() =>!!(doc.value.attributes?.baseId || route.query.baseId) && (docType.value === 'DEMAND' || isReturn.value))
 async function loadBudget() {
@@ -493,7 +563,7 @@ const s = (v: any) => (v === null || v === undefined ? '' : String(v))
 function fillForm(d: any) {
   const a = d.attributes || {}
   form.value = {
-    date: String(d.date).slice(0, 10), counterpartyId: d.counterpartyId || undefined, storeId: d.storeId || undefined,
+    date: String(d.date).slice(0, 10), counterpartyId: d.counterpartyId || undefined, contractId: d.contractId || undefined, storeId: d.storeId || undefined,
     storeToId: (a.twoStage ? a.destinationStoreId : d.storeToId) || undefined, vatIncluded: a.vatIncluded !== false, paymentType: a.paymentType || 'CASH',
     lossAccount: a.lossAccount || '7170', comment: d.comment || a.comment || '', reason: '',
     allocation: a.allocation || 'AMOUNT', baseId: a.baseId, twoStage: !!a.twoStage, lossReason: a.lossReason || undefined,
@@ -533,6 +603,8 @@ function payload() {
   const p: any = {
     date: form.value.date, comment: form.value.comment || undefined, storeId: form.value.storeId,
     counterpartyId: needsCounterparty.value ? form.value.counterpartyId : undefined, lines,
+    // договор — для расчётов и акта сверки по договору (раньше в документ не попадал)
+    ...(needsCounterparty.value && !priceLocked.value ? { contractId: form.value.contractId || null } : {}),
   }
   if (docType.value === 'MOVE' && !isTransferReceipt.value) p.storeToId = form.value.storeToId
   if (docType.value === 'MOVE' && form.value.twoStage && !isSaved.value) p.twoStage = true
@@ -544,6 +616,51 @@ function payload() {
   if (docType.value === 'PURCHASE_RETURN') p.returnReason = form.value.returnReason || undefined
   if (docType.value === 'LANDED_COST') { p.baseId = form.value.baseId; p.allocation = form.value.allocation; delete p.storeId }
   return p
+}
+
+// ── Сканер штрихкодов: товар — новой строкой, повторный скан — +1 (упаковка — её количество, весовой — вес). ──
+const scanEl = ref<any>()
+const scanCode = ref('')
+const scanMsg = ref('')
+const scanOk = ref(true)
+async function onScan() {
+  const code = scanCode.value.trim()
+  if (!code) return
+  scanCode.value = ''
+  try {
+    const r = (await api.get(`/catalog/items/barcode/${encodeURIComponent(code)}`)) as any
+    const add = Number(r.weightKg ?? r.factor ?? 1) || 1
+    const same = r.source !== 'WEIGHT' ? form.value.lines.find((l: any) => l.productId === r.productId) : undefined
+    if (same) same.qty = String(Math.round((Number(normAmount(same.qty) || 0) + add) * 1000) / 1000)
+    else {
+      const empty = form.value.lines.find((l: any) => !l.productId)
+      const line = empty ?? emptyLine()
+      Object.assign(line, { productId: r.productId, productName: r.name, qty: String(add) })
+      if (!empty) form.value.lines.push(line)
+    }
+    // продажа: цена строки сразу из прайс-листа (как сервер посчитает при сохранении)
+    const ln = form.value.lines.find((l: any) => l.productId === r.productId)
+    if (ln && hasPrices.value && !normAmount(ln.price) && ['DEMAND', 'CUSTOMER_ORDER', 'RETAIL_DEMAND'].includes(docType.value)) {
+      try {
+        const pr = (await api.post('/pricing/preview', { date: form.value.date, storeId: form.value.storeId || null, lines: [{ productId: r.productId, qty: 1 }] })) as any
+        const bp = pr.lines?.[0]?.basePrice
+        if (bp !== null && bp !== undefined) ln.price = String(bp)
+      } catch { /* нет прайс-листа — цену укажут вручную */ }
+    }
+    scanOk.value = true
+    scanMsg.value = `${r.name}: +${add}`
+  } catch (e: any) {
+    scanOk.value = false
+    scanMsg.value = e?.message || `Штрихкод ${code} не найден`
+  }
+  nextTick(() => scanEl.value?.focus())
+}
+
+/** Копия документа: те же контрагент, склад и строки — новым черновиком на сегодня (без основания и цен из снимка заказа). */
+function copyDoc() {
+  const lines = form.value.lines.filter((l: any) => l.productId).map((l: any) => ({ productId: l.productId, productName: l.productName, qty: l.qty, price: l.price, discount: l.discount, vatRate: l.vatRate }))
+  try { sessionStorage.setItem('fp.copyDoc', JSON.stringify({ docType: docType.value, counterpartyId: form.value.counterpartyId, contractId: form.value.contractId, storeId: form.value.storeId, storeToId: form.value.storeToId, vatIncluded: form.value.vatIncluded, comment: form.value.comment, lines })) } catch { /* без копии */ }
+  router.push({ path: '/accounting/trade/new', query: { type: docType.value, copy: '1' } })
 }
 
 function addLine() {
@@ -573,6 +690,16 @@ async function load() {
     form.value = { ...emptyForm(), lines: [emptyLine()] }
     if (stores.value.length === 1) form.value.storeId = stores.value[0].id
     if (route.query.baseId) form.value.baseId = String(route.query.baseId)
+    if (route.query.copy) {
+      try {
+        const c = JSON.parse(sessionStorage.getItem('fp.copyDoc') || 'null')
+        sessionStorage.removeItem('fp.copyDoc')
+        if (c && c.docType === docType.value) {
+          Object.assign(form.value, { counterpartyId: c.counterpartyId, contractId: c.contractId, storeId: c.storeId, storeToId: c.storeToId, vatIncluded: c.vatIncluded !== false, comment: c.comment || '' })
+          form.value.lines = c.lines.length ? c.lines.map((l: any) => ({ ...emptyLine(), ...l })) : [emptyLine()]
+        }
+      } catch { /* копия повреждена — пустой документ */ }
+    }
     if (docType.value === 'LANDED_COST') form.value.lines[0].qty = '1' // услуга — обычно одной строкой на сумму
     await loadLandedBase()
     return
@@ -676,6 +803,7 @@ async function retry() {
 }
 
 async function onCommand(cmd: string) {
+  if (cmd === 'copy') return copyDoc()
   if (cmd === 'unpost') return action('unpost', 'Проведение отменено')
   if (cmd === 'close') {
     let reason: string
@@ -754,6 +882,11 @@ onMounted(async () => {
 .head-form :deep(.el-form-item) { margin-bottom: 10px; }
 .card-head { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
 .totals { font-size: 14px; color: #606266; }
+.scan { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
+.scan-in { width: 420px; max-width: 100%; }
+.scan-msg { font-size: 13px; }
+.scan-msg.ok { color: var(--el-color-success); }
+.scan-msg.bad { color: var(--el-color-danger); }
 .lines { overflow-x: auto; }
 .line { display: flex; gap: 8px; align-items: center; padding: 6px 0; border-bottom: 1px solid #f0f0f0; min-width: 820px; }
 .line.head { font-size: 12px; color: #909399; font-weight: 600; border-bottom: 1px solid #e4e7ed; }

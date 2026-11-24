@@ -456,7 +456,7 @@ export class TradeDocumentsService {
       if (doc.status === 'POSTED' && !input.reason) throw new AccError('REASON_REQUIRED', 'Изменение проведённого документа требует указать причину');
       const merged: TradeDocInput = {
         docType: doc.docType, date: input.date ?? doc.date.toISOString(), counterpartyId: input.counterpartyId ?? doc.counterpartyId ?? undefined,
-        contractId: input.contractId ?? doc.contractId ?? undefined, storeId: input.storeId ?? doc.storeId ?? undefined, storeToId: input.storeToId ?? doc.storeToId ?? undefined,
+        contractId: input.contractId === null ? undefined : input.contractId ?? doc.contractId ?? undefined, storeId: input.storeId ?? doc.storeId ?? undefined, storeToId: input.storeToId ?? doc.storeToId ?? undefined,
         lines: input.lines ?? doc.lines.map((l) => ({
           productId: l.productId, qty: l.qty.toString(), price: l.price?.toString(), discount: l.discount?.toString(), vatRate: l.vatRate?.toString() ?? null,
           expectedQty: l.expectedQty?.toString() ?? null, rejectedQty: l.rejectedQty?.toString() ?? null, discrepancyReason: l.discrepancyReason, discrepancyNote: l.discrepancyNote,
@@ -513,7 +513,7 @@ export class TradeDocumentsService {
       await tx.document.update({
         where: { id },
         data: {
-          date: new Date(merged.date), counterpartyId: merged.counterpartyId, contractId: merged.contractId, storeId: merged.storeId, storeToId: merged.storeToId,
+          date: new Date(merged.date), counterpartyId: merged.counterpartyId, contractId: merged.contractId ?? null, storeId: merged.storeId, storeToId: merged.storeToId,
           total, comment: merged.comment ?? doc.comment, attributes: this.attrs(input as TradeDocInput, doc.attributes ?? {}), updatedBy: ctx.userId, version: { increment: 1 },
           lines: { create: lines.map((l) => this.lineData(l)) },
         },
@@ -884,14 +884,44 @@ export class TradeDocumentsService {
     ]);
     const entries = await this.prisma.accEntry.findMany({ where: { organizationId: ctx.organizationId, sourceType: TRADE_SOURCE, sourceId: { in: items.map((i) => i.id) }, status: 'ACTIVE' }, select: { sourceId: true } });
     const issues = await this.prisma.accAutopilotIssue.findMany({ where: { sourceType: TRADE_SOURCE, sourceId: { in: items.map((i) => i.id) }, resolvedAt: null } });
+    const pay = await this.payState(this.prisma as any, ctx.organizationId, items);
     return {
       items: items.map((i) => ({
         ...i,
         accounting: entries.some((e) => e.sourceId === i.id) ? 'REFLECTED' : issues.find((x) => x.sourceId === i.id) ? 'ISSUE' : 'NONE',
         issue: issues.find((x) => x.sourceId === i.id) ?? null,
+        payment: pay.get(i.id) ?? null,
       })),
       total, page, limit, sum: (sum._sum.total ?? new D(0)).toFixed(2),
     };
+  }
+
+  /**
+   * Оплата реализаций и поступлений: остаток долга по документу — сальдо расчётов (1210 / 3310 по счетам учётной
+   * политики) с аналитикой «документ расчётов» = этот документ: туда же разносятся оплаты и возвраты по основанию.
+   * PAID — долга нет, PARTIAL — оплачен частично, UNPAID — не оплачен. Только проведённые, не помеченные на удаление.
+   */
+  private async payState(tx: Tx, organizationId: string, docs: { id: string; docType: string; status: string; deleted: boolean; total: Prisma.Decimal | null; date: Date }[]) {
+    const res = new Map<string, { status: 'PAID' | 'PARTIAL' | 'UNPAID'; paid: string; debt: string }>();
+    const list = docs.filter((d) => (d.docType === 'DEMAND' || d.docType === 'SUPPLY') && d.status === 'POSTED' && !d.deleted && d.total && new D(d.total).gt(0));
+    if (!list.length || !organizationId) return res;
+    const { accounts } = await this.autopilot.accountsFor(tx, organizationId, new Date());
+    const rows = await tx.$queryRaw<{ doc: string; code: string; bal: string }[]>`
+      SELECT p.settlement_doc_id AS doc, a.code, SUM(CASE WHEN p.side = 'D' THEN p.amount ELSE -p.amount END)::text AS bal
+      FROM acc_postings p JOIN acc_accounts a ON a.id = p.account_id
+      WHERE p.organization_id = ${organizationId} AND p.is_active AND p.ledger = 'BU'
+        AND p.settlement_doc_id IN (${Prisma.join(list.map((d) => d.id))}) AND a.code IN (${accounts.receivable}, ${accounts.payable})
+      GROUP BY p.settlement_doc_id, a.code`;
+    for (const d of list) {
+      const code = d.docType === 'DEMAND' ? accounts.receivable : accounts.payable;
+      const r = rows.find((x) => x.doc === d.id && x.code === code);
+      if (!r) continue; // документ не отражён в учёте (нет проводок) — статус оплаты неизвестен
+      const debt = D.max(d.docType === 'DEMAND' ? new D(r.bal) : new D(r.bal).neg(), 0);
+      const total = new D(d.total!);
+      const paid = D.max(total.minus(debt), 0);
+      res.set(d.id, { status: debt.lte(0.004) ? 'PAID' : debt.gte(total) ? 'UNPAID' : 'PARTIAL', paid: paid.toFixed(2), debt: debt.toFixed(2) });
+    }
+    return res;
   }
 
   async get(ctx: OrgContext, id: string) {
@@ -928,7 +958,12 @@ export class TradeDocumentsService {
     // FP-032: резервы заказа покупателя, состояние перемещения в два этапа.
     const reservations = doc!.docType === 'CUSTOMER_ORDER' ? await tx.stockReservation.findMany({ where: { sourceType: TRADE_SOURCE, sourceId: id }, orderBy: [{ createdAt: 'asc' }] }) : [];
     const transit = doc!.docType === 'MOVE' && (doc!.attributes as any)?.twoStage ? await this.transitOf(tx, doc!) : null;
-    return { ...doc!, entry, costEntries, issue, related: [...(base ? [base] : []), ...children], movements, receipt, fulfillment, reservations, transit, returns };
+    const payment = (await this.payState(tx, doc!.organizationId ?? '', [doc!])).get(id) ?? null;
+    // ЭСФ, выписанные по этому документу (последние сначала) — статус прямо в карточке реализации.
+    const esf = doc!.docType === 'DEMAND' || doc!.docType === 'SALES_RETURN'
+      ? await tx.esfInvoice.findMany({ where: { sourceDocId: id, organizationId: doc!.organizationId ?? '' }, select: { id: true, num: true, status: true, esfStatus: true, registrationNumber: true, invoiceType: true }, orderBy: { createdAt: 'desc' }, take: 5 })
+      : [];
+    return { ...doc!, entry, costEntries, issue, related: [...(base ? [base] : []), ...children], movements, receipt, fulfillment, reservations, transit, returns, payment, esf };
   }
 
   private async returnsOf(tx: Tx, doc: { id: string; docType: string; lines: { productId: string; qty: any }[] }) {

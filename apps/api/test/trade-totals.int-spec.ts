@@ -61,3 +61,24 @@ describe('итог торгового документа и НДС «сверх�
     expect(await total(sup.id)).toBe(await settled(ctx, sup.id, '3310'));
   });
 });
+
+describe('Оплата реализаций в журнале и карточке', () => {
+  afterAll(() => prisma.$disconnect());
+  it('не оплачена → частично → оплачена; остаток долга считается по документу', async () => {
+    const ctx = await makeOrg(prisma);
+    const t = await makeTrade(prisma, ctx, { vatPayer: false });
+    await s.trade.create(ctx, { docType: 'SUPPLY', date: '2026-10-01', counterpartyId: t.supplier.id, storeId: t.s1.id, status: 'POSTED', lines: [{ productId: t.goods.id, qty: '10', price: '100' }] });
+    const sale = await s.trade.create(ctx, { docType: 'DEMAND', date: '2026-10-02', counterpartyId: t.customer.id, storeId: t.s1.id, status: 'POSTED', lines: [{ productId: t.goods.id, qty: '4', price: '250' }] });
+    const state = async () => (await s.trade.list(ctx, { docType: 'DEMAND' })).items.find((i: any) => i.id === sale.id)!.payment;
+    expect(await state()).toEqual({ status: 'UNPAID', paid: '0.00', debt: '1000.00' });
+    const pay = (amount: string) => s.trade.create(ctx, { docType: 'PAYMENT_IN', date: '2026-10-03', counterpartyId: t.customer.id, bankAccountId: t.bank.id, amount, status: 'POSTED' } as any);
+    await pay('400');
+    expect(await state()).toEqual({ status: 'PARTIAL', paid: '400.00', debt: '600.00' });
+    await pay('600');
+    expect((await s.trade.get(ctx, sale.id) as any).payment).toEqual({ status: 'PAID', paid: '1000.00', debt: '0.00' });
+    // фильтр журнала по периоду (даты Казахстана) и сумма по выборке
+    const l = await s.trade.list(ctx, { docType: 'DEMAND', from: '2026-10-02', to: '2026-10-02' });
+    expect([l.total, l.sum]).toEqual([1, '1000.00']);
+    expect((await s.trade.list(ctx, { docType: 'DEMAND', from: '2026-10-03', to: '2026-10-05' })).total).toBe(0);
+  });
+});

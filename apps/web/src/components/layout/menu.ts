@@ -51,7 +51,8 @@ export function buildMenu(c: MenuCtx): MenuSection[] {
     },
     {
       key: 'bank', title: 'Банк и касса', icon: 'Wallet', desc: 'Движение денег по счетам и кассе.',
-      items: when(c.showAcc,
+      // Деньги нужны и учётной системе (оплаты по реализациям и поступлениям), не только бухгалтерии.
+      items: when(c.showAcc || c.showTrade,
         { path: '/bank/statements', title: 'Банковские выписки', desc: 'Поступления и списания по счёту', icon: 'CreditCard' },
         { path: '/accounting/bank-import', title: 'Загрузка выписки', desc: 'Загрузить выписку из банка файлом', icon: 'Upload' },
         { path: '/bank/cash', title: 'Кассовые документы', desc: 'Приходные и расходные кассовые ордера', icon: 'Money' },
