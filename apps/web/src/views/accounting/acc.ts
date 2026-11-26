@@ -85,6 +85,7 @@ export const TRADE_TYPES: Record<string, { ru: string; kk: string }> = {
   ENTER: { ru: 'Оприходование', kk: 'Кіріске алу' },
   LOSS: { ru: 'Списание', kk: 'Есептен шығару' },
   MOVE: { ru: 'Перемещение', kk: 'Орын ауыстыру' },
+  INTERNAL_ORDER: { ru: 'Внутренний заказ', kk: 'Ішкі тапсырыс' },
   RETAIL_DEMAND: { ru: 'Розничный чек', kk: 'Бөлшек чек' },
   RETAIL_RETURN: { ru: 'Возврат по чеку', kk: 'Чек бойынша қайтару' },
   PAYMENT_IN: { ru: 'Входящий платёж (обмен)', kk: 'Кіріс төлем (алмасу)' },
@@ -94,9 +95,16 @@ export const TRADE_TYPES: Record<string, { ru: string; kk: string }> = {
   INVENTORY: { ru: 'Инвентаризация', kk: 'Түгендеу' },
   RETAIL_SHIFT: { ru: 'Кассовая смена', kk: 'Кассалық ауысым' },
 }
-export const TRADE_CREATABLE = ['PURCHASE_ORDER', 'SUPPLY', 'PURCHASE_RETURN', 'CUSTOMER_ORDER', 'DEMAND', 'SALES_RETURN', 'ENTER', 'LOSS', 'MOVE', 'INVENTORY', 'RETAIL_DEMAND', 'RETAIL_RETURN']
+/** Иконка и цвет вида документа (карточка, журналы). */
+export const TRADE_ICONS: Record<string, [string, string]> = {
+  CUSTOMER_ORDER: ['Tickets', '#1769e0'], INVOICE_OUT: ['Document', '#1769e0'], DEMAND: ['Sell', '#1769e0'], SALES_RETURN: ['RefreshLeft', '#1769e0'],
+  PURCHASE_ORDER: ['ShoppingCart', '#7c3aed'], INVOICE_IN: ['Document', '#7c3aed'], SUPPLY: ['Download', '#7c3aed'], PURCHASE_RETURN: ['RefreshRight', '#7c3aed'], LANDED_COST: ['Coin', '#7c3aed'],
+  MOVE: ['Switch', '#0891b2'], INTERNAL_ORDER: ['Tickets', '#0891b2'], ENTER: ['CirclePlus', '#0891b2'], LOSS: ['Remove', '#dc2626'], INVENTORY: ['List', '#0891b2'],
+  RETAIL_DEMAND: ['Monitor', '#0d9488'], RETAIL_RETURN: ['RefreshLeft', '#0d9488'], PAYMENT_IN: ['Wallet', '#23a047'], PAYMENT_OUT: ['Wallet', '#23a047'],
+}
+export const TRADE_CREATABLE = ['INTERNAL_ORDER', 'INVOICE_IN', 'INVOICE_OUT', 'PURCHASE_ORDER', 'SUPPLY', 'PURCHASE_RETURN', 'CUSTOMER_ORDER', 'DEMAND', 'SALES_RETURN', 'ENTER', 'LOSS', 'MOVE', 'INVENTORY', 'RETAIL_DEMAND', 'RETAIL_RETURN']
 /** Создание на основании: тип основания → допустимые новые типы. */
-export const BASE_TARGETS: Record<string, string[]> = { CUSTOMER_ORDER: ['DEMAND'], PURCHASE_ORDER: ['SUPPLY'], DEMAND: ['SALES_RETURN'], SUPPLY: ['PURCHASE_RETURN'] }
+export const BASE_TARGETS: Record<string, string[]> = { CUSTOMER_ORDER: ['DEMAND', 'INVOICE_OUT'], PURCHASE_ORDER: ['SUPPLY', 'INVOICE_IN'], INVOICE_OUT: ['DEMAND'], INVOICE_IN: ['SUPPLY'], INTERNAL_ORDER: ['MOVE'], DEMAND: ['SALES_RETURN'], SUPPLY: ['PURCHASE_RETURN'] }
 
 /** Ссылка на документ-источник проводки (бухгалтерский, торговый или запись себестоимости). */
 export function sourceLink(src: { type?: string; id?: string; link?: string | null } | null | undefined): string | null {

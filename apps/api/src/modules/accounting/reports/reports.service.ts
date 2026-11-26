@@ -1,4 +1,6 @@
 import { Injectable } from '@nestjs/common';
+import { profitability } from './profitability';
+import { moneyFlow, stockTurnover } from './flows';
 import { reconciliation } from './reconciliation';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
@@ -283,6 +285,11 @@ export class ReportsService {
 
   /** Акт сверки (см. reconciliation.ts). */
   reconciliation(ctx: OrgContext, q: any) { return reconciliation(this.prisma, ctx, q); }
+
+  /** Прибыльность (см. profitability.ts). */
+  profitability(ctx: OrgContext, q: any) { return profitability(this.prisma, ctx, q); }
+  stockTurnover(ctx: OrgContext, q: any) { return stockTurnover(this.prisma, ctx, q); }
+  moneyFlow(ctx: OrgContext, q: any) { return moneyFlow(this.prisma, ctx, q); }
 
   async settlements(ctx: OrgContext, q: { date?: string }) {
     const date = q.date ?? new Date().toISOString().slice(0, 10);

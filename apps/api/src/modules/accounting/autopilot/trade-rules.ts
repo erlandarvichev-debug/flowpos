@@ -45,7 +45,7 @@ export interface RuleResult {
 
 const SUPPORTED = ['SUPPLY', 'LANDED_COST', 'INVENTORY', 'DEMAND', 'SALES_RETURN', 'PURCHASE_RETURN', 'ENTER', 'LOSS', 'MOVE', 'RETAIL_DEMAND', 'RETAIL_RETURN', 'PAYMENT_IN', 'PAYMENT_OUT'];
 /** Документы без бухгалтерских последствий (заказы, счета, инвентаризация, смена). */
-export const NO_ACCOUNTING = ['PURCHASE_ORDER', 'CUSTOMER_ORDER', 'INVOICE_IN', 'INVOICE_OUT', 'RETAIL_SHIFT'];
+export const NO_ACCOUNTING = ['INTERNAL_ORDER', 'PURCHASE_ORDER', 'CUSTOMER_ORDER', 'INVOICE_IN', 'INVOICE_OUT', 'RETAIL_SHIFT'];
 
 export function isSupported(docType: string) {
   return SUPPORTED.includes(docType);
@@ -264,7 +264,9 @@ export async function buildTradeEntry(doc: TradeDoc, rc: TradeRuleCtx): Promise<
         const amount = lineAmount(l);
         if (amount.isZero()) throw new AccError('PRICE_REQUIRED', `Оприходование ${doc.number ?? ''}, строка ${l.lineNo}: укажите учётную цену «${l.product.name}»`, { fix: 'Оприходование отражается по справедливой стоимости — заполните цену.' });
         P.push({ side: 'D', account: a.inventory, amount: amount.toFixed(2), quantity: new D(l.qty).toFixed(3), dims: inv(l.productId, st), memo: `Оприходование: ${l.product.name}` });
-        P.push({ side: 'C', account: a.otherIncome, amount: amount.toFixed(2), memo: 'Излишки / оприходование' });
+        // Выпуск продукции: оприходование в корреспонденции с основным производством (8110), иначе — прочий доход.
+        const prod = doc.attributes?.corrAccount === '8110';
+        P.push({ side: 'C', account: prod ? '8110' : a.otherIncome, amount: amount.toFixed(2), memo: prod ? 'Выпуск продукции' : 'Излишки / оприходование' });
         M.push({ lineNo: l.lineNo, productId: l.productId, storeId: st, account: a.inventory, direction: 'IN', kind: 'ENTER', quantity: new D(l.qty).toFixed(3), knownCost: amount.toFixed(2) });
       }
       break;
@@ -328,6 +330,8 @@ export async function settlementPostings(
   exclude: { sourceType: string; sourceId: string },
   partyAccounts?: { debt: string; advance: string },
   allocations?: Allocation[] | null,
+  /** Оплата по счёту: гасить только долги этих документов (отгрузок по счёту); пусто — весь платёж в аванс. */
+  restrictTo?: string[] | null,
 ): Promise<PostingInput[]> {
   const a = rc.accounts;
   const debtAcc = partyAccounts?.debt ?? (direction === 'IN' ? a.receivable : a.payable);
@@ -355,7 +359,7 @@ export async function settlementPostings(
     if (total.gt(amount)) throw new AccError('ALLOC_EXCEEDS_PAYMENT', `Разнесено ${total.toFixed(2)} — больше суммы оплаты ${amount.toFixed(2)}`);
   } else {
     let left = amount;
-    for (const it of items) {
+    for (const it of restrictTo ? items.filter((x) => x.settlementDocId && restrictTo.includes(x.settlementDocId)) : items) {
       if (left.lte(0)) break;
       const v = D.min(left, it.debt);
       plan.push({ docId: it.settlementDocId, amount: v });

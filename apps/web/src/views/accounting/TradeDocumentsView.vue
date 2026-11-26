@@ -11,7 +11,7 @@
         <el-button type="primary" :icon="Plus">{{ t('create') }}</el-button>
         <template #dropdown>
           <el-dropdown-menu>
-            <el-dropdown-item v-for="k in creatable" :key="k" :command="k" :divided="!journal && (k === 'CUSTOMER_ORDER' || k === 'ENTER' || k === 'RETAIL_DEMAND')">{{ tl(k) }}</el-dropdown-item>
+            <el-dropdown-item v-for="k in creatable" :key="k" :command="k" :divided="!journal && (k === 'CUSTOMER_ORDER' || k === 'ENTER' || k === 'RETAIL_DEMAND')"><el-icon :style="{ color: TRADE_ICONS[k]?.[1] }"><component :is="TRADE_ICONS[k]?.[0] ?? 'Document'" /></el-icon>{{ tl(k) }}</el-dropdown-item>
           </el-dropdown-menu>
         </template>
       </el-dropdown>
@@ -33,6 +33,7 @@
           <el-select v-model="f.status" :placeholder="t('status')" clearable class="w-status" @change="reload">
             <el-option v-for="s in ['DRAFT', 'POSTED', 'CANCELLED']" :key="s" :label="t(s)" :value="s" />
           </el-select>
+          <el-checkbox v-if="hasOrders" v-model="f.mine" border class="w-mine" @change="reload">Мои</el-checkbox>
           <el-button :type="more ? 'primary' : 'default'" plain :icon="Filter" @click="more = !more">Ещё<span v-if="moreCount" class="cnt">{{ moreCount }}</span></el-button>
           <template v-if="more">
             <el-select v-model="f.counterpartyId" filterable remote clearable :remote-method="findCp" :loading="cpLoading" placeholder="Контрагент" class="w-cp" @change="reload">
@@ -49,19 +50,37 @@
         </template>
 
         <template #cell-number="{ row }"><span class="num">{{ row.number || '—' }}</span></template>
-        <template #cell-docType="{ row }">{{ tl(row.docType) }}</template>
+        <template #cell-docType="{ row }"><span class="dt-type"><el-icon :style="{ color: TRADE_ICONS[row.docType]?.[1] }"><component :is="TRADE_ICONS[row.docType]?.[0] ?? 'Document'" /></el-icon>{{ tl(row.docType) }}</span></template>
         <template #cell-counterparty="{ row }">{{ row.counterparty?.name || '—' }}</template>
         <template #cell-total="{ row }"><span class="money">{{ fmtMoney(row.total) }}</span></template>
         <template #cell-status="{ row }">
           <el-tag :type="STATUS_TYPES[row.status] as any" size="small" effect="light">{{ t(row.status) }}</el-tag>
           <el-tag v-if="row.attributes?.closed" size="small" type="info" class="ml">закрыт</el-tag>
         </template>
+        <template #cell-orderStatus="{ row }">
+          <el-tag v-if="row.orderStatus" size="small" :type="ORDER_STATUS[row.orderStatus]?.type" effect="light">{{ ORDER_STATUS[row.orderStatus]?.label ?? row.orderStatus }}</el-tag>
+          <span v-else class="muted">—</span>
+        </template>
+        <template #cell-shipDate="{ row }">
+          <span v-if="row.attributes?.shipDate" :class="{ 'pay-late': shipLate(row) }">{{ fmtDate(row.attributes.shipDate) }}</span>
+          <span v-else class="muted">—</span>
+        </template>
         <template #cell-payment="{ row }">
-          <template v-if="row.payment">
+          <template v-if="row.invoice">
+            <el-tag v-if="row.invoice.status === 'PAID'" type="success" size="small" effect="plain">оплачен</el-tag>
+            <el-tooltip v-else :content="`Оплачено ${fmtMoney(row.invoice.paid)} ₸, отгружено на ${fmtMoney(row.invoice.shipped)} ₸`" placement="top">
+              <span :class="row.invoice.status === 'PARTIAL' ? 'pay-part' : 'pay-no'">{{ fmtMoney(row.invoice.left) }}</span>
+            </el-tooltip>
+            <div v-if="row.invoice.overdueDays > 0" class="pay-late">просрочено {{ row.invoice.overdueDays }} дн.</div>
+            <div v-else-if="row.invoice.status !== 'PAID'" class="pay-due">до {{ fmtDate(row.invoice.dueDate) }}</div>
+          </template>
+          <template v-else-if="row.payment">
             <el-tag v-if="row.payment.status === 'PAID'" type="success" size="small" effect="plain">оплачен</el-tag>
             <el-tooltip v-else :content="`Оплачено ${fmtMoney(row.payment.paid)} ₸, осталось ${fmtMoney(row.payment.debt)} ₸`" placement="top">
               <span :class="row.payment.status === 'PARTIAL' ? 'pay-part' : 'pay-no'">{{ fmtMoney(row.payment.debt) }}</span>
             </el-tooltip>
+            <div v-if="row.payment.overdueDays > 0" class="pay-late">просрочено {{ row.payment.overdueDays }} дн.</div>
+            <div v-else-if="row.payment.status !== 'PAID'" class="pay-due">до {{ fmtDate(row.payment.dueDate) }}</div>
           </template>
           <span v-else class="muted">—</span>
         </template>
@@ -87,7 +106,8 @@ import { useI18n } from '@/composables/useI18n'
 import PageHeader from '@/components/ui/PageHeader.vue'
 import DataTable, { type Col } from '@/components/ui/DataTable.vue'
 import { fmtDate, fmtMoney, kzToday, shiftDay } from '@/utils/format'
-import { STATUS_TYPES, TRADE_CREATABLE, TRADE_TYPES } from './acc'
+import { STATUS_TYPES, TRADE_CREATABLE, TRADE_ICONS, TRADE_TYPES } from './acc'
+import { ORDER_DONE, ORDER_STATUS, isOrderType } from '@/utils/orders'
 
 const router = useRouter()
 const route = useRoute()
@@ -114,22 +134,29 @@ const f = ref<any>({
   docType: String(q.docType || ''), status: String(q.status || ''), search: String(q.search || ''),
   range: q.from && q.to ? [String(q.from), String(q.to)] : null,
   counterpartyId: String(q.counterpartyId || ''), storeId: String(q.storeId || ''), productId: String(q.productId || ''),
+  mine: q.mine === '1',
 })
+
+/** Журнал заказов (или общий журнал): колонки статуса и даты отгрузки, фильтр «Мои». */
+const hasOrders = computed(() => !journal.value || journal.value.some(isOrderType))
+const shipLate = (r: any) => !!r.attributes?.shipDate && r.attributes.shipDate < kzToday() && !ORDER_DONE.has(r.orderStatus) && r.status !== 'CANCELLED'
 
 const columns = computed<Col[]>(() => [
   { key: 'date', label: t('date'), width: 110, sortable: true, value: (r) => fmtDate(r.date), export: (r) => fmtDate(r.date) },
-  { key: 'number', label: t('number'), width: 150, sortable: true, export: (r) => r.number },
+  { key: 'number', label: t('number'), width: 175, sortable: true, export: (r) => r.number },
   { key: 'docType', label: t('type'), minWidth: 160, hidden: !!journal.value && journal.value.length === 1, export: (r) => tl(r.docType) },
   { key: 'counterparty', label: t('counterparty'), minWidth: 200, sortable: true, ellipsis: true, export: (r) => r.counterparty?.name ?? '' },
   { key: 'store', label: 'Склад', minWidth: 140, hidden: true, value: (r) => r.store?.name, export: (r) => r.store?.name ?? '' },
   { key: 'total', label: `${t('amount')}, ₸`, width: 150, align: 'right', sortable: true, export: (r) => (r.total === null ? '' : String(r.total)) },
   { key: 'status', label: t('status'), width: 150, export: (r) => t(r.status) },
-  { key: 'payment', label: 'К оплате, ₸', width: 130, align: 'right', hidden: !!journal.value && !journal.value.some((k) => k === 'DEMAND' || k === 'SUPPLY'), export: (r) => (r.payment ? (r.payment.status === 'PAID' ? '0' : r.payment.debt) : '') },
+  { key: 'orderStatus', label: 'Статус заказа', width: 150, hidden: !hasOrders.value, export: (r) => (r.orderStatus ? ORDER_STATUS[r.orderStatus]?.label ?? r.orderStatus : '') },
+  { key: 'shipDate', label: journal.value?.includes('PURCHASE_ORDER') ? 'Поступление' : 'Отгрузка', width: 110, hidden: !hasOrders.value, export: (r) => (r.attributes?.shipDate ? fmtDate(r.attributes.shipDate) : '') },
+  { key: 'payment', label: 'К оплате, ₸', width: 130, align: 'right', hidden: !!journal.value && !journal.value.some((k) => ['DEMAND', 'SUPPLY', 'INVOICE_OUT', 'INVOICE_IN'].includes(k)), export: (r) => (r.invoice ? r.invoice.left : r.payment ? (r.payment.status === 'PAID' ? '0' : r.payment.debt) : '') },
   { key: 'accounting', label: t('accountingCol'), width: 140, hidden: !org.can('acc.reports.read'), export: (r) => t(r.accounting) },
   { key: 'comment', label: 'Комментарий', minWidth: 180, hidden: true, ellipsis: true, export: (r) => r.comment ?? '' },
 ])
 
-const hasFilters = computed(() => !!(f.value.docType || f.value.status || f.value.search || f.value.range || f.value.counterpartyId || f.value.storeId || f.value.productId))
+const hasFilters = computed(() => !!(f.value.docType || f.value.status || f.value.search || f.value.range || f.value.counterpartyId || f.value.storeId || f.value.productId || f.value.mine))
 const moreCount = computed(() => [f.value.counterpartyId, f.value.storeId, f.value.productId].filter(Boolean).length)
 const summary = computed(() => (total.value ? { total: fmtMoney(sum.value) } : undefined))
 const subtitle = computed(() => (total.value ? `${total.value.toLocaleString('ru-RU')} шт. на ${fmtMoney(sum.value)} ₸ (без помеченных на удаление)` : ''))
@@ -148,6 +175,7 @@ function params(extra: Record<string, unknown> = {}) {
     docType: f.value.docType || journal.value?.join(',') || undefined, status: f.value.status || undefined,
     from: f.value.range?.[0], to: f.value.range?.[1], search: f.value.search || undefined,
     counterpartyId: f.value.counterpartyId || undefined, storeId: f.value.storeId || undefined, productId: f.value.productId || undefined,
+    responsibleId: f.value.mine ? 'me' : undefined,
     sort: sort.value || undefined, page: page.value, limit: limit.value, ...extra,
   }
 }
@@ -158,7 +186,7 @@ async function load() {
   loading.value = true
   error.value = ''
   const p = params()
-  router.replace({ query: { docType: f.value.docType || undefined, status: p.status, from: p.from, to: p.to, search: p.search, counterpartyId: p.counterpartyId, storeId: p.storeId, productId: p.productId, sort: sort.value !== 'date_desc' ? sort.value : undefined, page: page.value > 1 ? String(page.value) : undefined } })
+  router.replace({ query: { docType: f.value.docType || undefined, status: p.status, from: p.from, to: p.to, search: p.search, counterpartyId: p.counterpartyId, storeId: p.storeId, productId: p.productId, mine: f.value.mine ? '1' : undefined, sort: sort.value !== 'date_desc' ? sort.value : undefined, page: page.value > 1 ? String(page.value) : undefined } })
   try {
     const res = (await api.get('/accounting/trade-documents', { params: p })) as any
     if (my !== seq) return
@@ -177,7 +205,7 @@ let timer: ReturnType<typeof setTimeout> | undefined
 function onSearch() { clearTimeout(timer); timer = setTimeout(reload, 350) }
 
 function clearFilters() {
-  f.value = { docType: '', status: '', search: '', range: null, counterpartyId: '', storeId: '', productId: '' }
+  f.value = { docType: '', status: '', search: '', range: null, counterpartyId: '', storeId: '', productId: '', mine: false }
   reload()
 }
 
@@ -237,4 +265,7 @@ onMounted(async () => {
 .pay-no { color: var(--el-color-danger); font-weight: 500; font-variant-numeric: tabular-nums; }
 .ml { margin-left: 4px; }
 @media (max-width: 640px) { .w-search, .w-range, .w-type, .w-status, .w-cp, .w-store { width: 100% !important; } }
+.pay-late { color: var(--el-color-danger); font-size: 11px; line-height: 1.2; }
+.pay-due { color: var(--el-text-color-secondary); font-size: 11px; line-height: 1.2; }
+.dt-type { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 </style>

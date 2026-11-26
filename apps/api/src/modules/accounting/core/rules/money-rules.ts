@@ -69,8 +69,12 @@ function makeMoneyRule(docType: 'BANK_IN' | 'BANK_OUT' | 'CASH_IN' | 'CASH_OUT',
         case 'CUSTOMER':
         case 'SUPPLIER': {
           if (!b.counterpartyId) throw new AccError('COUNTERPARTY_REQUIRED', 'Укажите контрагента', { fix: 'Выберите покупателя или поставщика.' });
+          // Оплата по счёту: не гасит старые долги — только отгрузки по этому счёту, остальное — аванс (зачтётся при отгрузке).
+          const restrictTo = b.invoiceId && !(b.allocations && b.allocations.length)
+            ? (await tx.document.findMany({ where: { status: 'POSTED', deleted: false, attributes: { path: ['baseId'], equals: b.invoiceId } }, select: { id: true } })).map((d) => d.id)
+            : null;
           return settlementPostings({ tx, organizationId: rc.organizationId, posting: rc.posting!, accounts: rc.accounts! }, incoming ? 'IN' : 'OUT', t.amount, m,
-            { COUNTERPARTY: b.counterpartyId, CONTRACT: b.contractId }, doc.date, { sourceType: 'ACC_DOCUMENT', sourceId: doc.id }, undefined, b.allocations);
+            { COUNTERPARTY: b.counterpartyId, CONTRACT: b.contractId }, doc.date, { sourceType: 'ACC_DOCUMENT', sourceId: doc.id }, undefined, b.allocations, restrictTo);
         }
         case 'TRANSFER':
         case 'FROM_BANK': {

@@ -11,6 +11,13 @@ export interface MenuCtx {
   can: (perm: string) => boolean
 }
 
+/** Цвет раздела: иконки в меню, заголовках страниц и плитках. */
+export const SECTION_TONES: Record<string, string> = {
+  sales: '#1769e0', purchases: '#7c3aed', bank: '#23a047', warehouse: '#0891b2', production: '#ea580c', reports: '#0f766e',
+  tasks: '#d97706', refs: '#475569', admin: '#64748b', field: '#db2777', pos: '#0d9488', operations: '#6366f1', tax: '#b45309',
+  assets: '#78716c', hr: '#9333ea',
+}
+
 const when = <T>(cond: boolean, ...items: T[]): T[] => (cond ? items : [])
 
 export function buildMenu(c: MenuCtx): MenuSection[] {
@@ -32,6 +39,8 @@ export function buildMenu(c: MenuCtx): MenuSection[] {
       key: 'sales', title: 'Продажи', icon: 'Sell', desc: 'Заказы покупателей, отгрузки, возвраты и цены.',
       items: when(c.showTrade,
         { path: '/sales/orders', title: 'Заказы покупателей', desc: 'Заказы от клиентов и торговых', icon: 'Tickets' },
+        { path: '/sales/consignment', title: 'Товары на реализации', desc: 'Товар у комиссионеров: передать, отчёт о продажах, вернуть', icon: 'Van' },
+        { path: '/sales/invoices', title: 'Счета покупателям', desc: 'Счета на оплату: оплачено, отгружено', icon: 'Document' },
         { path: '/sales/shipments', title: 'Реализации', desc: 'Отгрузки товаров покупателям', icon: 'Van' },
         { path: '/sales/returns', title: 'Возвраты от покупателей', desc: 'Возвраты товаров от клиентов', icon: 'RefreshLeft' },
         { path: '/sales/retail', title: 'Розничные продажи', desc: 'Продажи через кассы за смену', icon: 'ShoppingBag' },
@@ -43,6 +52,7 @@ export function buildMenu(c: MenuCtx): MenuSection[] {
       key: 'purchases', title: 'Покупки', icon: 'ShoppingCart', desc: 'Заказы поставщикам и поступления товаров.',
       items: when(c.showTrade,
         { path: '/purchases/orders', title: 'Заказы поставщикам', desc: 'Что и у кого заказано', icon: 'Tickets' },
+        { path: '/purchases/invoices', title: 'Счета поставщиков', desc: 'Входящие счета: что оплатить', icon: 'Document' },
         ...when(c.can('stock.read'), { path: '/accounting/purchase-needs', title: 'Потребность в закупках', desc: 'Чего не хватает на складе', icon: 'TrendCharts' }),
         { path: '/purchases/receipts', title: 'Поступления товаров', desc: 'Приход товаров от поставщиков', icon: 'Download' },
         { path: '/purchases/landed-costs', title: 'Доп. расходы', desc: 'Доставка и прочие расходы в себестоимость', icon: 'Coin' },
@@ -62,6 +72,7 @@ export function buildMenu(c: MenuCtx): MenuSection[] {
       key: 'warehouse', title: 'Склад', icon: 'Box', desc: 'Остатки и движение товаров.',
       items: when(c.showTrade,
         { path: '/trade/stocks', title: 'Остатки', desc: 'Сколько товара на каждом складе', icon: 'Box' },
+        { path: '/warehouse/internal-orders', title: 'Внутренние заказы', desc: 'Заявки складов и магазинов на товар с другого склада', icon: 'Tickets' },
         ...when(c.can('stock.read'), { path: '/accounting/stock-movements', title: 'Движения товаров', desc: 'Приход и расход по каждому товару', icon: 'Sort' }),
         { path: '/warehouse/moves', title: 'Перемещения', desc: 'Перемещение между складами', icon: 'Switch' },
         { path: '/warehouse/entries', title: 'Оприходования и списания', desc: 'Излишки и недостачи', icon: 'EditPen' },
@@ -94,6 +105,14 @@ export function buildMenu(c: MenuCtx): MenuSection[] {
       ),
     },
     {
+      key: 'production', title: 'Производство', icon: 'Odometer', desc: 'Техкарты и выпуск продукции из сырья.',
+      items: when(c.showTrade, { path: '/production', title: 'Производство', desc: 'Техкарты, план и выпуск продукции, себестоимость', icon: 'Odometer' }),
+    },
+    {
+      key: 'tasks', title: 'Задачи', icon: 'Finished', desc: 'Поручения сотрудникам со сроками.',
+      items: when(c.can('acc.doc.read'), { path: '/tasks', title: 'Задачи', desc: 'Мои задачи, поставленные мной, просроченные', icon: 'Finished' }),
+    },
+    {
       key: 'operations', title: 'Операции', icon: 'Operation', desc: 'Ручные операции, автопилот, согласования и закрытие месяца.',
       items: when(c.showAcc,
         { path: '/operations/manual', title: 'Операции вручную', desc: 'Проводки, введённые вручную', icon: 'EditPen' },
@@ -121,6 +140,10 @@ export function buildMenu(c: MenuCtx): MenuSection[] {
         ...when(c.showAcc, { path: '/accounting/reports/trial-balance', title: 'Оборотно-сальдовая ведомость', desc: 'Обороты и остатки по счетам', icon: 'Grid' }),
         ...when(c.showAcc, { path: '/accounting/reports/account-card', title: 'Карточка счёта', desc: 'Все проводки по счёту', icon: 'Postcard' }),
         ...when(c.showAcc, { path: '/accounting/reports/journal', title: 'Журнал проводок', desc: 'Все проводки за период', icon: 'Notebook' }),
+        ...when(c.showTrade, { path: '/reports/money-flow', title: 'Движение денег', desc: 'Поступления и выплаты по статьям и месяцам', icon: 'Wallet' }),
+        ...when(c.showTrade, { path: '/reports/stock-turnover', title: 'Обороты товаров', desc: 'Начало, приход, расход, конец по товарам', icon: 'Sort' }),
+        ...when(c.showTrade, { path: '/reports/profitability', title: 'Прибыльность', desc: 'Прибыль и маржа по товарам, клиентам, сотрудникам', icon: 'Money' }),
+        ...when(c.showTrade, { path: '/reports/debt-aging', title: 'Долги по срокам', desc: 'Просрочка покупателей и поставщикам', icon: 'Timer' }),
         ...when(c.showTrade, { path: '/accounting/reports/settlements', title: 'Взаиморасчёты', desc: 'Долги клиентов и поставщикам', icon: 'Connection' }),
         ...when(c.showTrade, { path: '/reports/reconciliation', title: 'Акт сверки', desc: 'Сверка расчётов с контрагентом', icon: 'DocumentChecked' }),
         ...when(c.showTrade, { path: '/accounting/reports/stock', title: 'Остатки и себестоимость', desc: 'Количество и стоимость товаров', icon: 'Box' }),
@@ -133,6 +156,8 @@ export function buildMenu(c: MenuCtx): MenuSection[] {
       items: [
         ...when(c.showTrade, { path: '/catalog/items', title: 'Номенклатура', desc: 'Товары и услуги', icon: 'Goods' }),
         ...when(c.showTrade, { path: '/catalog/counterparties', title: 'Контрагенты', desc: 'Покупатели и поставщики', icon: 'User' }),
+        ...when(c.showTrade, { path: '/crm/contracts', title: 'Договоры', desc: 'Все договоры: сроки, отсрочка, документы', icon: 'Document' }),
+        ...when(c.showTrade, { path: '/crm/bonus', title: 'Бонусная программа', desc: 'Баллы покупателям за покупки', icon: 'Present' }),
         ...when(c.showTrade, { path: '/catalog/warehouses', title: 'Склады', desc: 'Склады и магазины', icon: 'House' }),
         ...when(c.showAcc, { path: '/accounting/chart', title: 'План счетов', desc: 'Счета бухгалтерского учёта', icon: 'List' }),
         ...when(c.showAcc, { path: '/accounting/refs', title: 'Справочники учёта', desc: 'Банковские счета, статьи, подразделения', icon: 'Collection' }),
@@ -144,6 +169,9 @@ export function buildMenu(c: MenuCtx): MenuSection[] {
         ...when(c.showAcc, { path: '/accounting/settings', title: 'Учётная политика и периоды', desc: 'Налоговый режим, НДС, закрытые периоды', icon: 'Tools' }),
         { path: '/settings/print', title: 'Печатные формы', desc: 'Вид счетов, накладных и актов', icon: 'Printer' },
         { path: '/settings/users', title: 'Пользователи', desc: 'Сотрудники с доступом и их роли', icon: 'Avatar' },
+        ...when(c.can('acc.doc.read'), { path: '/settings/automation', title: 'Сценарии', desc: 'Автоматика: событие документа → задача или этап заказа', icon: 'MagicStick' }),
+        ...when(c.can('acc.doc.read'), { path: '/settings/trash', title: 'Корзина', desc: 'Удалённые документы — открыть и восстановить', icon: 'Delete' }),
+        ...when(c.can('acc.audit.read'), { path: '/settings/audit', title: 'Журнал действий', desc: 'Кто, что и когда сделал', icon: 'Document' }),
         { path: '/settings/ai', title: 'ИИ-помощник (Claude)', desc: 'Свой адрес коннектора компании и подключения', icon: 'ChatDotRound' },
       ],
     },

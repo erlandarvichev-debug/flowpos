@@ -90,7 +90,7 @@ export async function releaseReservations(tx: Tx, sourceId: string, reason: 'REL
 
 /** Отгрузка по заказу расходует его резервы (по товару и складу отгрузки) — до отгруженного количества. */
 export async function consumeForShipment(tx: Tx, doc: { docType: string; storeId: string | null; attributes: any; lines: { productId: string; qty: any }[] }) {
-  const orderId = doc.attributes?.baseId;
+  const orderId = doc.attributes?.orderId ?? doc.attributes?.baseId;
   if (doc.docType !== 'DEMAND' || !orderId || !doc.storeId) return;
   const need = new Map<string, Dec>();
   for (const l of doc.lines) need.set(l.productId, (need.get(l.productId) ?? new D(0)).plus(l.qty));

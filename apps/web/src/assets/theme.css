@@ -1,0 +1,151 @@
+/* FlowPOS — общий вид приложения. Цвета — из логотипа (синий + зелёный), светлое меню, плотные таблицы.
+   Переопределяет переменные Element Plus, поэтому меняет все экраны сразу. */
+
+:root {
+  --fp-font: 'Inter', 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --fp-bg: #f3f5f9;
+  --fp-surface: #ffffff;
+  --fp-border: #e4e8ef;
+  --fp-border-soft: #eef1f6;
+  --fp-text: #1f2937;
+  --fp-text-2: #5b6472;
+  --fp-text-3: #8a93a3;
+  --fp-sidebar: #ffffff;
+  --fp-sidebar-text: #3d4654;
+  --fp-sidebar-muted: #8a93a3;
+  --fp-sidebar-hover: #f1f4f9;
+  --fp-sidebar-active-bg: #e8f0fc;
+  --fp-sidebar-active: #1254b3;
+  --fp-radius: 10px;
+  --fp-radius-sm: 7px;
+  --fp-shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 1px 3px rgba(16, 24, 40, .06);
+  --fp-shadow-lg: 0 8px 24px rgba(16, 24, 40, .10);
+
+  --el-font-family: var(--fp-font);
+  --el-color-primary: #1769e0;
+  --el-color-primary-light-3: #5d96e9;
+  --el-color-primary-light-5: #8bb4f0;
+  --el-color-primary-light-7: #b9d2f6;
+  --el-color-primary-light-8: #d1e1f9;
+  --el-color-primary-light-9: #e8f0fc;
+  --el-color-primary-dark-2: #1254b3;
+  --el-color-success: #23a047;
+  --el-color-success-light-3: #65bd7e;
+  --el-color-success-light-5: #91d0a3;
+  --el-color-success-light-7: #bde3c8;
+  --el-color-success-light-8: #d3ecda;
+  --el-color-success-light-9: #e9f6ed;
+  --el-color-success-dark-2: #1c8039;
+  --el-bg-color-page: var(--fp-bg);
+  --el-text-color-primary: var(--fp-text);
+  --el-text-color-regular: #374151;
+  --el-text-color-secondary: var(--fp-text-2);
+  --el-text-color-placeholder: #a3abb8;
+  --el-border-color: #d9dee7;
+  --el-border-color-light: var(--fp-border);
+  --el-border-color-lighter: var(--fp-border-soft);
+  --el-fill-color-light: #f5f7fb;
+  --el-fill-color-lighter: #f9fafc;
+  --el-border-radius-base: var(--fp-radius-sm);
+  --el-border-radius-small: 6px;
+  --el-component-size: 34px;
+  --el-font-size-base: 14px;
+}
+
+html.dark {
+  --fp-bg: #0f141b;
+  --fp-surface: #161c25;
+  --fp-border: #262f3c;
+  --fp-border-soft: #1f2732;
+  --fp-text: #e6e9ee;
+  --fp-text-2: #a3acb9;
+  --fp-text-3: #7c8594;
+  --fp-sidebar: #121821;
+  --fp-sidebar-text: #c9d0da;
+  --fp-sidebar-muted: #7c8594;
+  --fp-sidebar-hover: #1b2330;
+  --fp-sidebar-active-bg: #152e51;
+  --fp-sidebar-active: #8bb4f0;
+  --el-color-primary: #3d84ea;
+  --el-color-primary-light-3: #1650a3;
+  --el-color-primary-light-5: #163f7a;
+  --el-color-primary-light-7: #152e51;
+  --el-color-primary-light-8: #15253d;
+  --el-color-primary-light-9: #141d28;
+  --el-color-primary-dark-2: #4587e6;
+  --el-bg-color: var(--fp-surface);
+  --el-bg-color-overlay: #1b2230;
+  --el-fill-color-light: #1b2230;
+  --el-fill-color-lighter: #181f2a;
+  --el-border-color-light: var(--fp-border);
+  --el-border-color-lighter: var(--fp-border-soft);
+}
+
+html, body { background: var(--fp-bg); color: var(--fp-text); font-family: var(--fp-font); -webkit-font-smoothing: antialiased; }
+body { font-size: 14px; }
+
+/* ── Карточки: тонкая рамка вместо тени, крупнее скругление ── */
+.el-card { border-radius: var(--fp-radius); border: 1px solid var(--fp-border); box-shadow: none !important; background: var(--fp-surface); }
+.el-card__header { padding: 14px 18px; border-bottom: 1px solid var(--fp-border-soft); font-weight: 600; }
+.el-card__body { padding: 18px; }
+
+/* ── Таблицы: светлая шапка, ровные строки, цифры одной ширины ── */
+.el-table {
+  --el-table-header-bg-color: #f7f9fc;
+  --el-table-header-text-color: var(--fp-text-2);
+  --el-table-row-hover-bg-color: #f3f7fe;
+  --el-table-border-color: var(--fp-border-soft);
+  font-variant-numeric: tabular-nums;
+}
+html.dark .el-table { --el-table-header-bg-color: #1a212c; --el-table-row-hover-bg-color: #1c2532; }
+.el-table th.el-table__cell { font-size: 12px; font-weight: 600; letter-spacing: .01em; }
+.el-table th.el-table__cell > .cell { white-space: nowrap; }
+.el-table .el-table__cell { padding: 9px 0; }
+.el-table--small .el-table__cell { padding: 6px 0; }
+.el-table__footer-wrapper td.el-table__cell { background: #f7f9fc; font-weight: 600; }
+html.dark .el-table__footer-wrapper td.el-table__cell { background: #1a212c; }
+.el-table .el-table__expanded-cell { background: #fafbfd; }
+
+/* ── Кнопки, поля, теги ── */
+.el-button { font-weight: 500; border-radius: var(--fp-radius-sm); }
+.el-button--primary { box-shadow: 0 1px 2px rgba(23, 105, 224, .25); }
+.el-tag { border-radius: 999px; font-weight: 500; }
+.el-tag--small { padding: 0 8px; }
+.el-input__wrapper, .el-select__wrapper, .el-textarea__inner { border-radius: var(--fp-radius-sm); }
+.el-radio-button__inner { font-weight: 500; }
+.el-radio-button:first-child .el-radio-button__inner { border-radius: var(--fp-radius-sm) 0 0 var(--fp-radius-sm); }
+.el-radio-button:last-child .el-radio-button__inner { border-radius: 0 var(--fp-radius-sm) var(--fp-radius-sm) 0; }
+.el-alert { border-radius: var(--fp-radius-sm); }
+.el-dialog { border-radius: 14px; }
+.el-drawer__header { margin-bottom: 8px; font-weight: 600; color: var(--fp-text); }
+.el-tabs__item { font-weight: 500; }
+.el-pagination { font-variant-numeric: tabular-nums; }
+.el-form-item__label { color: var(--fp-text-2); }
+
+/* ── Общие блоки страниц ── */
+.fp-filters, .filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 16px; }
+/* Плитки показателей (KPI) — один вид во всех отчётах */
+.kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+.kpi { background: var(--fp-surface) !important; border: 1px solid var(--fp-border); border-radius: var(--fp-radius); padding: 12px 16px; }
+.k-label { color: var(--fp-text-2); font-size: 12px; font-weight: 500; }
+.k-val { font-size: 20px; font-weight: 700; margin-top: 4px; letter-spacing: -.01em; font-variant-numeric: tabular-nums; }
+.k-sub { color: var(--fp-text-3); font-size: 12px; margin-top: 2px; }
+@media (max-width: 900px) { .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } .k-val { font-size: 17px; } }
+.hint { line-height: 1.5; }
+
+/* Прокрутка */
+* { scrollbar-width: thin; scrollbar-color: #c9d0db transparent; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: #c9d0db; border-radius: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* Номера, коды и даты в таблицах не рвём посередине */
+.el-table .cell { word-break: normal; overflow-wrap: break-word; }
+.el-table .num, .el-table .money { white-space: nowrap; }
+
+/* Иконка в плитке показателя (правый верхний угол) */
+.kpi { position: relative; }
+.kpi-ic { position: absolute; top: 12px; right: 12px; width: 32px; height: 32px; border-radius: 9px; display: flex; align-items: center; justify-content: center; font-size: 17px; color: var(--c); background: color-mix(in srgb, var(--c) 11%, transparent); }
+.kpi:has(.kpi-ic) .k-label { padding-right: 40px; }
+/* Пустые таблицы — мягче */
+.el-table__empty-text { color: var(--fp-text-3); line-height: 1.5; padding: 18px 0; }

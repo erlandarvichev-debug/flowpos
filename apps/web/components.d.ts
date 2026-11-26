@@ -49,6 +49,7 @@ declare module 'vue' {
     ElMenuItem: typeof import('element-plus/es')['ElMenuItem']
     ElOption: typeof import('element-plus/es')['ElOption']
     ElPagination: typeof import('element-plus/es')['ElPagination']
+    ElPopconfirm: typeof import('element-plus/es')['ElPopconfirm']
     ElPopover: typeof import('element-plus/es')['ElPopover']
     ElProgress: typeof import('element-plus/es')['ElProgress']
     ElRadio: typeof import('element-plus/es')['ElRadio']
@@ -71,7 +72,9 @@ declare module 'vue' {
     ElTimelineItem: typeof import('element-plus/es')['ElTimelineItem']
     ElTimePicker: typeof import('element-plus/es')['ElTimePicker']
     ElTooltip: typeof import('element-plus/es')['ElTooltip']
+    ElUpload: typeof import('element-plus/es')['ElUpload']
     FieldMap: typeof import('./src/components/field/FieldMap.vue')['default']
+    FileList: typeof import('./src/components/files/FileList.vue')['default']
     GlobalSearch: typeof import('./src/components/layout/GlobalSearch.vue')['default']
     PageHeader: typeof import('./src/components/ui/PageHeader.vue')['default']
     PostingPreview: typeof import('./src/components/accounting/PostingPreview.vue')['default']
@@ -79,6 +82,7 @@ declare module 'vue' {
     PrintFrame: typeof import('./src/components/print/PrintFrame.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
+    TaskList: typeof import('./src/components/tasks/TaskList.vue')['default']
   }
   export interface ComponentCustomProperties {
     vLoading: typeof import('element-plus/es')['ElLoadingDirective']

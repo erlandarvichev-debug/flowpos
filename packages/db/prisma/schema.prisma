@@ -762,6 +762,8 @@ model Store {
   isRetail       Boolean @default(false) @map("is_retail")
   /// FP-032: служебный склад «В пути» организации (двухэтапное перемещение); в выборе складов не показывается
   isTransit      Boolean @default(false) @map("is_transit")
+  /// Товары на реализации: склад покупателя-комиссионера (товар наш, лежит у него; продажи — по его отчёту)
+  consigneeId    String? @map("consignee_id")
   isActive       Boolean @default(true) @map("is_active")
   // sync fields — 1С
   onecGuid       String? @map("onec_guid")
@@ -954,6 +956,8 @@ model Counterparty {
   phone      String?
   email      String?
   groupId    String?         @map("group_id")
+  /// Отсрочка оплаты по умолчанию, дней (для документов без договора с отсрочкой); null — оплата в день отгрузки
+  paymentDays Int?           @map("payment_days")
   attributes Json?
   // sync fields — 1С
   onecGuid   String?         @map("onec_guid")
@@ -1069,6 +1073,8 @@ model Contract {
   startDate      DateTime? @map("start_date")
   endDate        DateTime? @map("end_date")
   currency       String   @default("KZT")
+  /// Отсрочка оплаты по договору, дней (важнее отсрочки контрагента); null — как у контрагента
+  paymentDays    Int?     @map("payment_days")
   isActive       Boolean  @default(true) @map("is_active")
   onecGuid       String?  @map("onec_guid")
   createdBy      String?  @map("created_by")
@@ -1239,6 +1245,7 @@ enum DocType {
   LOSS
   MOVE
   INVENTORY
+  INTERNAL_ORDER // внутренний заказ: склад-получатель просит товар со склада-отправителя (исполняется перемещениями)
   // Деньги
   PAYMENT_IN
   PAYMENT_OUT
@@ -3367,4 +3374,156 @@ model AiConnection {
   @@index([organizationId])
   @@index([tenantId])
   @@map("ai_connections")
+}
+
+// Задачи сотрудникам: что сделать, кому, к какому сроку; можно привязать к контрагенту и документу.
+model Task {
+  id             String    @id @default(uuid())
+  tenantId       String    @map("tenant_id")
+  organizationId String    @map("organization_id")
+  title          String
+  description    String?
+  assigneeId     String?   @map("assignee_id")
+  dueAt          DateTime? @map("due_at")
+  done           Boolean   @default(false)
+  doneAt         DateTime? @map("done_at")
+  doneBy         String?   @map("done_by")
+  counterpartyId String?   @map("counterparty_id")
+  documentId     String?   @map("document_id")
+  documentKind   String?   @map("document_kind") // TRADE | ACC
+  /// Комментарии: [{ at, by, text }]
+  comments       Json      @default("[]")
+  createdBy      String    @map("created_by")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  @@index([organizationId, done, dueAt])
+  @@index([organizationId, assigneeId])
+  @@index([organizationId, counterpartyId])
+  @@map("tasks")
+}
+
+// Производство: техкарта — из чего и сколько делается продукция (на выход outputQty).
+model ProductionRecipe {
+  id             String   @id @default(uuid())
+  tenantId       String   @map("tenant_id")
+  organizationId String   @map("organization_id")
+  name           String
+  productId      String   @map("product_id")
+  outputQty      Decimal  @default(1) @map("output_qty") @db.Decimal(18, 3)
+  /// Сырьё и материалы: [{ productId, qty }] на выход outputQty
+  materials      Json     @default("[]")
+  comment        String?
+  isActive       Boolean  @default(true) @map("is_active")
+  createdBy      String   @map("created_by")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@index([organizationId, productId])
+  @@map("production_recipes")
+}
+
+// Производство: заказ / выпуск продукции. Выпуск проводит списание сырья (на 8110) и оприходование продукции по его себестоимости.
+model ProductionOrder {
+  id             String    @id @default(uuid())
+  tenantId       String    @map("tenant_id")
+  organizationId String    @map("organization_id")
+  number         String
+  date           DateTime
+  plannedDate    DateTime? @map("planned_date")
+  recipeId       String?   @map("recipe_id")
+  productId      String    @map("product_id")
+  qty            Decimal   @db.Decimal(18, 3)
+  storeId        String    @map("store_id")
+  /// Сырьё на этот выпуск: [{ productId, qty }] (по техкарте, можно поправить до выпуска)
+  materials      Json      @default("[]")
+  status         String    @default("PLANNED") // PLANNED | DONE | CANCELLED
+  lossDocId      String?   @map("loss_doc_id")
+  enterDocId     String?   @map("enter_doc_id")
+  cost           Decimal?  @db.Decimal(18, 2)
+  comment        String?
+  doneAt         DateTime? @map("done_at")
+  doneBy         String?   @map("done_by")
+  createdBy      String    @map("created_by")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  @@index([organizationId, status, date])
+  @@map("production_orders")
+}
+
+// Бонусная программа организации: процент начисления от покупок, лимит оплаты баллами.
+model LoyaltyProgram {
+  id              String   @id @default(uuid())
+  tenantId        String   @map("tenant_id")
+  organizationId  String   @unique @map("organization_id")
+  isActive        Boolean  @default(false) @map("is_active")
+  accrualPercent  Decimal  @default(0) @map("accrual_percent") @db.Decimal(5, 2)
+  maxPayPercent   Decimal  @default(50) @map("max_pay_percent") @db.Decimal(5, 2)
+  startDate       DateTime @default(now()) @map("start_date")
+  updatedBy       String?  @map("updated_by")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@map("loyalty_programs")
+}
+
+// Баллы покупателя: начисление за покупку (ACCRUAL, по документу — одно), списание (SPEND), ручная правка (ADJUST).
+model BonusTransaction {
+  id             String   @id @default(uuid())
+  tenantId       String   @map("tenant_id")
+  organizationId String   @map("organization_id")
+  counterpartyId String   @map("counterparty_id")
+  kind           String   // ACCRUAL | SPEND | ADJUST
+  points         Decimal  @db.Decimal(14, 2) // со знаком: начисление +, списание −
+  documentId     String?  @map("document_id")
+  comment        String?
+  createdBy      String?  @map("created_by")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@unique([organizationId, kind, documentId])
+  @@index([organizationId, counterpartyId])
+  @@map("bonus_transactions")
+}
+
+// Файлы, прикреплённые к документу или контрагенту (договор, скан накладной, фото). Сам файл — на диске сервера.
+model Attachment {
+  id             String   @id @default(uuid())
+  tenantId       String   @map("tenant_id")
+  organizationId String   @map("organization_id")
+  entityType     String   @map("entity_type") // TRADE | ACC | COUNTERPARTY
+  entityId       String   @map("entity_id")
+  fileName       String   @map("file_name")
+  mime           String
+  size           Int
+  path           String
+  createdBy      String   @map("created_by")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@index([organizationId, entityType, entityId])
+  @@map("attachments")
+}
+
+// Сценарии «если — то»: событие документа (создан / проведён) → действие (задача, этап заказа).
+model AutomationRule {
+  id             String   @id @default(uuid())
+  tenantId       String   @map("tenant_id")
+  organizationId String   @map("organization_id")
+  name           String
+  isActive       Boolean  @default(true) @map("is_active")
+  event          String   // DOC_CREATED | DOC_POSTED
+  docType        String   @map("doc_type")
+  /// Условие: { minTotal?, counterpartyId? }
+  condition      Json     @default("{}")
+  action         String   // CREATE_TASK | SET_ORDER_STAGE
+  /// Параметры действия: задача { title, assignee: AUTHOR|RESPONSIBLE|<userId>, dueDays } / этап { stage }
+  params         Json     @default("{}")
+  runs           Int      @default(0)
+  lastRunAt      DateTime? @map("last_run_at")
+  lastError      String?  @map("last_error")
+  createdBy      String   @map("created_by")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@index([organizationId, event, docType])
+  @@map("automation_rules")
 }

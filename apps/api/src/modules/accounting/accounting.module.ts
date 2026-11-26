@@ -1,4 +1,10 @@
 import { Module } from '@nestjs/common';
+import { TasksService } from './tasks/tasks.service';
+import { ProductionService } from './production/production.service';
+import { LoyaltyService } from './loyalty/loyalty.service';
+import { ConsignmentService } from './consignment/consignment.service';
+import { AutomationService } from './automation/automation.service';
+import { FilesService } from './files/files.service';
 import { AccountingController } from './accounting.controller';
 import { OrgGuard } from './access/org-context';
 import { IdempotencyInterceptor } from './common/idempotency.interceptor';
@@ -32,7 +38,7 @@ import { PurchasingService } from './purchasing/purchasing.service';
 
 @Module({
   controllers: [AccountingController, OpsMetricsController],
-  providers: [OrgGuard, IdempotencyInterceptor, StockLedgerService, PurchasingService, DocumentsService, DocumentGraphService, ApprovalsService, ReportsService, ChartService, RefsService, OrgEcpService, TaxService, DeclarationsService, PrintService, AssetsService, AbsencesService, PeriodsService, PostingService, CostService, AutopilotService, TradeDocumentsService, BankImportService, EsfService, EsfMonitorService, StatementsService, ClosingService, PayrollService, VatCreditService],
+  providers: [AutomationService, FilesService, ConsignmentService, LoyaltyService, ProductionService, TasksService, OrgGuard, IdempotencyInterceptor, StockLedgerService, PurchasingService, DocumentsService, DocumentGraphService, ApprovalsService, ReportsService, ChartService, RefsService, OrgEcpService, TaxService, DeclarationsService, PrintService, AssetsService, AbsencesService, PeriodsService, PostingService, CostService, AutopilotService, TradeDocumentsService, BankImportService, EsfService, EsfMonitorService, StatementsService, ClosingService, PayrollService, VatCreditService],
   exports: [ApprovalsService, PayrollService, StatementsService, ClosingService, EsfService, AutopilotService, TradeDocumentsService, CostService, DocumentsService, ReportsService, ChartService, RefsService, PeriodsService, PostingService, OrgGuard],
 })
 export class AccountingModule {}

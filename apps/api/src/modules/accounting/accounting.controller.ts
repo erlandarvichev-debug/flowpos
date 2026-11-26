@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Post, Put, Query, Res, UseGuards, UseInterceptors } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Put, Query, Res, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
 import type { Response } from 'express';
 import { ApiBearerAuth, ApiHeader, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -17,6 +17,13 @@ import { OrgEcpService } from './refs/org-ecp';
 import { TaxService } from './tax/tax.service';
 import { DeclarationsService } from './tax/declarations.service';
 import { PrintService } from './print/print.service';
+import { TasksService } from './tasks/tasks.service';
+import { ProductionService } from './production/production.service';
+import { LoyaltyService } from './loyalty/loyalty.service';
+import { ConsignmentService } from './consignment/consignment.service';
+import { AutomationService } from './automation/automation.service';
+import { FILE_MAX_BYTES, FilesService } from './files/files.service';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { AssetsService } from './assets/assets.service';
 import { AbsencesService } from './payroll/absences.service';
 import { declarationFileName, declarationPdf, declarationXlsx } from './tax/declaration-export';
@@ -50,6 +57,12 @@ export class AccountingController {
     private tax: TaxService,
     private decl: DeclarationsService,
     private print: PrintService,
+    private tasks: TasksService,
+    private production: ProductionService,
+    private loyalty: LoyaltyService,
+    private consignment: ConsignmentService,
+    private automation: AutomationService,
+    private files: FilesService,
     private assets: AssetsService,
     private absences: AbsencesService,
     private docs: DocumentsService,
@@ -283,6 +296,10 @@ export class AccountingController {
   @Get('trade-documents') @RequirePermission('acc.doc.read')
   tradeList(@Org() ctx: OrgContext, @Query() q: any) { return this.trade.list(ctx, q); }
 
+  /** Долги покупателей (side=customers) или поставщикам (side=suppliers) по срокам оплаты и просрочке. */
+  @Get('reports/debt-aging') @RequirePermission('acc.doc.read')
+  debtAging(@Org() ctx: OrgContext, @Query() q: any) { return this.trade.debtAging(ctx, q); }
+
   @Get('trade-documents/:id') @RequirePermission('acc.doc.read')
   tradeGet(@Org() ctx: OrgContext, @Param('id') id: string) { return this.trade.get(ctx, id); }
 
@@ -299,6 +316,18 @@ export class AccountingController {
   tradePost(@Org() ctx: OrgContext, @Param('id') id: string, @Body() b: any) { return this.trade.post(ctx, id, b?.override, b?.expectedVersion); }
 
   // ── FP-032: резервы и перемещение в два этапа ──
+  /** Этап заказа, дата отгрузки, ответственный (и в проведённом заказе — не учётные поля). */
+  @Post('trade-documents/:id/order-info') @RequirePermission('acc.doc.write') @ApiHeader(IDEMP_HEADER)
+  tradeOrderInfo(@Org() ctx: OrgContext, @Param('id') id: string, @Body() b: any) { return this.trade.setOrderInfo(ctx, id, b ?? {}); }
+
+  /** Сотрудники организации — выбор ответственного в заказе (только имена). */
+  @Get('assignees') @RequirePermission('acc.doc.read')
+  assignees(@Org() ctx: OrgContext) { return this.trade.assignees(ctx); }
+
+  /** «Оплатить до» в реализации/поступлении (и в проведённом документе — срок не учётное поле). */
+  @Post('trade-documents/:id/due-date') @RequirePermission('acc.doc.write') @ApiHeader(IDEMP_HEADER)
+  tradeDueDate(@Org() ctx: OrgContext, @Param('id') id: string, @Body() b: any) { return this.trade.setDueDate(ctx, id, b ?? {}); }
+
   @Post('trade-documents/:id/reserve') @RequirePermission('acc.doc.write') @ApiHeader(IDEMP_HEADER)
   tradeReserve(@Org() ctx: OrgContext, @Param('id') id: string) { return this.trade.reserve(ctx, id); }
 
@@ -363,6 +392,9 @@ export class AccountingController {
   @Post('trade-documents/:id/restore') @RequirePermission('acc.doc.cancel') @ApiHeader(IDEMP_HEADER)
   tradeRestore(@Org() ctx: OrgContext, @Param('id') id: string) { return this.trade.restore(ctx, id); }
 
+  @Get('contracts/registry') @RequirePermission('acc.doc.read')
+  contractRegistry(@Org() ctx: OrgContext, @Query() q: any) { return this.refs.contractRegistry(ctx, q); }
+
   @Get('contracts') @RequirePermission('acc.refs.read')
   contracts(@Org() ctx: OrgContext, @Query('counterpartyId') counterpartyId?: string) {
     return this.refs.contracts(ctx, counterpartyId);
@@ -415,6 +447,18 @@ export class AccountingController {
   /** Акт сверки взаиморасчётов с контрагентом за период. */
   @Get('reports/reconciliation') @RequirePermission('acc.reports.read')
   reconciliation(@Org() ctx: OrgContext, @Query() q: any) { return this.reports.reconciliation(ctx, q); }
+
+  /** Прибыльность: выручка, возвраты, себестоимость, прибыль, маржа по товарам / группам / покупателям / сотрудникам / складам / документам. */
+  /** Обороты товаров: на начало, приход, расход, на конец (количество и себестоимость). */
+  @Get('reports/stock-turnover') @RequirePermission('acc.reports.read')
+  stockTurnover(@Org() ctx: OrgContext, @Query() q: any) { return this.reports.stockTurnover(ctx, q); }
+
+  /** Движение денег (ДДС) по статьям или видам операций, по месяцам. */
+  @Get('reports/money-flow') @RequirePermission('acc.reports.read')
+  moneyFlow(@Org() ctx: OrgContext, @Query() q: any) { return this.reports.moneyFlow(ctx, q); }
+
+  @Get('reports/profitability') @RequirePermission('acc.reports.read')
+  profitability(@Org() ctx: OrgContext, @Query() q: any) { return this.reports.profitability(ctx, q); }
 
   @Get('reports/settlements') @RequirePermission('acc.reports.read')
   settlements(@Org() ctx: OrgContext, @Query() q: any) { return this.reports.settlements(ctx, q); }
@@ -608,6 +652,118 @@ export class AccountingController {
 
   @Post('tax/declarations/:id/mark') @RequirePermission('acc.period.lock') @RequireMfa()
   taxMark(@Org() ctx: OrgContext, @Param('id') id: string, @Body() b: any) { return this.decl.mark(ctx, id, b ?? {}); }
+
+  // ── Сценарии ──
+  @Get('automation') @RequirePermission('acc.doc.read')
+  autoList(@Org() ctx: OrgContext) { return this.automation.list(ctx); }
+
+  @Post('automation') @RequirePermission('acc.refs.manage')
+  autoCreate(@Org() ctx: OrgContext, @Body() b: any) { return this.automation.save(ctx, null, b ?? {}); }
+
+  @Put('automation/:id') @RequirePermission('acc.refs.manage')
+  autoUpdate(@Org() ctx: OrgContext, @Param('id') id: string, @Body() b: any) { return this.automation.save(ctx, id, b ?? {}); }
+
+  @Delete('automation/:id') @RequirePermission('acc.refs.manage')
+  autoDelete(@Org() ctx: OrgContext, @Param('id') id: string) { return this.automation.remove(ctx, id); }
+
+  // ── Файлы к документам и контрагентам ──
+  @Get('files/:type/:id') @RequirePermission('acc.doc.read')
+  fileList(@Org() ctx: OrgContext, @Param('type') type: string, @Param('id') id: string) { return this.files.list(ctx, type, id); }
+
+  @Post('files/:type/:id') @RequirePermission('acc.doc.write')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: FILE_MAX_BYTES, files: 1 } }))
+  fileUpload(@Org() ctx: OrgContext, @Param('type') type: string, @Param('id') id: string, @UploadedFile() file: any) { return this.files.upload(ctx, type, id, file); }
+
+  @Get('attachments/:fileId/download') @RequirePermission('acc.doc.read')
+  async fileDownload(@Org() ctx: OrgContext, @Param('fileId') fileId: string, @Res() res: any) {
+    const f = await this.files.download(ctx, fileId);
+    res.setHeader('Content-Type', f.mime);
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(f.name)}`);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.end(f.data);
+  }
+
+  @Delete('attachments/:fileId') @RequirePermission('acc.doc.write')
+  fileDelete(@Org() ctx: OrgContext, @Param('fileId') fileId: string) { return this.files.remove(ctx, fileId); }
+
+  // ── Товары на реализации (комиссия) ──
+  @Get('consignment') @RequirePermission('acc.doc.read')
+  consignees(@Org() ctx: OrgContext) { return this.consignment.list(ctx); }
+
+  @Post('consignment') @RequirePermission('acc.doc.write')
+  consigneeAdd(@Org() ctx: OrgContext, @Body() b: any) { return this.consignment.addConsignee(ctx, b ?? {}); }
+
+  @Get('consignment/:storeId/stock') @RequirePermission('acc.doc.read')
+  consigneeStock(@Org() ctx: OrgContext, @Param('storeId') storeId: string) { return this.consignment.stock(ctx, storeId); }
+
+  @Post('consignment/report') @RequirePermission('acc.doc.post') @ApiHeader(IDEMP_HEADER)
+  consigneeReport(@Org() ctx: OrgContext, @Body() b: any) { return this.consignment.report(ctx, b ?? {}); }
+
+  // ── Бонусная программа ──
+  @Get('loyalty/settings') @RequirePermission('acc.doc.read')
+  loyaltySettings(@Org() ctx: OrgContext) { return this.loyalty.settings(ctx); }
+
+  @Put('loyalty/settings') @RequirePermission('acc.refs.manage')
+  loyaltySave(@Org() ctx: OrgContext, @Body() b: any) { return this.loyalty.saveSettings(ctx, b ?? {}); }
+
+  @Get('loyalty/balances') @RequirePermission('acc.doc.read')
+  loyaltyBalances(@Org() ctx: OrgContext, @Query() q: any) { return this.loyalty.balances(ctx, q); }
+
+  @Get('loyalty/counterparties/:id') @RequirePermission('acc.doc.read')
+  loyaltyHistory(@Org() ctx: OrgContext, @Param('id') id: string) { return this.loyalty.history(ctx, id); }
+
+  @Post('loyalty/moves') @RequirePermission('acc.doc.write') @ApiHeader(IDEMP_HEADER)
+  loyaltyMove(@Org() ctx: OrgContext, @Body() b: any) { return this.loyalty.move(ctx, b ?? {}); }
+
+  // ── Производство ──
+  @Get('production/recipes') @RequirePermission('acc.doc.read')
+  prodRecipes(@Org() ctx: OrgContext, @Query() q: any) { return this.production.recipes(ctx, q); }
+
+  @Post('production/recipes') @RequirePermission('acc.doc.write')
+  prodRecipeCreate(@Org() ctx: OrgContext, @Body() b: any) { return this.production.saveRecipe(ctx, null, b ?? {}); }
+
+  @Put('production/recipes/:id') @RequirePermission('acc.doc.write')
+  prodRecipeUpdate(@Org() ctx: OrgContext, @Param('id') id: string, @Body() b: any) { return this.production.saveRecipe(ctx, id, b ?? {}); }
+
+  @Get('production/orders') @RequirePermission('acc.doc.read')
+  prodOrders(@Org() ctx: OrgContext, @Query() q: any) { return this.production.orders(ctx, q); }
+
+  @Get('production/orders/:id') @RequirePermission('acc.doc.read')
+  prodOrder(@Org() ctx: OrgContext, @Param('id') id: string) { return this.production.order(ctx, id); }
+
+  @Post('production/orders') @RequirePermission('acc.doc.write') @ApiHeader(IDEMP_HEADER)
+  prodOrderCreate(@Org() ctx: OrgContext, @Body() b: any) { return this.production.createOrder(ctx, b ?? {}); }
+
+  @Put('production/orders/:id') @RequirePermission('acc.doc.write')
+  prodOrderUpdate(@Org() ctx: OrgContext, @Param('id') id: string, @Body() b: any) { return this.production.updateOrder(ctx, id, b ?? {}); }
+
+  @Post('production/orders/:id/complete') @RequirePermission('acc.doc.post') @ApiHeader(IDEMP_HEADER)
+  prodComplete(@Org() ctx: OrgContext, @Param('id') id: string) { return this.production.complete(ctx, id); }
+
+  @Post('production/orders/:id/cancel') @RequirePermission('acc.doc.cancel') @ApiHeader(IDEMP_HEADER)
+  prodCancel(@Org() ctx: OrgContext, @Param('id') id: string) { return this.production.cancel(ctx, id); }
+
+  // ── Задачи ──
+  @Get('tasks') @RequirePermission('acc.doc.read')
+  taskList(@Org() ctx: OrgContext, @Query() q: any) { return this.tasks.list(ctx, q); }
+
+  @Get('tasks/summary') @RequirePermission('acc.doc.read')
+  taskSummary(@Org() ctx: OrgContext) { return this.tasks.summary(ctx); }
+
+  @Post('tasks') @RequirePermission('acc.doc.read') @ApiHeader(IDEMP_HEADER)
+  taskCreate(@Org() ctx: OrgContext, @Body() b: any) { return this.tasks.create(ctx, b ?? {}); }
+
+  @Put('tasks/:id') @RequirePermission('acc.doc.read')
+  taskUpdate(@Org() ctx: OrgContext, @Param('id') id: string, @Body() b: any) { return this.tasks.update(ctx, id, b ?? {}); }
+
+  @Post('tasks/:id/done') @RequirePermission('acc.doc.read')
+  taskDone(@Org() ctx: OrgContext, @Param('id') id: string, @Body() b: any) { return this.tasks.setDone(ctx, id, b?.done !== false); }
+
+  @Post('tasks/:id/comments') @RequirePermission('acc.doc.read')
+  taskComment(@Org() ctx: OrgContext, @Param('id') id: string, @Body() b: any) { return this.tasks.comment(ctx, id, b?.text); }
+
+  @Delete('tasks/:id') @RequirePermission('acc.doc.read')
+  taskDelete(@Org() ctx: OrgContext, @Param('id') id: string) { return this.tasks.remove(ctx, id); }
 
   // ── Печатные формы и конструктор ──
   @Get('print/kinds') @RequirePermission('acc.doc.read')

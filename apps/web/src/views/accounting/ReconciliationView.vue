@@ -31,7 +31,7 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import api from '@/api/client'
 import PrintButton from '@/components/print/PrintButton.vue'
 import { fmtDate, fmtMoney, showError, loadDimOptions } from './acc'
@@ -50,7 +50,14 @@ async function load() {
   try { r.value = await api.get('/accounting/reports/reconciliation', { params: { counterpartyId: cp.value, from: range.value[0], to: range.value[1] } }) } catch (e) { showError(e) }
 }
 function open(row: any) { router.push(row.sourceType === 'TRADE_DOCUMENT' ? `/accounting/trade/${row.sourceId}` : `/accounting/documents/${row.sourceId}`) }
-search('')
+// Переход из «Долгов по срокам» / карточки: ?counterpartyId=…&name=… — сразу строим акт.
+const q = useRoute().query
+if (q.counterpartyId) {
+  cp.value = String(q.counterpartyId)
+  options.value = [{ value: cp.value, label: String(q.name || cp.value) }]
+  load()
+  loadDimOptions('COUNTERPARTY', '').then((o) => { options.value = [...options.value, ...o.filter((x) => x.value !== cp.value)] }).catch(() => {})
+} else search('')
 </script>
 
 <style scoped>

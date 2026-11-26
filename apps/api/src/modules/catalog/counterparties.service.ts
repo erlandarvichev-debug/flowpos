@@ -3,9 +3,10 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { Scope, scopeError, tenantCatalog, writable } from '../../common/scope';
 import { RequisiteError, day, effectiveOn, validateBik, validateBin, validateIban, validateKbe } from './requisites';
+import { parsePaymentDays } from '../accounting/autopilot/payment-terms';
 
 /** Поля контрагента, которые задаёт пользователь (FP-026). Идентификаторы обмена, статус обмена, архив — нет. */
-const EDITABLE = ['type', 'kind', 'name', 'fullName', 'inn', 'kpp', 'phone', 'email', 'groupId', 'countryCode', 'kbe', 'attributes'] as const;
+const EDITABLE = ['type', 'kind', 'name', 'fullName', 'inn', 'kpp', 'phone', 'email', 'groupId', 'countryCode', 'kbe', 'paymentDays', 'attributes'] as const;
 const KINDS = ['LEGAL', 'ENTREPRENEUR', 'INDIVIDUAL', 'NONRESIDENT'];
 const TYPES = ['CUSTOMER', 'SUPPLIER', 'BOTH'];
 const ADDRESS_KINDS = ['LEGAL', 'ACTUAL', 'DELIVERY'];
@@ -18,6 +19,10 @@ function req<T>(fn: () => T): T {
     throw e;
   }
 }
+/** Отсрочка оплаты, дней: 0…365 или null. */
+const days = (v: unknown) => {
+  try { return parsePaymentDays(v); } catch (e: any) { throw bad('PAYMENT_DAYS', e.message); }
+};
 const dayBefore = (d: Date) => new Date(d.getTime() - 86400000);
 const ru = (d: Date) => d.toISOString().slice(0, 10).split('-').reverse().join('.');
 
@@ -85,6 +90,7 @@ export class CounterpartiesService {
     for (const k of EDITABLE) if (k in (data as any)) out[k] = (data as any)[k];
     for (const k of ['fullName', 'inn', 'kpp', 'phone', 'email', 'groupId', 'kbe'] as const) if (k in out && (out[k] === '' || out[k] === undefined)) out[k] = null;
     if ('name' in out && !String(out.name ?? '').trim()) throw bad('NAME_REQUIRED', 'Укажите наименование');
+    if ('paymentDays' in out) out.paymentDays = days(out.paymentDays);
     if ('kind' in out && !KINDS.includes(out.kind)) throw bad('KIND', `Вид: ${KINDS.join(', ')}`);
     if ('type' in out && !TYPES.includes(out.type)) throw bad('TYPE', `Роль: ${TYPES.join(', ')}`);
     if ('countryCode' in out) {
@@ -246,6 +252,7 @@ export class CounterpartiesService {
       if (!/^[A-Z]{3}$/.test(out.currency)) throw bad('CURRENCY', 'Валюта — трёхбуквенный код');
     }
     if ('isActive' in b) out.isActive = !!b.isActive;
+    if ('paymentDays' in b) out.paymentDays = days(b.paymentDays);
     return out;
   }
 

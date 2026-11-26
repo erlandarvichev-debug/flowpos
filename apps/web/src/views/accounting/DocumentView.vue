@@ -66,9 +66,10 @@
         </el-form-item>
         <el-form-item v-if="['CUSTOMER', 'SUPPLIER'].includes(money.operation) && money.counterpartyId" label="Разнесение">
           <el-radio-group v-model="money.allocMode" :disabled="readonly" size="small" @change="loadOpenItems">
-            <el-radio-button value="AUTO">автоматически — от самого старого долга</el-radio-button>
+            <el-radio-button value="AUTO">{{ money.invoiceId ? 'по счёту — в отгрузки этого счёта' : 'автоматически — от самого старого долга' }}</el-radio-button>
             <el-radio-button value="MANUAL">вручную по документам</el-radio-button>
           </el-radio-group>
+          <div v-if="money.invoiceId && money.allocMode === 'AUTO'" class="inv-note">Оплата по счёту: гасит долг отгрузок по этому счёту, остальное — аванс, который зачтётся при отгрузке. Старые долги клиента не трогает.</div>
           <div v-if="money.allocMode === 'MANUAL'" style="width: 100%; margin-top: 8px;">
             <el-table :data="openItems" size="small" empty-text="Открытых долгов по документам нет — вся сумма уйдёт в аванс">
               <el-table-column label="Документ" min-width="200"><template #default="{ row }">{{ row.document ? `${row.document.number} от ${fmtDate(row.document.date)}` : 'без документа (старые расчёты)' }}</template></el-table-column>
@@ -316,7 +317,7 @@ const emptyMoney = () => ({
   selfId: undefined as string | undefined, operation: '', counterpartyId: undefined as string | undefined, amount: '', currencyAmount: '',
   toKind: 'BANK', toId: undefined as string | undefined, fromBankAccountId: undefined as string | undefined, employeeId: undefined as string | undefined,
   corrAccount: '', corrDims: {} as Record<string, string>, itemId: undefined as string | undefined, purpose: '', commission: '',
-  allocMode: 'AUTO', allocations: {} as Record<string, string>,
+  allocMode: 'AUTO', allocations: {} as Record<string, string>, invoiceId: undefined as string | undefined,
 })
 /** FP-036: открытые позиции контрагента (ручное разнесение) и журнал разнесений платежа. */
 const openItems = ref<any[]>([])
@@ -382,14 +383,14 @@ function fillMoney(b: any, type: string) {
     fromBankAccountId: b.fromBankAccountId, employeeId: b.employeeId, corrAccount: b.corrAccount || '', corrDims: { ...(b.corrDims || {}) },
     itemId: b.itemId, purpose: b.purpose || '', commission: b.commission ?? '',
     allocMode: Array.isArray(b.allocations) && b.allocations.length ? 'MANUAL' : 'AUTO',
-    allocations: Object.fromEntries((b.allocations || []).map((a: any) => [a.docId, String(a.amount)])),
+    allocations: Object.fromEntries((b.allocations || []).map((a: any) => [a.docId, String(a.amount)])), invoiceId: b.invoiceId,
   }
   loadOpenItems()
 }
 
 function moneyBody() {
   const m = money.value
-  const b: any = { operation: m.operation, purpose: m.purpose || undefined, itemId: m.itemId || undefined }
+  const b: any = { operation: m.operation, purpose: m.purpose || undefined, itemId: m.itemId || undefined, invoiceId: m.invoiceId || undefined }
   if (moneyIsBank.value) b.bankAccountId = m.selfId; else b.cashboxId = m.selfId
   if (moneyCurrency.value !== 'KZT') b.currencyAmount = normAmount(m.currencyAmount)
   else b.amount = normAmount(m.amount)
@@ -510,6 +511,7 @@ async function load() {
         money.value.allocations = { [String(q.settle)]: String(q.amount) }
       }
       if (q.comment) form.value.comment = String(q.comment)
+      if (q.invoice) money.value.invoiceId = String(q.invoice)
     }
     return
   }
@@ -661,4 +663,5 @@ onMounted(async () => {
 .entry-meta { color: #909399; font-size: 12px; margin-bottom: 6px; }
 .muted { color: var(--el-text-color-secondary); font-size: 12px; }
 .num-in :deep(input) { text-align: right; }
+.inv-note { width: 100%; margin-top: 6px; font-size: 12px; color: var(--fp-text-2); line-height: 1.4; }
 </style>

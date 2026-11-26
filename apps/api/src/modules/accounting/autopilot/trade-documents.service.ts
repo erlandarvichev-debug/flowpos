@@ -1,4 +1,5 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
+import { AutomationService } from '../automation/automation.service';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { AccError } from '../common/acc-error';
@@ -17,17 +18,20 @@ import { CountError, bookQty, checkInventoryLine, checkLossLine, inventoryValue,
 import { ReserveError, activeReservations, assertReservesCovered, consumeForShipment, releaseReservations, reserveOrder } from '../../inventory/reservations';
 import { ReceiptError, checkReceiptLine, receiptSummary } from '../../inventory/receipt';
 import { splitVat, standardVatRate } from './vat';
+import { AGING_BUCKETS, DUE_DATE_RE, bucketOf, daysBetween, kzDay, termsFor } from './payment-terms';
+import { ORDER_STAGES, fulfillLines, fulfillState, isOrder, orderStatus } from './order-info';
+import { invoiceStates, isInvoice } from './invoices';
 
 type Tx = Prisma.TransactionClient;
 /** Документы, в которых цена может быть «без НДС» и НДС начисляется сверху (как в tradeLineAmounts). */
-const VAT_ON_TOP_TYPES = new Set(['SUPPLY', 'DEMAND', 'RETAIL_DEMAND', 'SALES_RETURN', 'RETAIL_RETURN', 'LANDED_COST', 'PURCHASE_RETURN', 'CUSTOMER_ORDER', 'PURCHASE_ORDER']);
+const VAT_ON_TOP_TYPES = new Set(['INVOICE_OUT', 'INVOICE_IN', 'SUPPLY', 'DEMAND', 'RETAIL_DEMAND', 'SALES_RETURN', 'RETAIL_RETURN', 'LANDED_COST', 'PURCHASE_RETURN', 'CUSTOMER_ORDER', 'PURCHASE_ORDER']);
 
 const PREFIX: Record<string, string> = {
-  PURCHASE_ORDER: 'ЗП', SUPPLY: 'ПТ', PURCHASE_RETURN: 'ВП', LANDED_COST: 'ДР', CUSTOMER_ORDER: 'ЗК', DEMAND: 'РТ', SALES_RETURN: 'ВК',
+  INVOICE_OUT: 'СЧ', INVOICE_IN: 'СЧП', INTERNAL_ORDER: 'ВЗ', PURCHASE_ORDER: 'ЗП', SUPPLY: 'ПТ', PURCHASE_RETURN: 'ВП', LANDED_COST: 'ДР', CUSTOMER_ORDER: 'ЗК', DEMAND: 'РТ', SALES_RETURN: 'ВК',
   ENTER: 'ОПР', LOSS: 'СП', MOVE: 'ПМ', INVENTORY: 'ИНВ', PAYMENT_IN: 'ПВ', PAYMENT_OUT: 'ИП', RETAIL_DEMAND: 'ЧЕК', RETAIL_RETURN: 'ВЧ',
 };
 const EDITABLE = Object.keys(PREFIX);
-const BASE_TARGETS: Record<string, string[]> = { CUSTOMER_ORDER: ['DEMAND'], PURCHASE_ORDER: ['SUPPLY'], DEMAND: ['SALES_RETURN'], SUPPLY: ['PURCHASE_RETURN'], RETAIL_DEMAND: ['RETAIL_RETURN'] };
+const BASE_TARGETS: Record<string, string[]> = { CUSTOMER_ORDER: ['DEMAND', 'INVOICE_OUT'], PURCHASE_ORDER: ['SUPPLY', 'INVOICE_IN'], INVOICE_OUT: ['DEMAND'], INVOICE_IN: ['SUPPLY'], INTERNAL_ORDER: ['MOVE'], DEMAND: ['SALES_RETURN'], SUPPLY: ['PURCHASE_RETURN'], RETAIL_DEMAND: ['RETAIL_RETURN'] };
 
 export interface TradeLineInput {
   productId: string; qty: string | number; price?: string | number; discount?: string | number; vatRate?: string | number | null;
@@ -64,6 +68,12 @@ export interface TradeDocInput {
   /** FP-034: источник цен заказа (снимок прайс-листов и скидок) — заполняет сервер. */
   pricing?: any;
   baseId?: string;
+  /** Срок оплаты документа (ГГГГ-ММ-ДД) — вместо отсрочки договора/контрагента; null — снять. */
+  dueDate?: string | null;
+  /** Заказы: этап (ставит человек), плановая дата отгрузки/поступления, ответственный (участник организации). */
+  stage?: string | null;
+  shipDate?: string | null;
+  responsibleId?: string | null;
   lines?: TradeLineInput[];
   status?: 'DRAFT' | 'POSTED';
 }
@@ -74,7 +84,13 @@ export interface TradeDocInput {
  */
 @Injectable()
 export class TradeDocumentsService {
-  constructor(private prisma: PrismaService, private autopilot: AutopilotService, private approvals: ApprovalsService) {}
+  constructor(private prisma: PrismaService, private autopilot: AutopilotService, private approvals: ApprovalsService, @Optional() private automation?: AutomationService) {}
+
+  /** Сценарии «если — то» после сохранения (ошибки сценария документ не откатывают). */
+  private async fireAutomation(ctx: OrgContext, event: 'DOC_CREATED' | 'DOC_POSTED', v: any) {
+    if (!this.automation || !v?.id) return;
+    await this.automation.fire(ctx, event, { id: v.id, docType: v.docType, number: v.number, total: v.total, counterpartyId: v.counterpartyId, attributes: v.attributes, updatedBy: v.updatedBy });
+  }
 
   private async number(tx: Tx, ctx: OrgContext, docType: string, date: Date) {
     const year = date.getUTCFullYear();
@@ -92,6 +108,19 @@ export class TradeDocumentsService {
     if (!org && doc.storeId) org = (await tx.store.findUnique({ where: { id: doc.storeId } }))?.organizationId ?? null;
     if (org !== ctx.organizationId) throw new AccError('DOC_NOT_FOUND', 'Документ не найден', { status: 404 });
     return doc;
+  }
+
+  /** Поля заказа: этап — из списка для вида заказа, дата — ГГГГ-ММ-ДД, ответственный — действующий участник организации. */
+  private async checkOrderFields(tx: Tx, ctx: OrgContext, docType: string, input: { stage?: string | null; shipDate?: string | null; responsibleId?: string | null }) {
+    const touched = ['stage', 'shipDate', 'responsibleId'].some((k) => (input as any)[k] !== undefined && (input as any)[k] !== null && (input as any)[k] !== '');
+    if (!touched) return;
+    if (!isOrder(docType)) throw new AccError('NOT_ORDER', 'Этап, дата отгрузки и ответственный есть только у заказов');
+    if (input.stage && !ORDER_STAGES[docType].includes(input.stage)) throw new AccError('BAD_STAGE', `Этап заказа: ${ORDER_STAGES[docType].join(', ')}`);
+    if (input.shipDate && !DUE_DATE_RE.test(String(input.shipDate))) throw new AccError('BAD_DATE', 'Дата отгрузки: ГГГГ-ММ-ДД');
+    if (input.responsibleId) {
+      const m = await tx.orgMembership.findFirst({ where: { organizationId: ctx.organizationId, userId: input.responsibleId, isActive: true } });
+      if (!m) throw new AccError('BAD_RESPONSIBLE', 'Ответственный должен быть сотрудником этой организации');
+    }
   }
 
   private async validateRefs(tx: Tx, ctx: OrgContext, input: TradeDocInput, internal = false) {
@@ -331,7 +360,18 @@ export class TradeDocumentsService {
 
   private attrs(input: TradeDocInput, prev: any = {}) {
     const a: any = { ...prev };
-    for (const k of ['vatIncluded', 'paymentType', 'bankAccountId', 'departmentId', 'lossAccount', 'baseId', 'comment', 'allocation', 'twoStage', 'destinationStoreId', 'transferStage', 'lossReason', 'noBasis', 'returnReason', 'pricing'] as const) if ((input as any)[k] !== undefined) a[k] = (input as any)[k];
+    for (const k of ['vatIncluded', 'paymentType', 'bankAccountId', 'departmentId', 'lossAccount', 'baseId', 'comment', 'allocation', 'twoStage', 'destinationStoreId', 'transferStage', 'lossReason', 'noBasis', 'returnReason', 'pricing', 'orderId', 'corrAccount', 'productionId'] as const) if ((input as any)[k] !== undefined) a[k] = (input as any)[k];
+    for (const k of ['stage', 'shipDate', 'responsibleId'] as const) {
+      const v = (input as any)[k];
+      if (v === undefined) continue;
+      if (v === null || v === '') delete a[k];
+      else a[k] = String(v);
+    }
+    if (input.dueDate !== undefined) {
+      if (input.dueDate === null || input.dueDate === '') delete a.dueDate;
+      else if (!DUE_DATE_RE.test(String(input.dueDate))) throw new AccError('BAD_DATE', 'Срок оплаты: дата ГГГГ-ММ-ДД');
+      else a.dueDate = String(input.dueDate);
+    }
     return a;
   }
 
@@ -401,6 +441,13 @@ export class TradeDocumentsService {
   }
 
   async create(ctx: OrgContext, input: TradeDocInput, override?: OverrideRequest, internal = false) {
+    const v: any = await this.createTx(ctx, input, override, internal);
+    await this.fireAutomation(ctx, 'DOC_CREATED', v);
+    if (v?.status === 'POSTED') await this.fireAutomation(ctx, 'DOC_POSTED', v);
+    return v;
+  }
+
+  private async createTx(ctx: OrgContext, input: TradeDocInput, override?: OverrideRequest, internal = false) {
     if (!EDITABLE.includes(input.docType)) throw new AccError('UNKNOWN_DOC_TYPE', `Тип документа ${input.docType} не поддерживается`);
     const date = new Date(input.date);
     if (!input.date || isNaN(date.getTime())) throw new AccError('BAD_DATE', 'Укажите дату документа');
@@ -418,7 +465,14 @@ export class TradeDocumentsService {
         throw new AccError('BAD_TWO_STAGE', 'В два этапа оформляется только перемещение');
       }
       await this.validateRefs(tx, ctx, input, internal);
+      await this.checkOrderFields(tx, ctx, input.docType, input);
+      if (isOrder(input.docType) && input.responsibleId === undefined) input.responsibleId = ctx.userId; // по умолчанию — кто создал
       // FP-034: цены и НДС — из основания (заказа / реализации); заказ — снимок цен на дату.
+      // Отгрузка/приёмка по счёту, выставленному по заказу: помним заказ — его статус и резерв учитывают и её.
+      if ((input.docType === 'DEMAND' || input.docType === 'SUPPLY') && input.baseId) {
+        const b = await tx.document.findUnique({ where: { id: input.baseId }, select: { docType: true, attributes: true } });
+        if (b && isInvoice(b.docType) && (b.attributes as any)?.baseId) (input as any).orderId = (b.attributes as any).baseId;
+      }
       await applyBasis(tx, input);
       await snapshotOrder(tx, ctx, input);
       await this.prepareLines(tx, input);
@@ -454,6 +508,7 @@ export class TradeDocumentsService {
       if (doc.deleted || doc.status === 'CANCELLED') throw new AccError('DOC_CANCELLED', 'Документ помечен на удаление — сначала восстановите его');
       if ((doc.attributes as any)?.closed) throw new AccError('ORDER_CLOSED', `Заказ ${doc.number ?? ''} закрыт — изменять его нельзя`);
       if (doc.status === 'POSTED' && !input.reason) throw new AccError('REASON_REQUIRED', 'Изменение проведённого документа требует указать причину');
+      await this.checkOrderFields(tx, ctx, doc.docType, input);
       const merged: TradeDocInput = {
         docType: doc.docType, date: input.date ?? doc.date.toISOString(), counterpartyId: input.counterpartyId ?? doc.counterpartyId ?? undefined,
         contractId: input.contractId === null ? undefined : input.contractId ?? doc.contractId ?? undefined, storeId: input.storeId ?? doc.storeId ?? undefined, storeToId: input.storeToId ?? doc.storeToId ?? undefined,
@@ -614,8 +669,11 @@ export class TradeDocumentsService {
     return result;
   }
 
-  post(ctx: OrgContext, id: string, override?: OverrideRequest, expectedVersion?: unknown) {
-    return this.prisma.$transaction((tx) => this.postIn(tx, ctx, id, override, expectedVersion), { timeout: 60000 });
+  async post(ctx: OrgContext, id: string, override?: OverrideRequest, expectedVersion?: unknown) {
+    const before = await this.prisma.document.findUnique({ where: { id }, select: { status: true } });
+    const v: any = await this.prisma.$transaction((tx) => this.postIn(tx, ctx, id, override, expectedVersion), { timeout: 60000 });
+    if (before?.status !== 'POSTED' && v?.status === 'POSTED') await this.fireAutomation(ctx, 'DOC_POSTED', v);
+    return v;
   }
 
   unpost(ctx: OrgContext, id: string, override?: OverrideRequest, expectedVersion?: unknown) {
@@ -664,9 +722,13 @@ export class TradeDocumentsService {
     const base = await this.prisma.$transaction((tx) => this.scoped(tx, ctx, baseId));
     if (!BASE_TARGETS[base.docType]?.includes(targetType)) throw new AccError('BAD_BASE', `Нельзя создать ${targetType} на основании ${base.docType}`);
     if (base.deleted || base.status === 'CANCELLED') throw new AccError('BASE_CANCELLED', `Документ ${base.number} помечен на удаление`);
-    if (!base.docType.endsWith('_ORDER') && base.status !== 'POSTED') throw new AccError('BASE_NOT_POSTED', `Возврат оформляется только на основании проведённого документа (${base.number} — черновик)`, { fix: 'Сначала проведите документ-основание.' });
+    if (!base.docType.endsWith('_ORDER') && !isInvoice(base.docType) && base.status !== 'POSTED') throw new AccError('BASE_NOT_POSTED', `Возврат оформляется только на основании проведённого документа (${base.number} — черновик)`, { fix: 'Сначала проведите документ-основание.' });
+    const viaInvoice = targetType === 'DEMAND' || targetType === 'SUPPLY';
     const children = await this.prisma.document.findMany({
-      where: { docType: targetType as any, status: 'POSTED', deleted: false, attributes: { path: ['baseId'], equals: baseId } },
+      where: {
+        docType: targetType as any, deleted: false, ...(isInvoice(targetType) ? { status: { not: 'CANCELLED' as any } } : { status: 'POSTED' as any }),
+        OR: [{ attributes: { path: ['baseId'], equals: baseId } }, ...(viaInvoice && base.docType.endsWith('_ORDER') ? [{ attributes: { path: ['orderId'], equals: baseId } }] : [])],
+      },
       include: { lines: true },
     });
     const done = new Map<string, Prisma.Decimal>();
@@ -712,7 +774,8 @@ export class TradeDocumentsService {
     return this.create(ctx, {
       docType: targetType, date: date ?? new Date().toISOString().slice(0, 10), counterpartyId: base.counterpartyId ?? undefined,
       contractId: base.contractId ?? undefined, storeId: base.storeId ?? undefined, vatIncluded: (base.attributes as any)?.vatIncluded,
-      baseId, lines, status: 'DRAFT',
+      ...(targetType === 'MOVE' ? { storeToId: base.storeToId ?? undefined } : {}),
+      baseId, lines: targetType === 'MOVE' ? lines.map((l) => ({ productId: l.productId, qty: l.qty })) : lines, status: 'DRAFT',
     });
   }
 
@@ -853,7 +916,7 @@ export class TradeDocumentsService {
    * Журнал торговых документов: фильтры (вид, статус, период по дням Казахстана, контрагент, склад, товар, поиск по номеру
    * и контрагенту), сортировка и итог суммы по всей выборке (не только по странице).
    */
-  async list(ctx: OrgContext, q: { docType?: string; status?: string; from?: string; to?: string; search?: string; counterpartyId?: string; storeId?: string; productId?: string; sort?: string; page?: number; limit?: number }) {
+  async list(ctx: OrgContext, q: { docType?: string; status?: string; from?: string; to?: string; search?: string; counterpartyId?: string; storeId?: string; productId?: string; responsibleId?: string; deleted?: string; sort?: string; page?: number; limit?: number }) {
     const stores = (await this.prisma.store.findMany({ where: { organizationId: ctx.organizationId }, select: { id: true } })).map((s) => s.id);
     const where: Prisma.DocumentWhereInput = { OR: [{ organizationId: ctx.organizationId }, { organizationId: null, storeId: { in: stores } }] };
     const and: Prisma.DocumentWhereInput[] = [];
@@ -869,6 +932,9 @@ export class TradeDocumentsService {
     if (q.counterpartyId) and.push({ counterpartyId: q.counterpartyId });
     if (q.storeId) and.push({ OR: [{ storeId: q.storeId }, { storeToId: q.storeId }] });
     if (q.productId) and.push({ lines: { some: { productId: q.productId } } });
+    // Корзина: помеченные на удаление (восстанавливаются); обычный журнал их тоже показывает — со статусом.
+    if (q.deleted === '1') and.push({ OR: [{ deleted: true }, { status: 'CANCELLED' }] });
+    if (q.responsibleId) and.push({ attributes: { path: ['responsibleId'], equals: q.responsibleId === 'me' ? ctx.userId : q.responsibleId } });
     if (and.length) where.AND = and;
     const limit = Math.min(200, Math.max(1, Number(q.limit) || 50));
     const page = Math.max(1, Number(q.page) || 1);
@@ -885,12 +951,16 @@ export class TradeDocumentsService {
     const entries = await this.prisma.accEntry.findMany({ where: { organizationId: ctx.organizationId, sourceType: TRADE_SOURCE, sourceId: { in: items.map((i) => i.id) }, status: 'ACTIVE' }, select: { sourceId: true } });
     const issues = await this.prisma.accAutopilotIssue.findMany({ where: { sourceType: TRADE_SOURCE, sourceId: { in: items.map((i) => i.id) }, resolvedAt: null } });
     const pay = await this.payState(this.prisma as any, ctx.organizationId, items);
+    const orderSt = await this.orderStates(this.prisma as any, items);
+    const invSt = await invoiceStates(this.prisma as any, ctx.organizationId, items);
     return {
       items: items.map((i) => ({
         ...i,
         accounting: entries.some((e) => e.sourceId === i.id) ? 'REFLECTED' : issues.find((x) => x.sourceId === i.id) ? 'ISSUE' : 'NONE',
         issue: issues.find((x) => x.sourceId === i.id) ?? null,
         payment: pay.get(i.id) ?? null,
+        orderStatus: orderSt.get(i.id) ?? null,
+        invoice: invSt.get(i.id) ?? null,
       })),
       total, page, limit, sum: (sum._sum.total ?? new D(0)).toFixed(2),
     };
@@ -901,8 +971,8 @@ export class TradeDocumentsService {
    * политики) с аналитикой «документ расчётов» = этот документ: туда же разносятся оплаты и возвраты по основанию.
    * PAID — долга нет, PARTIAL — оплачен частично, UNPAID — не оплачен. Только проведённые, не помеченные на удаление.
    */
-  private async payState(tx: Tx, organizationId: string, docs: { id: string; docType: string; status: string; deleted: boolean; total: Prisma.Decimal | null; date: Date }[]) {
-    const res = new Map<string, { status: 'PAID' | 'PARTIAL' | 'UNPAID'; paid: string; debt: string }>();
+  private async payState(tx: Tx, organizationId: string, docs: { id: string; docType: string; status: string; deleted: boolean; total: Prisma.Decimal | null; date: Date; counterpartyId?: string | null; contractId?: string | null; attributes?: any }[]) {
+    const res = new Map<string, { status: 'PAID' | 'PARTIAL' | 'UNPAID'; paid: string; debt: string; dueDate: string; termSource: string; overdueDays: number }>();
     const list = docs.filter((d) => (d.docType === 'DEMAND' || d.docType === 'SUPPLY') && d.status === 'POSTED' && !d.deleted && d.total && new D(d.total).gt(0));
     if (!list.length || !organizationId) return res;
     const { accounts } = await this.autopilot.accountsFor(tx, organizationId, new Date());
@@ -912,6 +982,8 @@ export class TradeDocumentsService {
       WHERE p.organization_id = ${organizationId} AND p.is_active AND p.ledger = 'BU'
         AND p.settlement_doc_id IN (${Prisma.join(list.map((d) => d.id))}) AND a.code IN (${accounts.receivable}, ${accounts.payable})
       GROUP BY p.settlement_doc_id, a.code`;
+    const terms = await termsFor(tx, list);
+    const today = kzDay(new Date());
     for (const d of list) {
       const code = d.docType === 'DEMAND' ? accounts.receivable : accounts.payable;
       const r = rows.find((x) => x.doc === d.id && x.code === code);
@@ -919,9 +991,147 @@ export class TradeDocumentsService {
       const debt = D.max(d.docType === 'DEMAND' ? new D(r.bal) : new D(r.bal).neg(), 0);
       const total = new D(d.total!);
       const paid = D.max(total.minus(debt), 0);
-      res.set(d.id, { status: debt.lte(0.004) ? 'PAID' : debt.gte(total) ? 'UNPAID' : 'PARTIAL', paid: paid.toFixed(2), debt: debt.toFixed(2) });
+      const t = terms.get(d.id)!;
+      const open = debt.gt(0.004);
+      res.set(d.id, { status: !open ? 'PAID' : debt.gte(total) ? 'UNPAID' : 'PARTIAL', paid: paid.toFixed(2), debt: debt.toFixed(2), dueDate: t.dueDate, termSource: t.source, overdueDays: open ? Math.max(0, daysBetween(t.dueDate, today)) : 0 });
     }
     return res;
+  }
+
+  /**
+   * Этап заказа, дата отгрузки, ответственный — не учётные поля: меняются и в проведённом заказе без перепроведения.
+   * Закрытый или помеченный на удаление заказ не меняется.
+   */
+  setOrderInfo(ctx: OrgContext, id: string, b: { stage?: string | null; shipDate?: string | null; responsibleId?: string | null }) {
+    return this.prisma.$transaction(async (tx) => {
+      const doc = await this.scoped(tx, ctx, id);
+      if (!isOrder(doc.docType)) throw new AccError('NOT_ORDER', 'Этап, дата отгрузки и ответственный есть только у заказов');
+      if (doc.deleted || doc.status === 'CANCELLED') throw new AccError('DOC_CANCELLED', 'Заказ помечен на удаление');
+      const a = (doc.attributes ?? {}) as any;
+      if (a.closed) throw new AccError('ORDER_CLOSED', `Заказ ${doc.number ?? ''} закрыт — изменять его нельзя`);
+      const input = { stage: b?.stage, shipDate: b?.shipDate, responsibleId: b?.responsibleId };
+      await this.checkOrderFields(tx, ctx, doc.docType, input);
+      const next = this.attrs(input as TradeDocInput, a);
+      const before = { stage: a.stage ?? null, shipDate: a.shipDate ?? null, responsibleId: a.responsibleId ?? null };
+      const after = { stage: next.stage ?? null, shipDate: next.shipDate ?? null, responsibleId: next.responsibleId ?? null };
+      if (JSON.stringify(before) !== JSON.stringify(after)) {
+        await tx.document.update({ where: { id }, data: { attributes: next, updatedBy: ctx.userId } });
+        await tx.auditLog.create({ data: { userId: ctx.userId, organizationId: ctx.organizationId, action: 'ORDER_INFO', entity: 'document', entityId: id, before, after } });
+      }
+      return this.view(tx, id);
+    });
+  }
+
+  /** Исполнение многих заказов сразу (для журнала): статус каждого по проведённым документам на основании. */
+  private async orderStates(tx: Tx, orders: { id: string; docType: string; attributes: any; status: string; deleted: boolean }[]) {
+    const res = new Map<string, string>();
+    const list = orders.filter((o) => isOrder(o.docType));
+    if (!list.length) return res;
+    const [lines, children] = await Promise.all([
+      tx.documentLine.findMany({ where: { documentId: { in: list.map((o) => o.id) } }, select: { documentId: true, lineNo: true, productId: true, qty: true }, orderBy: { lineNo: 'asc' } }),
+      tx.document.findMany({
+        where: { docType: { in: ['DEMAND', 'SUPPLY'] as any }, status: 'POSTED', deleted: false, OR: list.flatMap((o) => [{ attributes: { path: ['baseId'], equals: o.id } }, { attributes: { path: ['orderId'], equals: o.id } }]) },
+        select: { docType: true, attributes: true, lines: { select: { productId: true, qty: true } } },
+      }),
+    ]);
+    for (const o of list) {
+      const target = BASE_TARGETS[o.docType][0];
+      const done = new Map<string, Prisma.Decimal>();
+      for (const c of children) if (c.docType === target && ((c.attributes as any)?.baseId === o.id || (c.attributes as any)?.orderId === o.id)) for (const l of c.lines) done.set(l.productId, (done.get(l.productId) ?? new D(0)).plus(l.qty));
+      const { lines: fl } = fulfillLines(lines.filter((l) => l.documentId === o.id), done);
+      res.set(o.id, orderStatus(o.docType, o.attributes, fulfillState(fl, o.attributes?.closed)));
+    }
+    return res;
+  }
+
+  /** Сотрудники организации для выбора ответственного: только имя, без ролей и адресов. */
+  async assignees(ctx: OrgContext) {
+    const ms = await this.prisma.orgMembership.findMany({ where: { organizationId: ctx.organizationId, isActive: true }, select: { userId: true } });
+    const users = await this.prisma.user.findMany({ where: { id: { in: ms.map((m) => m.userId) } }, select: { id: true, email: true, firstName: true, lastName: true } });
+    return users.map((u) => ({ id: u.id, name: [u.lastName, u.firstName].filter(Boolean).join(' ') || u.email })).sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+  }
+
+  /**
+   * «Оплатить до» в реализации/поступлении: срок — не учётное поле, проводки и период не трогает,
+   * поэтому меняется и в проведённом документе (с записью в журнал действий).
+   */
+  setDueDate(ctx: OrgContext, id: string, b: { dueDate?: string | null }) {
+    return this.prisma.$transaction(async (tx) => {
+      const doc = await this.scoped(tx, ctx, id);
+      if (doc.docType !== 'DEMAND' && doc.docType !== 'SUPPLY' && !isInvoice(doc.docType)) throw new AccError('NO_DUE_DATE', 'Срок оплаты задаётся в счёте, реализации или поступлении');
+      const a = (doc.attributes ?? {}) as any;
+      const next = this.attrs({ dueDate: b?.dueDate ?? null } as TradeDocInput, a);
+      if ((a.dueDate ?? null) !== (next.dueDate ?? null)) {
+        await tx.document.update({ where: { id }, data: { attributes: next, updatedBy: ctx.userId } });
+        await tx.auditLog.create({ data: { userId: ctx.userId, organizationId: ctx.organizationId, action: 'TRADE_DOC_DUE_DATE', entity: 'document', entityId: id, before: { dueDate: a.dueDate ?? null }, after: { dueDate: next.dueDate ?? null } } });
+      }
+      return this.view(tx, id);
+    });
+  }
+
+  /**
+   * «Долги по срокам»: открытые долги покупателей (side=customers, счёт расчётов с покупателями) или наши поставщикам
+   * (side=suppliers) на дату — по документам расчётов, со сроком оплаты и днями просрочки, по корзинам
+   * «в срок / 1–30 / 31–60 / 61–90 / больше 90». Переплаты по документу — отдельной колонкой (уменьшают долг).
+   * Остатки без документа расчётов (ввод остатков, ручные операции) — по дате проводки, без отсрочки.
+   */
+  async debtAging(ctx: OrgContext, q: { side?: string; date?: string; counterpartyId?: string }) {
+    const side = q.side === 'suppliers' ? 'suppliers' : 'customers';
+    const date = q.date ?? kzDay(new Date());
+    if (!DUE_DATE_RE.test(date)) throw new AccError('BAD_DATE', 'Дата отчёта: ГГГГ-ММ-ДД');
+    const toNext = new Date(new Date(`${date}T00:00:00+05:00`).getTime() + 86400000);
+    const { accounts } = await this.autopilot.accountsFor(this.prisma as any, ctx.organizationId, toNext);
+    const code = side === 'customers' ? accounts.receivable : accounts.payable;
+    const sign = side === 'customers' ? 1 : -1;
+    const cpFilter = q.counterpartyId ? Prisma.sql`AND p.counterparty_id = ${q.counterpartyId}` : Prisma.empty;
+    const rows = await this.prisma.$queryRaw<{ cp: string; doc: string | null; bal: string; first: Date }[]>`
+      SELECT p.counterparty_id AS cp, p.settlement_doc_id AS doc, SUM(CASE WHEN p.side = 'D' THEN p.amount ELSE -p.amount END)::text AS bal, MIN(p.date) AS first
+      FROM acc_postings p JOIN acc_accounts a ON a.id = p.account_id
+      WHERE p.organization_id = ${ctx.organizationId} AND p.is_active AND p.ledger = 'BU' AND a.code = ${code}
+        AND p.counterparty_id IS NOT NULL AND p.date < ${toNext.toISOString()}::timestamp ${cpFilter}
+      GROUP BY p.counterparty_id, p.settlement_doc_id
+      HAVING SUM(CASE WHEN p.side = 'D' THEN p.amount ELSE -p.amount END) <> 0`;
+    const docIds = rows.map((r) => r.doc).filter(Boolean) as string[];
+    const [docs, accDocs, cps] = await Promise.all([
+      docIds.length ? this.prisma.document.findMany({ where: { id: { in: docIds } }, select: { id: true, number: true, docType: true, date: true, counterpartyId: true, contractId: true, attributes: true } }) : Promise.resolve([] as any[]),
+      docIds.length ? this.prisma.accDocument.findMany({ where: { id: { in: docIds }, organizationId: ctx.organizationId }, select: { id: true, number: true, docType: true, date: true } }) : Promise.resolve([] as { id: string; number: string; docType: string; date: Date }[]),
+      this.prisma.counterparty.findMany({ where: { id: { in: [...new Set(rows.map((r) => r.cp))] } }, select: { id: true, name: true, inn: true, phone: true, paymentDays: true } }),
+    ]);
+    const terms = await termsFor(this.prisma as any, docs);
+    const byCp = new Map<string, any>();
+    const zero = () => Object.fromEntries([...AGING_BUCKETS, 'credit', 'total', 'overdue'].map((k) => [k, new D(0)]));
+    for (const r of rows) {
+      const amount = new D(r.bal).mul(sign);
+      const cp = cps.find((c) => c.id === r.cp);
+      const o = byCp.get(r.cp) ?? { counterpartyId: r.cp, name: cp?.name ?? null, bin: cp?.inn ?? null, phone: cp?.phone ?? null, paymentDays: cp?.paymentDays ?? null, sums: zero(), maxOverdueDays: 0, docs: [] as any[] };
+      byCp.set(r.cp, o);
+      const doc = r.doc ? docs.find((d) => d.id === r.doc) : undefined;
+      const acc = r.doc && !doc ? accDocs.find((d) => d.id === r.doc) : undefined;
+      const t = doc ? terms.get(doc.id)! : null;
+      const dueDate = t?.dueDate ?? kzDay(acc?.date ?? r.first);
+      const overdueDays = amount.gt(0) ? Math.max(0, daysBetween(dueDate, date)) : 0;
+      o.sums.total = o.sums.total.plus(amount);
+      if (amount.lt(0)) o.sums.credit = o.sums.credit.plus(amount.neg());
+      else {
+        const b = bucketOf(overdueDays);
+        o.sums[b] = o.sums[b].plus(amount);
+        if (b !== 'notDue') o.sums.overdue = o.sums.overdue.plus(amount);
+        o.maxOverdueDays = Math.max(o.maxOverdueDays, overdueDays);
+      }
+      o.docs.push({
+        id: r.doc, kind: doc ? 'TRADE' : acc ? 'ACC' : 'NONE', number: doc?.number ?? acc?.number ?? null, docType: doc?.docType ?? acc?.docType ?? null,
+        date: kzDay(doc?.date ?? acc?.date ?? r.first), dueDate, termSource: t?.source ?? 'NONE', amount: amount.toFixed(2), overdueDays,
+      });
+    }
+    const fix = (m: Record<string, any>) => Object.fromEntries(Object.entries(m).map(([k, v]) => [k, (v as Prisma.Decimal).toFixed(2)]));
+    const totals = zero();
+    const lines = [...byCp.values()].map((o) => {
+      for (const k of Object.keys(totals)) totals[k] = totals[k].plus(o.sums[k]);
+      o.docs.sort((a: any, b: any) => b.overdueDays - a.overdueDays || a.date.localeCompare(b.date));
+      return { ...o, ...fix(o.sums), sums: undefined };
+    }).filter((o) => new D(o.total).abs().gt(0.004))
+      .sort((a, b) => new D(b.overdue).cmp(new D(a.overdue)) || new D(b.total).cmp(new D(a.total)));
+    return { side, date, account: code, totals: fix(totals), lines };
   }
 
   async get(ctx: OrgContext, id: string) {
@@ -934,7 +1144,7 @@ export class TradeDocumentsService {
   private async view(tx: Tx, id: string) {
     const doc = await tx.document.findUnique({
       where: { id },
-      include: { counterparty: { select: { id: true, name: true, inn: true } }, lines: { include: { product: { select: { id: true, name: true, kind: true, code: true, article: true, lotTracking: true, expiryTracking: true } }, bin: { select: { id: true, name: true, code: true } }, binTo: { select: { id: true, name: true, code: true } } }, orderBy: { lineNo: 'asc' } } },
+      include: { counterparty: { select: { id: true, name: true, inn: true, phone: true } }, lines: { include: { product: { select: { id: true, name: true, kind: true, code: true, article: true, lotTracking: true, expiryTracking: true } }, bin: { select: { id: true, name: true, code: true } }, binTo: { select: { id: true, name: true, code: true } } }, orderBy: { lineNo: 'asc' } } },
     });
     const org = doc!.organizationId;
     const entry = org ? await tx.accEntry.findFirst({
@@ -952,7 +1162,10 @@ export class TradeDocumentsService {
     // FP-030: движения склада документа (с источником, количеством и стоимостью), приёмка и исполнение заказа.
     const movements = await tx.stockMovement.findMany({ where: { sourceType: TRADE_SOURCE, sourceId: id }, orderBy: [{ createdAt: 'asc' }, { sourceLine: 'asc' }, { qty: 'asc' }] });
     const receipt = doc!.docType === 'SUPPLY' ? receiptSummary(doc!.lines) : null;
-    const fulfillment = doc!.docType.endsWith('_ORDER') ? await this.fulfillmentOf(tx, doc!) : null;
+    const fulfillment = doc!.docType.endsWith('_ORDER') || isInvoice(doc!.docType) ? await this.fulfillmentOf(tx, doc!) : null;
+    const invoice = isInvoice(doc!.docType) ? (await invoiceStates(tx, doc!.organizationId ?? '', [doc!])).get(id) ?? null : null;
+    const invoices = doc!.docType.endsWith('_ORDER') ? await tx.document.findMany({ where: { docType: { in: ['INVOICE_OUT', 'INVOICE_IN'] as any }, deleted: false, attributes: { path: ['baseId'], equals: id } }, select: { id: true, number: true, date: true, total: true, status: true } }) : [];
+    const orderStatusV = fulfillment && isOrder(doc!.docType) ? orderStatus(doc!.docType, doc!.attributes, fulfillment.state as any) : null;
     // FP-034: возвраты по реализации / чеку — отгружено, возвращено, можно вернуть.
     const returns = BASE_TARGETS[doc!.docType]?.some((x) => x.endsWith('_RETURN')) && doc!.docType !== 'SUPPLY' ? await this.returnsOf(tx, doc!) : null;
     // FP-032: резервы заказа покупателя, состояние перемещения в два этапа.
@@ -963,7 +1176,10 @@ export class TradeDocumentsService {
     const esf = doc!.docType === 'DEMAND' || doc!.docType === 'SALES_RETURN'
       ? await tx.esfInvoice.findMany({ where: { sourceDocId: id, organizationId: doc!.organizationId ?? '' }, select: { id: true, num: true, status: true, esfStatus: true, registrationNumber: true, invoiceType: true }, orderBy: { createdAt: 'desc' }, take: 5 })
       : [];
-    return { ...doc!, entry, costEntries, issue, related: [...(base ? [base] : []), ...children], movements, receipt, fulfillment, reservations, transit, returns, payment, esf };
+    const respId = (doc!.attributes as any)?.responsibleId;
+    const resp = respId ? await tx.user.findUnique({ where: { id: respId }, select: { id: true, email: true, firstName: true, lastName: true } }) : null;
+    const responsible = resp ? { id: resp.id, name: [resp.lastName, resp.firstName].filter(Boolean).join(' ') || resp.email } : null;
+    return { ...doc!, entry, costEntries, issue, related: [...(base ? [base] : []), ...children], movements, receipt, fulfillment, orderStatus: orderStatusV, responsible, invoice, invoices, reservations, transit, returns, payment, esf };
   }
 
   private async returnsOf(tx: Tx, doc: { id: string; docType: string; lines: { productId: string; qty: any }[] }) {
@@ -985,7 +1201,7 @@ export class TradeDocumentsService {
   private async fulfillmentOf(tx: Tx, order: { id: string; docType: string; attributes?: any; lines: { lineNo: number; productId: string; qty: any }[] }) {
     const target = BASE_TARGETS[order.docType]?.[0];
     const children = target ? await tx.document.findMany({
-      where: { docType: target as any, status: 'POSTED', deleted: false, attributes: { path: ['baseId'], equals: order.id } },
+      where: { docType: target as any, status: 'POSTED', deleted: false, OR: [{ attributes: { path: ['baseId'], equals: order.id } }, { attributes: { path: ['orderId'], equals: order.id } }] },
       include: { lines: true }, orderBy: { date: 'asc' },
     }) : [];
     const done = new Map<string, Prisma.Decimal>();
@@ -995,16 +1211,11 @@ export class TradeDocumentsService {
       if (l.rejectedQty) rejected.set(l.productId, (rejected.get(l.productId) ?? new D(0)).plus(l.rejectedQty));
     }
     // Исполненное распределяется по строкам заказа одного товара по порядку (как при «создать на основании»).
-    const lines = order.lines.map((l) => {
-      const ordered = new D(l.qty);
-      const avail = done.get(l.productId) ?? new D(0);
-      const take = D.min(avail, ordered);
-      done.set(l.productId, avail.minus(take));
-      return { lineNo: l.lineNo, productId: l.productId, ordered: ordered.toString(), fulfilled: take.toString(), remaining: ordered.minus(take).toString() };
-    });
-    const extra = [...done.entries()].filter(([, q]) => q.gt(0)).map(([productId, q]) => ({ productId, qty: q.toString() }));
+    const fl = fulfillLines(order.lines, done);
+    const lines = fl.lines;
+    const extra = fl.extra.map(([productId, q]) => ({ productId, qty: q.toString() }));
     const closed = (order as any).attributes?.closed ?? null;
-    const state = lines.every((l) => new D(l.remaining).isZero()) ? 'FULFILLED' : closed ? 'CLOSED' : lines.some((l) => new D(l.fulfilled).gt(0)) ? 'PARTIAL' : 'OPEN';
+    const state = fulfillState(lines, closed);
     return {
       state, closed, lines, overDelivered: extra,
       rejected: [...rejected.entries()].map(([productId, q]) => ({ productId, qty: q.toString() })),

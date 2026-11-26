@@ -61,6 +61,9 @@
         </el-form-item>
         <el-form-item :label="form.kind === 'NONRESIDENT' ? 'Налоговый номер' : 'ИИН/БИН'"><el-input v-model="form.inn" :maxlength="form.kind === 'NONRESIDENT' ? 40 : 12" /></el-form-item>
         <el-form-item label="КБе"><el-input v-model="form.kbe" maxlength="2" placeholder="17" style="width: 100px;" /></el-form-item>
+        <el-form-item label="Отсрочка оплаты">
+          <el-input-number v-model="form.paymentDays" :min="0" :max="365" :controls="false" placeholder="—" style="width: 100px;" /> <span class="hint" style="margin-left: 8px;">дней (пусто — оплата в день отгрузки)</span>
+        </el-form-item>
         <el-form-item label="Телефон"><el-input v-model="form.phone" /></el-form-item>
         <el-form-item label="Email"><el-input v-model="form.email" /></el-form-item>
         <el-form-item v-if="!editItem"><el-checkbox v-model="form.own">Личный — только для этой организации</el-checkbox></el-form-item>
@@ -167,8 +170,8 @@ function openForm(item?: any) {
   editItem.value = item || null
   // FP-026: поля API (адреса — в карточке, с датами действия).
   form.value = item
-    ? { name: item.name, fullName: item.fullName, kind: item.kind ?? 'LEGAL', type: item.type, inn: item.inn, kbe: item.kbe, countryCode: item.countryCode ?? 'KZ', phone: item.phone, email: item.email }
-    : { name: '', fullName: '', kind: 'LEGAL', type: 'CUSTOMER', inn: '', kbe: '', countryCode: 'KZ', phone: '', email: '', own: false }
+    ? { name: item.name, fullName: item.fullName, kind: item.kind ?? 'LEGAL', type: item.type, inn: item.inn, kbe: item.kbe, countryCode: item.countryCode ?? 'KZ', phone: item.phone, email: item.email, paymentDays: item.paymentDays ?? null }
+    : { name: '', fullName: '', kind: 'LEGAL', type: 'CUSTOMER', inn: '', kbe: '', countryCode: 'KZ', phone: '', email: '', paymentDays: null, own: false }
   formVisible.value = true
 }
 

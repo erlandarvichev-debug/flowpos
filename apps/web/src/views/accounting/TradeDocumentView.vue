@@ -2,20 +2,49 @@
   <div v-loading="loading" @keydown="onKey">
     <div class="page-header">
       <h1>
+        <span class="doc-ic" :style="{ '--c': TRADE_ICONS[docType]?.[1] ?? '#1769e0' }"><el-icon :size="20"><component :is="TRADE_ICONS[docType]?.[0] ?? 'Document'" /></el-icon></span>
         {{ tl(docType) }}
         <span v-if="doc.number" class="num">№ {{ doc.number }}</span>
         <el-tag v-if="doc.status" :type="STATUS_TYPES[doc.status] as any" style="margin-left: 8px;">{{ t(doc.status) }}</el-tag>
-        <el-tag v-if="isSaved && doc.status === 'POSTED'" :type="doc.entry || doc.costEntries?.length ? 'success' : doc.issue ? 'danger' : 'info'" style="margin-left: 6px;" effect="plain">
+        <el-tag v-if="isSaved && doc.status === 'POSTED' && !noAccounting" :type="doc.entry || doc.costEntries?.length ? 'success' : doc.issue ? 'danger' : 'info'" style="margin-left: 6px;" effect="plain">
           {{ t('accountingCol') }}: {{ doc.entry || doc.costEntries?.length ? t('REFLECTED') : doc.issue ? t('ISSUE') : t('NONE') }}
         </el-tag>
         <el-tag v-if="doc.esf?.length" :type="esfType(doc.esf[0])" style="margin-left: 6px; cursor: pointer;" effect="plain" @click="router.push('/accounting/esf')">ЭСФ {{ doc.esf[0].registrationNumber || doc.esf[0].num }}: {{ esfLabel(doc.esf[0]) }}</el-tag>
         <el-tag v-if="doc.payment" :type="doc.payment.status === 'PAID' ? 'success' : doc.payment.status === 'PARTIAL' ? 'warning' : 'danger'" style="margin-left: 6px;" effect="light">
           {{ doc.payment.status === 'PAID' ? 'Оплачен' : `Долг ${fmtMoney(doc.payment.debt)} ₸` }}<template v-if="doc.payment.status === 'PARTIAL'"> · оплачено {{ fmtMoney(doc.payment.paid) }}</template>
         </el-tag>
+        <el-tag v-if="doc.invoice" :type="doc.invoice.status === 'PAID' ? 'success' : doc.invoice.overdueDays > 0 ? 'danger' : doc.invoice.status === 'PARTIAL' ? 'warning' : 'info'" style="margin-left: 6px;" effect="light">
+          {{ doc.invoice.status === 'PAID' ? 'Оплачен' : `К оплате ${fmtMoney(doc.invoice.left)} ₸` }}{{ doc.invoice.overdueDays > 0 ? ` · просрочен ${doc.invoice.overdueDays} дн.` : doc.invoice.status !== 'PAID' ? ` · до ${fmtDate(doc.invoice.dueDate)}` : '' }}
+        </el-tag>
+        <el-tag v-if="doc.orderStatus" :type="ORDER_STATUS[doc.orderStatus]?.type" style="margin-left: 6px;" effect="light">{{ ORDER_STATUS[doc.orderStatus]?.label ?? doc.orderStatus }}</el-tag>
+        <el-popover v-if="doc.payment && doc.payment.status !== 'PAID'" placement="bottom-start" :width="290" trigger="click">
+          <template #reference>
+            <el-tag :type="doc.payment.overdueDays > 0 ? 'danger' : 'info'" style="margin-left: 6px; cursor: pointer;" effect="plain">
+              {{ doc.payment.overdueDays > 0 ? `Просрочено ${doc.payment.overdueDays} дн. (срок ${fmtDate(doc.payment.dueDate)})` : `Оплатить до ${fmtDate(doc.payment.dueDate)}` }}
+            </el-tag>
+          </template>
+          <div class="due-pop">
+            <div class="due-hint">{{ DUE_SOURCE[doc.payment.termSource] }}</div>
+            <el-date-picker v-model="dueEdit" type="date" value-format="YYYY-MM-DD" format="DD.MM.YYYY" placeholder="Оплатить до" style="width: 100%;" :disabled="!org.can('acc.doc.write')" />
+            <div class="due-btns">
+              <el-button v-if="doc.payment.termSource === 'DOC'" size="small" :disabled="!org.can('acc.doc.write')" @click="saveDue(null)">По договору</el-button>
+              <el-button size="small" type="primary" :disabled="!dueEdit || !org.can('acc.doc.write')" :loading="busy" @click="saveDue(dueEdit)">Сохранить</el-button>
+            </div>
+          </div>
+        </el-popover>
       </h1>
       <div class="actions">
         <el-button @click="router.push(listPath)">{{ t('toList') }}</el-button>
         <el-button v-if="docType === 'DEMAND' && doc.status === 'POSTED' && !doc.esf?.length && org.can('acc.esf.send')" :loading="busy" @click="issueEsf">Выписать ЭСФ</el-button>
+        <el-dropdown v-if="doc.invoice && doc.invoice.status !== 'PAID' && org.can('acc.doc.write')" trigger="click" @command="payByInvoice">
+          <el-button type="warning" plain>{{ docType === 'INVOICE_OUT' ? 'Принять оплату' : 'Оплатить' }}<el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="BANK">{{ docType === 'INVOICE_OUT' ? 'На расчётный счёт' : 'С расчётного счёта' }}</el-dropdown-item>
+              <el-dropdown-item command="CASH">{{ docType === 'INVOICE_OUT' ? 'В кассу (ПКО)' : 'Из кассы (РКО)' }}</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
         <el-dropdown v-if="doc.payment && doc.payment.status !== 'PAID' && org.can('acc.doc.write')" trigger="click" @command="payByDoc">
           <el-button type="warning" plain>{{ docType === 'DEMAND' ? 'Принять оплату' : 'Оплатить' }}<el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
           <template #dropdown>
@@ -31,7 +60,7 @@
           <el-button type="success" :loading="busy" @click="post" v-if="org.can('acc.doc.post') && doc.status !== 'POSTED'">{{ t('post') }}</el-button>
         </template>
         <el-button v-if="doc.transit && doc.transit.state !== 'RECEIVED' && doc.transit.state !== 'NOT_SHIPPED' && org.can('acc.doc.post')" type="success" :loading="busy" @click="openReceive">Принять на склад</el-button>
-        <PrintButton v-if="isSaved" source="TRADE" :doc-type="docType" :id="doc.id" />
+        <PrintButton v-if="isSaved" source="TRADE" :doc-type="docType" :id="doc.id" :phone="doc.counterparty?.phone ?? null" />
         <el-dropdown v-if="isSaved" @command="onCommand" trigger="click">
           <el-button>Ещё <el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
           <template #dropdown>
@@ -61,7 +90,7 @@
       </template>
     </el-alert>
     <el-alert v-if="doc.status === 'POSTED' && !readonly" type="warning" :closable="false" show-icon style="margin-bottom: 12px;"
-      title="Документ проведён. Изменения сохранятся с указанием причины и сразу перепроведутся в учёте (с пересчётом себестоимости)." />
+      :title="noAccounting ? 'Документ проведён. Изменения сохранятся с указанием причины.' : 'Документ проведён. Изменения сохранятся с указанием причины и сразу перепроведутся в учёте (с пересчётом себестоимости).'" />
     <el-alert v-if="isExternal" type="info" :closable="false" show-icon style="margin-bottom: 12px;"
       :title="`Документ получен из обмена (${doc.owner}). Изменяйте его в системе-источнике — здесь только просмотр и отражение в учёте.`" />
 
@@ -70,8 +99,17 @@
       <div>В остаток и учёт попадает только принятое количество. Недостача и отказ остаются в заказе к поставке.</div>
     </el-alert>
     <el-alert v-if="doc.fulfillment && doc.fulfillment.state !== 'OPEN' && doc.fulfillment.state !== 'CLOSED'" :type="doc.fulfillment.state === 'FULFILLED' ? 'success' : 'info'" :closable="false" show-icon style="margin-bottom: 12px;"
-      :title="doc.fulfillment.state === 'FULFILLED' ? 'Заказ исполнен полностью' : `Заказ исполнен частично: документов ${doc.fulfillment.documents.length}, остаток по строкам — на вкладке «Исполнение»`" />
+      :title="doc.fulfillment.state === 'FULFILLED' ? `${fulfillWho} исполнен полностью` : `${fulfillWho} исполнен частично: документов ${doc.fulfillment.documents.length}, остаток по строкам — на вкладке «Исполнение»`" />
 
+    <el-alert v-if="doc.invoice" :type="doc.invoice.status === 'PAID' ? 'success' : 'info'" :closable="false" show-icon style="margin-bottom: 12px;"
+      :title="`Счёт на ${fmtMoney(doc.total)} ₸: оплачено ${fmtMoney(doc.invoice.paid)} ₸, осталось ${fmtMoney(doc.invoice.left)} ₸; ${docType === 'INVOICE_OUT' ? 'отгружено' : 'получено'} на ${fmtMoney(doc.invoice.shipped)} ₸. Счёт не делает проводок — долг возникает при отгрузке.`">
+      <div v-if="doc.invoice.payments.length" class="inv-pays">
+        Платежи: <el-link v-for="p in doc.invoice.payments" :key="p.id" type="primary" class="inv-pay" @click="router.push(`/accounting/documents/${p.id}`)">{{ p.number }} от {{ fmtDate(p.date) }} — {{ fmtMoney(p.amount) }} ₸</el-link>
+      </div>
+    </el-alert>
+    <el-alert v-if="doc.invoices?.length" type="info" :closable="false" show-icon style="margin-bottom: 12px;" :title="`Выставлены счета: ${doc.invoices.length}`">
+      <el-link v-for="i in doc.invoices" :key="i.id" type="primary" class="inv-pay" @click="router.push(`/accounting/trade/${i.id}`)">№ {{ i.number }} от {{ fmtDate(i.date) }} на {{ fmtMoney(i.total) }} ₸</el-link>
+    </el-alert>
     <el-alert v-if="budget && budget.budget" :type="budget.overBudget ? 'warning' : 'success'" :closable="false" show-icon style="margin-bottom: 12px;"
       :title="`Бюджет закупок ${budget.period}: ${fmtMoney(budget.budget)} ₸, уже заказано ${fmtMoney(budget.committed)} ₸, этот заказ ${fmtMoney(budget.amount)} ₸${budget.overBudget ? ' — сверх бюджета: проведение после согласования' : ''}`" />
     <el-alert v-if="doc.attributes?.closed" type="info" :closable="false" show-icon style="margin-bottom: 12px;"
@@ -108,12 +146,12 @@
             <span class="hint">Сумма без НДС войдёт в стоимость товаров поступления; доля уже проданного — в себестоимость продаж.</span>
           </el-form-item>
         </template>
-        <el-form-item v-if="docType !== 'LANDED_COST' && !isTransferReceipt" :label="docType === 'MOVE' ? 'Склад-отправитель' : t('store')">
+        <el-form-item v-if="docType !== 'LANDED_COST' && !isTransferReceipt" :label="docType === 'MOVE' || docType === 'INTERNAL_ORDER' ? 'Склад-отправитель' : t('store')">
           <el-select v-model="form.storeId" filterable clearable :disabled="readonly" placeholder="Выберите склад" style="width: 320px;">
             <el-option v-for="s in stores" :key="s.id" :label="s.name" :value="s.id" />
           </el-select>
         </el-form-item>
-        <el-form-item v-if="docType === 'MOVE' && !isTransferReceipt" :label="t('storeTo')">
+        <el-form-item v-if="(docType === 'MOVE' || docType === 'INTERNAL_ORDER') && !isTransferReceipt" :label="t('storeTo')">
           <el-select v-model="form.storeToId" filterable clearable :disabled="readonly" placeholder="Выберите склад-получатель" style="width: 320px;">
             <el-option v-for="s in stores" :key="s.id" :label="s.name" :value="s.id" />
           </el-select>
@@ -149,6 +187,23 @@
         <el-form-item v-if="docType === 'LOSS'" :label="t('lossAccount')">
           <div style="width: 360px;"><AccountSelect v-model="form.lossAccount" :accounts="accounts" /></div>
         </el-form-item>
+        <template v-if="isOrderType(docType)">
+          <el-form-item label="Этап заказа">
+            <el-select v-model="ord.stage" :disabled="!orderEditable || orderAuto" style="width: 220px;" @change="saveOrderInfo({ stage: ord.stage })">
+              <el-option v-for="st in ORDER_STAGES[docType]" :key="st" :label="ORDER_STATUS[st].label" :value="st" />
+            </el-select>
+            <span v-if="orderAuto" class="hint0" style="margin-left: 8px;">{{ ORDER_STATUS[doc.orderStatus]?.label }} — по документам на основании</span>
+          </el-form-item>
+          <el-form-item :label="docType === 'PURCHASE_ORDER' ? 'Дата поступления' : 'Дата отгрузки'">
+            <el-date-picker v-model="ord.shipDate" type="date" value-format="YYYY-MM-DD" format="DD.MM.YYYY" placeholder="не указана" :disabled="!orderEditable" @change="saveOrderInfo({ shipDate: ord.shipDate || null })" />
+            <span v-if="shipLate" class="ship-late">срок прошёл</span>
+          </el-form-item>
+          <el-form-item label="Ответственный">
+            <el-select v-model="ord.responsibleId" clearable filterable placeholder="не назначен" :disabled="!orderEditable" style="width: 260px;" @change="saveOrderInfo({ responsibleId: ord.responsibleId || null })">
+              <el-option v-for="u in assignees" :key="u.id" :label="u.name" :value="u.id" />
+            </el-select>
+          </el-form-item>
+        </template>
         <el-form-item :label="t('comment')">
           <el-input v-model="form.comment" :disabled="readonly" style="max-width: 600px;" />
         </el-form-item>
@@ -272,6 +327,12 @@
 
     <el-card v-if="isSaved" style="margin-top: 12px;">
       <el-tabs>
+        <el-tab-pane label="Файлы">
+          <FileList entity-type="TRADE" :entity-id="doc.id" :can-add="org.can('acc.doc.write')" />
+        </el-tab-pane>
+        <el-tab-pane label="Задачи">
+          <TaskList :document-id="doc.id" document-kind="TRADE" empty-text="Задач по документу нет" placeholder="Что сделать по документу?" />
+        </el-tab-pane>
         <el-tab-pane :label="`${t('postings')} (${doc.entry?.postings?.length || 0})`">
           <div v-if="doc.entry" class="entry-meta">Правило {{ doc.entry.ruleCode }} v{{ doc.entry.ruleVersion }}</div>
           <PostingsTable :postings="doc.entry?.postings || []" empty="Нет проводок (документ не проведён или без бухгалтерских последствий)" />
@@ -373,12 +434,16 @@ import dayjs from 'dayjs'
 import api from '@/api/client'
 import { useOrgStore } from '@/stores/org'
 import PrintButton from '@/components/print/PrintButton.vue'
+import TaskList from '@/components/tasks/TaskList.vue'
+import FileList from '@/components/files/FileList.vue'
 import PostingPreview from '@/components/accounting/PostingPreview.vue'
 import { useI18n } from '@/composables/useI18n'
 import AccountSelect from '@/components/accounting/AccountSelect.vue'
 import DimSelect from '@/components/accounting/DimSelect.vue'
 import { INVENTORY_REASONS, LOSS_REASONS } from './acc'
-import { BASE_TARGETS, DISCREPANCY_REASONS, MOVE_KINDS, STATUS_TYPES, TRADE_TYPES, VALUE_BASIS, addMoney, fmtDate, fmtMoney, idem, lineTotal, loadDimOptions, normAmount, showError } from './acc'
+import { ORDER_DONE, ORDER_STAGES, ORDER_STATUS, isOrderType } from '@/utils/orders'
+import { kzToday } from '@/utils/format'
+import { TRADE_ICONS, BASE_TARGETS, DISCREPANCY_REASONS, MOVE_KINDS, STATUS_TYPES, TRADE_TYPES, VALUE_BASIS, addMoney, fmtDate, fmtMoney, idem, lineTotal, loadDimOptions, normAmount, showError } from './acc'
 
 const route = useRoute()
 const router = useRouter()
@@ -399,8 +464,11 @@ const PostingsTable = defineComponent({
   },
 })
 
-const NO_PRICE = ['MOVE', 'LOSS']
-const NO_COUNTERPARTY = ['ENTER', 'LOSS', 'MOVE', 'INVENTORY', 'RETAIL_DEMAND', 'RETAIL_RETURN']
+/** Документы без проводок: заказы, счета, внутренние заказы — метка «Учёт» им не нужна. */
+const noAccounting = computed(() => ['CUSTOMER_ORDER', 'PURCHASE_ORDER', 'INVOICE_OUT', 'INVOICE_IN', 'INTERNAL_ORDER'].includes(docType.value))
+const fulfillWho = computed(() => (docType.value.startsWith('INVOICE') ? 'Счёт' : docType.value === 'INTERNAL_ORDER' ? 'Внутренний заказ' : 'Заказ'))
+const NO_PRICE = ['MOVE', 'LOSS', 'INTERNAL_ORDER']
+const NO_COUNTERPARTY = ['INTERNAL_ORDER', 'ENTER', 'LOSS', 'MOVE', 'INVENTORY', 'RETAIL_DEMAND', 'RETAIL_RETURN']
 
 const loading = ref(false)
 const busy = ref(false)
@@ -413,8 +481,8 @@ const linesEl = ref<HTMLElement>()
 let keySeq = 0
 
 const emptyForm = () => ({
-  date: dayjs().format('YYYY-MM-DD'), counterpartyId: undefined as string | undefined, contractId: undefined as string | undefined, storeId: undefined as string | undefined,
-  storeToId: undefined as string | undefined, vatIncluded: true, paymentType: 'CASH', lossAccount: '7170', comment: '', reason: '',
+  date: dayjs().format('YYYY-MM-DD'), counterpartyId: (route.query.counterpartyId as string) || undefined as string | undefined, contractId: undefined as string | undefined, storeId: (route.query.storeId as string) || undefined as string | undefined,
+  storeToId: (route.query.storeToId as string) || undefined as string | undefined, vatIncluded: true, paymentType: 'CASH', lossAccount: '7170', comment: '', reason: '',
   allocation: 'AMOUNT', baseId: undefined as string | undefined, twoStage: false, lossReason: undefined as string | undefined,
   noBasis: false, returnReason: '',
   lines: [] as any[],
@@ -493,7 +561,61 @@ async function issueEsf() {
     await load()
   } catch (e) { showError(e) } finally { busy.value = false }
 }
+// ── Заказ: этап, дата отгрузки, ответственный — сохраняются сразу (и в проведённом заказе, без перепроведения) ──
+const ord = ref<{ stage: string; shipDate: string | null; responsibleId: string | null }>({ stage: 'NEW', shipDate: null, responsibleId: null })
+const assignees = ref<{ id: string; name: string }[]>([])
+const orderAuto = computed(() => !!doc.value.orderStatus && !ORDER_STAGES[docType.value]?.includes(doc.value.orderStatus))
+const orderEditable = computed(() => org.can('acc.doc.write') && !doc.value.attributes?.closed && !doc.value.deleted && doc.value.status !== 'CANCELLED')
+const shipLate = computed(() => !!ord.value.shipDate && ord.value.shipDate < kzToday() && !ORDER_DONE.has(doc.value.orderStatus))
+watch(() => [doc.value.id, doc.value.attributes?.stage, doc.value.attributes?.shipDate, doc.value.attributes?.responsibleId], () => {
+  const a = doc.value.attributes ?? {}
+  ord.value = { stage: a.stage || 'NEW', shipDate: a.shipDate ?? null, responsibleId: a.responsibleId ?? (doc.value.id ? null : ord.value.responsibleId) }
+}, { immediate: true })
+watch(docType, async (tp) => {
+  if (!isOrderType(tp) || assignees.value.length) return
+  try { assignees.value = (await api.get('/accounting/assignees')) as any } catch { assignees.value = [] }
+}, { immediate: true })
+async function saveOrderInfo(patch: Record<string, unknown>) {
+  if (!isSaved.value) return // новый заказ — уйдёт при сохранении
+  busy.value = true
+  try {
+    doc.value = await api.post(`/accounting/trade-documents/${doc.value.id}/order-info`, patch, idem())
+    ElMessage.success('Сохранено')
+  } catch (e) {
+    showError(e)
+    const a = doc.value.attributes ?? {}
+    ord.value = { stage: a.stage || 'NEW', shipDate: a.shipDate ?? null, responsibleId: a.responsibleId ?? null }
+  } finally { busy.value = false }
+}
+
+// ── Срок оплаты: «Оплатить до» в документе (меняется и в проведённом — проводки не трогает) ──
+const DUE_SOURCE: Record<string, string> = {
+  DOC: 'Срок указан в этом документе',
+  CONTRACT: 'Срок по отсрочке договора',
+  COUNTERPARTY: 'Срок по отсрочке контрагента',
+  NONE: 'Отсрочка не задана — оплата в день документа. Отсрочку можно указать в карточке контрагента или договоре.',
+}
+const dueEdit = ref<string | null>(null)
+watch(() => doc.value?.payment?.dueDate, (v) => { dueEdit.value = v ?? null }, { immediate: true })
+async function saveDue(v: string | null) {
+  busy.value = true
+  try {
+    doc.value = await api.post(`/accounting/trade-documents/${doc.value.id}/due-date`, { dueDate: v })
+    ElMessage.success(v ? 'Срок оплаты сохранён' : 'Срок оплаты — по договору / контрагенту')
+  } catch (e) { showError(e) } finally { busy.value = false }
+}
+
 /** Оплата по документу: платёж с контрагентом, суммой долга и разнесением на этот документ. */
+/** Оплата по счёту: платёж разносится по долгам как обычно (или аванс), а в счёте засчитывается как оплата. */
+function payByInvoice(kind: 'BANK' | 'CASH') {
+  const inv = doc.value.invoice
+  if (!inv) return
+  const incoming = docType.value === 'INVOICE_OUT'
+  router.push({ path: '/accounting/documents/new', query: {
+    type: `${kind}_${incoming ? 'IN' : 'OUT'}`, operation: incoming ? 'CUSTOMER' : 'SUPPLIER', counterpartyId: doc.value.counterpartyId,
+    amount: inv.left, invoice: doc.value.id, comment: `Оплата по счёту № ${doc.value.number ?? ''} от ${fmtDate(doc.value.date)}`,
+  } })
+}
 function payByDoc(kind: 'BANK' | 'CASH') {
   const p = doc.value.payment
   if (!p) return
@@ -746,7 +868,8 @@ async function save(silent = false): Promise<boolean> {
   busy.value = true
   try {
     if (!isSaved.value) {
-      const created = (await api.post('/accounting/trade-documents', { docType: docType.value, ...payload(), status: 'DRAFT' }, idem())) as any
+      const extra = isOrderType(docType.value) ? { stage: ord.value.stage || undefined, shipDate: ord.value.shipDate || undefined, responsibleId: ord.value.responsibleId || undefined } : {}
+      const created = (await api.post('/accounting/trade-documents', { docType: docType.value, ...payload(), ...extra, status: 'DRAFT' }, idem())) as any
       if (!silent) ElMessage.success(`Сохранён ${created.number}`)
       await router.replace(`/accounting/trade/${created.id}`)
       doc.value = created
@@ -877,38 +1000,55 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.num { font-weight: 400; margin-left: 8px; color: #606266; }
-.actions { display: flex; gap: 8px; flex-wrap: wrap; }
-.head-form :deep(.el-form-item) { margin-bottom: 10px; }
+/* Шапка документа: название и номер, под ними — метки статуса; справа — действия */
+.page-header { align-items: flex-start; gap: 12px 24px; flex-wrap: wrap; }
+.page-header h1 { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 6px; font-size: 22px; max-width: 760px; }
+.page-header h1 :deep(.el-tag) { margin-left: 0 !important; font-size: 12px; height: 24px; }
+.num { font-weight: 500; color: var(--fp-text-3); margin-right: 6px; letter-spacing: 0; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; align-items: center; margin-left: auto; }
+.actions :deep(.el-button + .el-button) { margin-left: 0; }
+/* Поля шапки — в две колонки на широком экране */
+.head-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 28px; }
+.head-form :deep(.el-form-item) { margin-bottom: 12px; min-width: 0; }
+.head-form :deep(.el-select), .head-form :deep(.el-date-editor.el-input) { width: 100% !important; max-width: 360px; }
+@media (max-width: 1100px) { .head-form { grid-template-columns: 1fr; } }
 .card-head { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
-.totals { font-size: 14px; color: #606266; }
+.totals { font-size: 14px; color: var(--fp-text-2); }
 .scan { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
 .scan-in { width: 420px; max-width: 100%; }
 .scan-msg { font-size: 13px; }
 .scan-msg.ok { color: var(--el-color-success); }
 .scan-msg.bad { color: var(--el-color-danger); }
 .lines { overflow-x: auto; }
-.line { display: flex; gap: 8px; align-items: center; padding: 6px 0; border-bottom: 1px solid #f0f0f0; min-width: 820px; }
-.line.head { font-size: 12px; color: #909399; font-weight: 600; border-bottom: 1px solid #e4e7ed; }
-.c-no { width: 28px; color: #909399; }
+.line { display: flex; gap: 8px; align-items: center; padding: 6px 8px; border-bottom: 1px solid var(--fp-border-soft); min-width: 820px; }
+.line:not(.head):hover { background: #f8fafd; }
+.line.head { font-size: 12px; color: var(--fp-text-2); font-weight: 600; background: #f7f9fc; border-bottom: 1px solid var(--fp-border); border-radius: 8px 8px 0 0; padding: 9px 8px; }
+.c-no { width: 28px; color: var(--fp-text-3); }
 .c-prod { flex: 1 1 0; min-width: 260px; }
 .c-num { width: 110px; }
 .c-pct { width: 80px; }
 .c-sum { width: 130px; text-align: right; font-variant-numeric: tabular-nums; }
 .c-del { width: 32px; }
 .num-in :deep(input) { text-align: right; }
-.hint { color: #909399; font-size: 12px; margin-left: 10px; }
-.hint0 { color: #909399; font-size: 12px; }
+.hint { color: var(--fp-text-3); font-size: 12px; margin-left: 10px; }
+.hint0 { color: var(--fp-text-3); font-size: 12px; }
 .c-reason { width: 150px; }
 .c-bin { width: 130px; }
 .c-lot { width: 120px; }
 .c-date { width: 140px; }
-.book { text-align: right; color: #606266; font-variant-numeric: tabular-nums; }
+.book { text-align: right; color: var(--fp-text-2); font-variant-numeric: tabular-nums; }
 .diffcell { text-align: right; }
 .line.sub { padding-top: 0; border-bottom: 1px dashed #f0f0f0; font-size: 12px; }
 .diff { display: inline-flex; gap: 10px; min-width: 200px; }
 .neg { color: var(--el-color-danger); }
 .pos { color: var(--el-color-success); }
 .need-reason :deep(.el-select__wrapper) { box-shadow: 0 0 0 1px var(--el-color-warning) inset; }
-.entry-meta { color: #909399; font-size: 12px; margin-bottom: 6px; }
+.entry-meta { color: var(--fp-text-3); font-size: 12px; margin-bottom: 6px; }
+.due-pop { display: flex; flex-direction: column; gap: 8px; }
+.due-hint { color: var(--el-text-color-secondary); font-size: 12px; line-height: 1.35; }
+.due-btns { display: flex; justify-content: flex-end; gap: 6px; }
+.ship-late { color: var(--el-color-danger); font-size: 12px; margin-left: 8px; }
+.inv-pays { margin-top: 4px; }
+.inv-pay { margin-right: 12px; }
+.doc-ic { width: 38px; height: 38px; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; color: var(--c); background: color-mix(in srgb, var(--c) 11%, transparent); border: 1px solid color-mix(in srgb, var(--c) 22%, transparent); margin-right: 4px; }
 </style>

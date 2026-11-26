@@ -15,6 +15,9 @@
         <el-option v-for="t in templates" :key="t.id" :value="t.id" :label="`${t.name}${t.builtin ? '' : ` (версия ${t.version})`}${t.isDefault ? ' — по умолчанию' : ''}`" />
       </el-select>
       <span class="spacer" />
+      <el-tooltip v-if="canWa" :content="waPhone(phone) ? 'Откроет чат клиента в WhatsApp с текстом документа и реквизитами; PDF прикрепите из «Печать / PDF»' : 'У контрагента не указан телефон'" placement="top">
+        <span><el-button :icon="ChatDotRound" :disabled="!data || !waPhone(phone)" @click="sendWa">WhatsApp</el-button></span>
+      </el-tooltip>
       <el-button type="primary" :icon="Printer" :disabled="!data" @click="frame?.print()">Печать / PDF</el-button>
     </div>
     <div v-loading="loading" class="preview"><PrintFrame ref="frame" :html="html" :data="data" /></div>
@@ -23,12 +26,12 @@
 
 <script setup lang="ts">
 import { computed, ref, onMounted } from 'vue'
-import { Printer } from '@element-plus/icons-vue'
+import { ChatDotRound, Printer } from '@element-plus/icons-vue'
 import api from '@/api/client'
 import PrintFrame from './PrintFrame.vue'
 import { showError } from '@/views/accounting/acc'
 
-const props = withDefaults(defineProps<{ source: 'TRADE' | 'ACC' | 'RECON' | 'PAYROLL'; docType?: string; id?: string; query?: Record<string, unknown>; size?: 'small' | 'default' }>(), { size: 'default' })
+const props = withDefaults(defineProps<{ source: 'TRADE' | 'ACC' | 'RECON' | 'PAYROLL'; docType?: string; id?: string; query?: Record<string, unknown>; size?: 'small' | 'default'; phone?: string | null }>(), { size: 'default' })
 const all = ref<any[]>([])
 const kinds = computed(() => all.value.filter((k) => k.source === props.source && (props.source === 'RECON' || props.source === 'PAYROLL' || k.docTypes.includes(props.docType))))
 const show = ref(false)
@@ -56,6 +59,39 @@ async function open(kind: string) {
 async function loadTemplate() {
   try { html.value = ((await api.get(`/accounting/print/templates/${encodeURIComponent(templateId.value)}`)) as any).html } catch (e) { showError(e) }
 }
+// ── Отправка клиенту в WhatsApp: текст документа (номер, сумма, состав) и реквизиты для оплаты ──
+const WA_KINDS = new Set(['INVOICE', 'ORDER', 'Z2', 'R1', 'RECON'])
+const canWa = computed(() => props.phone !== undefined && !!current.value && WA_KINDS.has(current.value.kind))
+/** Номер для WhatsApp: только цифры, казахстанский 8XXXXXXXXXX → 7XXXXXXXXXX. */
+function waPhone(p?: string | null) {
+  let d = String(p || '').replace(/\D/g, '')
+  if (d.length === 11 && d.startsWith('8')) d = `7${d.slice(1)}`
+  if (d.length === 10) d = `7${d}`
+  return d.length >= 11 ? d : ''
+}
+const money = (v: any) => Number(v || 0).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+const ru = (d?: string) => (d ? d.slice(0, 10).split('-').reverse().join('.') : '')
+function sendWa() {
+  const d: any = data.value
+  if (!d) return
+  const k = current.value.kind
+  const out: string[] = ['Здравствуйте!']
+  if (k === 'RECON') {
+    out.push(`Акт сверки взаиморасчётов за период с ${ru(d.period?.from)} по ${ru(d.period?.to)}: ${d.result}.`)
+  } else {
+    out.push(`${current.value.title} № ${d.doc.number} от ${ru(d.doc.date)}`)
+    for (const l of (d.lines || []).slice(0, 15)) out.push(`• ${l.name} — ${Number(l.qty)} ${l.unit || ''} × ${money(l.price)} = ${money(l.amount)} ₸`)
+    if ((d.lines || []).length > 15) out.push(`… ещё позиций: ${d.lines.length - 15}`)
+    out.push(`Итого: ${money(d.totals?.amount)} ₸${d.vatPayer && Number(d.totals?.vat) ? `, в т. ч. НДС ${money(d.totals.vat)} ₸` : ''}`)
+    if (k === 'INVOICE' && d.supplier?.bank?.iban) {
+      out.push('', 'Реквизиты для оплаты:', `${d.supplier.name}, БИН ${d.supplier.bin}`, `ИИК ${d.supplier.bank.iban}${d.supplier.bank.bic ? `, БИК ${d.supplier.bank.bic}` : ''}${d.supplier.bank.name ? `, ${d.supplier.bank.name}` : ''}`, 'КНП 710')
+      out.push(`Назначение: оплата по счёту № ${d.doc.number} от ${ru(d.doc.date)}`)
+    }
+  }
+  if (d.org?.name) out.push('', d.org.name)
+  window.open(`https://wa.me/${waPhone(props.phone)}?text=${encodeURIComponent(out.join('\n'))}`, '_blank', 'noopener')
+}
+
 onMounted(async () => { try { all.value = (await api.get('/accounting/print/kinds')) as any } catch { all.value = [] } })
 </script>
 

@@ -1,9 +1,12 @@
 <template>
   <div class="dash">
     <div class="page-header">
-      <div>
-        <h1>Показатели</h1>
+      <div class="hello">
+        <div class="h-ic"><el-icon :size="24"><HomeFilled /></el-icon></div>
+        <div>
+        <h1>{{ greeting }}</h1>
         <div class="sub">{{ periodText }}<template v-if="data"> · сравнение с {{ fmtDate(data.period.prevFrom) }}–{{ fmtDate(kzShift(data.period.from, -1)) }}</template></div>
+        </div>
       </div>
       <div class="bar">
         <el-radio-group v-model="preset" size="default" @change="applyPreset">
@@ -17,6 +20,13 @@
       </div>
     </div>
 
+    <div v-if="actions.length" class="quick">
+      <router-link v-for="a in actions" :key="a.path" :to="a.path" class="q" :style="{ '--c': a.color }">
+        <span class="q-ic"><el-icon :size="20"><component :is="a.icon" /></el-icon></span>
+        <span class="q-t">{{ a.title }}</span>
+      </router-link>
+    </div>
+
     <el-result v-if="forbidden" icon="info" title="Добро пожаловать в FlowPOS" sub-title="Показатели продаж доступны руководителю. Нужные вам разделы — в меню слева." />
 
     <template v-else>
@@ -25,8 +35,8 @@
       </el-alert>
 
       <div class="kpis" v-loading="loading && !data">
-        <div v-for="k in kpis" :key="k.label" class="kpi">
-          <div class="k-label">{{ k.label }}</div>
+        <div v-for="(k, i) in kpis" :key="k.label" class="kpi">
+          <div class="k-top"><div class="k-label">{{ k.label }}</div><span class="k-ic" :style="{ '--c': KPI_ICONS[i][1] }"><el-icon><component :is="KPI_ICONS[i][0]" /></el-icon></span></div>
           <div class="k-value">{{ k.value }}</div>
           <div class="k-hint">
             <span v-if="k.delta !== undefined" :class="deltaClass(k.delta, k.inverse)">{{ deltaText(k.delta) }}</span>
@@ -38,14 +48,14 @@
       <div class="row">
         <el-card shadow="never" class="chart-card">
           <template #header>
-            <div class="card-head"><b>Продажи по дням</b><span class="muted">оптом и в розницу, ₸</span></div>
+            <div class="card-head"><b><el-icon class="ch-ic"><TrendCharts /></el-icon>Продажи по дням</b><span class="muted">оптом и в розницу, ₸</span></div>
           </template>
           <v-chart v-if="data?.byDay.length" class="chart" :option="chartOption" autoresize />
           <el-empty v-else description="Продаж за период нет" :image-size="70" />
         </el-card>
 
         <el-card shadow="never" class="side-card">
-          <template #header><div class="card-head"><b>Требует внимания</b></div></template>
+          <template #header><div class="card-head"><b><el-icon class="ch-ic"><Bell /></el-icon>Требует внимания</b></div></template>
           <div class="att" @click="router.push('/sales/orders')">
             <el-icon class="a-ico blue"><Tickets /></el-icon>
             <div class="a-txt"><div>Заказы покупателей в работе</div><div class="muted">{{ fmtMoney(att.openOrdersSum) }} ₸</div></div>
@@ -61,6 +71,11 @@
             <div class="a-txt"><div>Товары в минусе</div><div class="muted">продано больше, чем оприходовано</div></div>
             <b :class="{ bad: att.negativeStock }">{{ att.negativeStock }}</b>
           </div>
+          <div v-if="debts" class="att" @click="router.push('/reports/debt-aging')">
+            <el-icon class="a-ico red"><Timer /></el-icon>
+            <div class="a-txt"><div>Просроченные долги покупателей</div><div class="muted">{{ debts.lines.filter((l: any) => Number(l.overdue) > 0).length }} клиентов</div></div>
+            <b :class="{ bad: Number(debts.totals.overdue) > 0 }">{{ fmtMoney(Number(debts.totals.overdue)) }}</b>
+          </div>
           <div class="att" @click="router.push('/pos/shifts')">
             <el-icon class="a-ico green"><Monitor /></el-icon>
             <div class="a-txt"><div>Открытые кассовые смены</div></div>
@@ -71,7 +86,24 @@
 
       <div class="row two">
         <el-card shadow="never">
-          <template #header><div class="card-head"><b>Лучшие товары</b><span class="muted">по сумме продаж</span></div></template>
+          <template #header><div class="card-head"><b><el-icon class="ch-ic"><Finished /></el-icon>Мои задачи</b><router-link to="/tasks" class="more">все задачи →</router-link></div></template>
+          <TaskList scope="mine" :limit="6" empty-text="Задач нет — можно поставить себе или коллеге" placeholder="Новая задача: что сделать?" />
+        </el-card>
+        <el-card shadow="never">
+          <template #header><div class="card-head"><b><el-icon class="ch-ic"><Timer /></el-icon>Кто должен больше всего</b><router-link to="/reports/debt-aging" class="more">долги по срокам →</router-link></div></template>
+          <div v-if="debts?.lines?.length">
+            <div v-for="l in debts.lines.slice(0, 6)" :key="l.counterpartyId" class="debt" @click="router.push(`/catalog/counterparties/${l.counterpartyId}`)">
+              <div class="d-name"><div class="ell">{{ l.name }}</div><div class="muted small">{{ l.maxOverdueDays ? `просрочка до ${l.maxOverdueDays} дн.` : 'в срок' }}</div></div>
+              <div class="d-sum"><b>{{ fmtMoney(Number(l.total)) }}</b><div v-if="Number(l.overdue)" class="bad small">просрочено {{ fmtMoney(Number(l.overdue)) }}</div></div>
+            </div>
+          </div>
+          <el-empty v-else description="Долгов нет" :image-size="60" />
+        </el-card>
+      </div>
+
+      <div class="row two">
+        <el-card shadow="never">
+          <template #header><div class="card-head"><b><el-icon class="ch-ic"><Goods /></el-icon>Лучшие товары</b><span class="muted">по сумме продаж</span></div></template>
           <el-table v-if="data?.topItems.length" :data="data.topItems" size="small" :show-header="false" @row-click="(r: any) => router.push(`/catalog/items/${r.productId}`)" row-class-name="clickable">
             <el-table-column type="index" width="36" />
             <el-table-column min-width="180"><template #default="{ row }"><div class="ell">{{ row.name }}</div><div class="muted small">{{ fmtQty(row.qty) }} шт.</div></template></el-table-column>
@@ -81,7 +113,7 @@
           <el-empty v-else description="Нет продаж" :image-size="60" />
         </el-card>
         <el-card shadow="never">
-          <template #header><div class="card-head"><b>Лучшие покупатели</b><span class="muted">оптовые реализации</span></div></template>
+          <template #header><div class="card-head"><b><el-icon class="ch-ic"><User /></el-icon>Лучшие покупатели</b><span class="muted">оптовые реализации</span></div></template>
           <el-table v-if="data?.topCustomers.length" :data="data.topCustomers" size="small" :show-header="false" @row-click="(r: any) => router.push(`/catalog/counterparties/${r.counterpartyId}`)" row-class-name="clickable">
             <el-table-column type="index" width="36" />
             <el-table-column min-width="180"><template #default="{ row }"><div class="ell">{{ row.name }}</div><div class="muted small">{{ row.docs }} {{ plural(row.docs, 'отгрузка', 'отгрузки', 'отгрузок') }}</div></template></el-table-column>
@@ -102,7 +134,11 @@ import { BarChart, LineChart } from 'echarts/charts'
 import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import VChart from 'vue-echarts'
-import { Monitor, RemoveFilled, Tickets, Warning } from '@element-plus/icons-vue'
+import { Bell, Finished, Goods, HomeFilled, Monitor, RemoveFilled, Tickets, Timer, TrendCharts, User, Warning } from '@element-plus/icons-vue'
+import TaskList from '@/components/tasks/TaskList.vue'
+import { useOrgStore } from '@/stores/org'
+import { useAuthStore } from '@/stores/auth'
+import { useSolutionsStore } from '@/stores/solutions'
 import api from '@/api/client'
 import { deltaPct, fmtDate, kzShift, kzToday } from '@/views/field/field'
 
@@ -119,6 +155,31 @@ interface Dash {
 }
 
 const router = useRouter()
+const org = useOrgStore()
+const auth = useAuthStore()
+const solutions = useSolutionsStore()
+const KPI_ICONS: [string, string][] = [['Money', '#1769e0'], ['ShoppingBag', '#23a047'], ['Coin', '#7c3aed'], ['RefreshLeft', '#dc2626']]
+const greeting = computed(() => {
+  const h = new Date().getHours()
+  const name = auth.user?.firstName ? `, ${auth.user.firstName}` : ''
+  return `${h < 5 ? 'Доброй ночи' : h < 12 ? 'Доброе утро' : h < 18 ? 'Добрый день' : 'Добрый вечер'}${name}`
+})
+/** Быстрые действия главной: самые частые операции, по правам и подпискам. */
+const actions = computed(() => {
+  const w = org.can('acc.doc.write'), trade = solutions.trade
+  const a: { path: string; title: string; icon: string; color: string }[] = []
+  if (trade && w) a.push(
+    { path: '/accounting/trade/new?type=CUSTOMER_ORDER', title: 'Новый заказ', icon: 'Tickets', color: '#1769e0' },
+    { path: '/accounting/trade/new?type=DEMAND', title: 'Реализация', icon: 'Sell', color: '#1769e0' },
+    { path: '/accounting/trade/new?type=INVOICE_OUT', title: 'Счёт покупателю', icon: 'Document', color: '#1769e0' },
+    { path: '/accounting/trade/new?type=SUPPLY', title: 'Поступление', icon: 'Download', color: '#7c3aed' },
+  )
+  if (w) a.push({ path: '/accounting/documents/new?type=CASH_IN', title: 'Принять оплату', icon: 'Wallet', color: '#23a047' })
+  if (trade) a.push({ path: '/trade/stocks', title: 'Остатки', icon: 'Box', color: '#0891b2' }, { path: '/reports/profitability', title: 'Прибыльность', icon: 'Money', color: '#0f766e' })
+  return a
+})
+const debts = ref<any>(null)
+async function loadDebts() { try { debts.value = await api.get('/accounting/reports/debt-aging', { params: { side: 'customers' } }) } catch { debts.value = null } }
 const data = ref<Dash | null>(null)
 const loading = ref(false)
 const error = ref('')
@@ -201,11 +262,27 @@ async function load() {
   }
 }
 
-onMounted(load)
+onMounted(() => { load(); loadDebts() })
 </script>
 
 <style scoped>
-.page-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.page-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
+.page-header h1 { margin: 0; }
+.hello { display: flex; align-items: center; gap: 14px; }
+.h-ic { width: 48px; height: 48px; border-radius: 14px; display: flex; align-items: center; justify-content: center; color: #fff; background: linear-gradient(135deg, #1769e0, #23a047); box-shadow: 0 8px 20px rgba(23, 105, 224, .25); flex: none; }
+.quick { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-bottom: 18px; }
+.q { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-radius: 12px; background: var(--fp-surface); border: 1px solid var(--fp-border); color: var(--fp-text); text-decoration: none; font-weight: 500; font-size: 14px; transition: transform .15s, box-shadow .15s, border-color .15s; }
+.q:hover { transform: translateY(-2px); box-shadow: var(--fp-shadow-lg); border-color: color-mix(in srgb, var(--c) 40%, transparent); }
+.q-ic { width: 36px; height: 36px; border-radius: 10px; display: flex; align-items: center; justify-content: center; color: var(--c); background: color-mix(in srgb, var(--c) 11%, transparent); flex: none; }
+.k-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+.k-ic { width: 34px; height: 34px; border-radius: 10px; display: flex; align-items: center; justify-content: center; color: var(--c); background: color-mix(in srgb, var(--c) 11%, transparent); font-size: 18px; flex: none; }
+.ch-ic { vertical-align: -2px; margin-right: 6px; color: var(--el-color-primary); }
+.more { font-size: 12px; color: var(--el-color-primary); text-decoration: none; }
+.debt { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 9px 4px; border-bottom: 1px solid var(--fp-border-soft); cursor: pointer; border-radius: 6px; }
+.debt:hover { background: var(--el-fill-color-light); }
+.d-name { min-width: 0; flex: 1; }
+.d-sum { text-align: right; font-variant-numeric: tabular-nums; }
+.bad { color: var(--el-color-danger); }
 .sub { color: var(--el-text-color-secondary); font-size: 13px; margin-top: 4px; }
 .bar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
 .mb { margin-bottom: 12px; }

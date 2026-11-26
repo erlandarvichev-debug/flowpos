@@ -22,6 +22,7 @@
             <el-descriptions-item label="КБе">{{ cp.kbe || '—' }}</el-descriptions-item>
             <el-descriptions-item label="Роль">{{ TYPE[cp.type] ?? cp.type }}</el-descriptions-item>
             <el-descriptions-item label="Телефон">{{ cp.phone || '—' }}</el-descriptions-item>
+            <el-descriptions-item label="Отсрочка оплаты">{{ cp.paymentDays != null ? `${cp.paymentDays} дн.` : 'нет (оплата в день отгрузки)' }}</el-descriptions-item>
             <el-descriptions-item label="Email">{{ cp.email || '—' }}</el-descriptions-item>
           </el-descriptions>
           <div class="on">
@@ -44,6 +45,7 @@
             </el-table-column>
             <el-table-column label="Вид" width="110"><template #default="{ row }">{{ CTYPE[row.type] ?? '—' }}</template></el-table-column>
             <el-table-column label="Действует" width="190"><template #default="{ row }">{{ row.startDate ? d(row.startDate) : '…' }} — {{ row.endDate ? d(row.endDate) : 'бессрочно' }}</template></el-table-column>
+            <el-table-column label="Отсрочка" width="95"><template #default="{ row }">{{ row.paymentDays != null ? `${row.paymentDays} дн.` : '—' }}</template></el-table-column>
             <el-table-column prop="currency" label="Валюта" width="80" />
             <el-table-column label="" width="120">
               <template #default="{ row }">
@@ -82,6 +84,16 @@
       </el-col>
     </el-row>
 
+    <el-card style="margin-top: 16px;">
+      <template #header><b>Файлы</b></template>
+      <FileList entity-type="COUNTERPARTY" :entity-id="id" />
+    </el-card>
+
+    <el-card style="margin-top: 16px;">
+      <template #header><b>Задачи по контрагенту</b></template>
+      <TaskList :counterparty-id="id" empty-text="Открытых задач по контрагенту нет" placeholder="Позвонить, отвезти документы, напомнить об оплате…" />
+    </el-card>
+
     <el-dialog v-model="addrOpen" title="Новый адрес" width="520px">
       <el-alert type="info" :closable="false" show-icon style="margin-bottom: 12px;" title="Прежний адрес того же вида закроется днём раньше — документы прошлых дат сохранят его." />
       <el-form label-width="120px">
@@ -113,6 +125,9 @@
         <el-form-item label="Вид"><el-select v-model="k.type" clearable><el-option v-for="(l, t) in CTYPE" :key="t" :label="l" :value="t" /></el-select></el-form-item>
         <el-form-item label="Действует с"><el-date-picker v-model="k.startDate" type="date" value-format="YYYY-MM-DD" placeholder="с даты договора" /></el-form-item>
         <el-form-item label="Действует по"><el-date-picker v-model="k.endDate" type="date" value-format="YYYY-MM-DD" placeholder="бессрочно" /></el-form-item>
+        <el-form-item label="Отсрочка оплаты">
+          <el-input-number v-model="k.paymentDays" :min="0" :max="365" :controls="false" placeholder="—" style="width: 100px;" /> <span class="muted" style="margin-left: 8px;">дней (пусто — как у контрагента)</span>
+        </el-form-item>
         <el-form-item label="Валюта"><el-input v-model="k.currency" maxlength="3" style="width: 100px;" /></el-form-item>
         <el-form-item v-if="k.id"><el-checkbox v-model="k.isActive">Действует (закрытый договор нельзя выбрать в новых документах)</el-checkbox></el-form-item>
       </el-form>
@@ -129,6 +144,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '@/api/client'
 import { useOrgStore } from '@/stores/org'
 import { showError } from '../accounting/acc'
+import TaskList from '@/components/tasks/TaskList.vue'
+import FileList from '@/components/files/FileList.vue'
 
 const route = useRoute()
 const org = useOrgStore()
@@ -192,8 +209,8 @@ async function closeBank(b: any) {
 const iso = (v?: string | null) => (v ? String(v).slice(0, 10) : null)
 function openContract(row?: any) {
   k.value = row
-    ? { id: row.id, number: row.number, date: iso(row.date), name: row.name, type: row.type, startDate: iso(row.startDate), endDate: iso(row.endDate), currency: row.currency, isActive: row.isActive }
-    : { number: '', date: today, name: '', type: 'SALE', startDate: null, endDate: null, currency: 'KZT' }
+    ? { id: row.id, number: row.number, date: iso(row.date), name: row.name, type: row.type, startDate: iso(row.startDate), endDate: iso(row.endDate), currency: row.currency, isActive: row.isActive, paymentDays: row.paymentDays ?? null }
+    : { number: '', date: today, name: '', type: 'SALE', startDate: null, endDate: null, currency: 'KZT', paymentDays: null }
   kOpen.value = true
 }
 function saveContract() {

@@ -12,7 +12,7 @@ export const INVENTORY_REASONS: Record<string, string> = {
   UNRECORDED: 'неучтённое поступление / отгрузка', OTHER: 'другое',
 };
 export const LOSS_REASONS: Record<string, string> = {
-  DAMAGED: 'порча / бой', EXPIRED: 'истёк срок годности', THEFT: 'хищение', NATURAL_LOSS: 'естественная убыль', OTHER: 'другое',
+  DAMAGED: 'порча / бой', EXPIRED: 'истёк срок годности', THEFT: 'хищение', NATURAL_LOSS: 'естественная убыль', PRODUCTION: 'в производство', OTHER: 'другое',
 };
 
 export class CountError extends Error {

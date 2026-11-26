@@ -109,3 +109,29 @@ describe('Печатные формы', () => {
   });
 });
 
+
+describe('Бланк заказа, сборочный лист, приходная накладная', () => {
+  it('заказ: заголовок по виду, дата отгрузки и ответственный; сборочный лист без цен; приходная — для поступления', async () => {
+    const ctx = await makeOrg(prisma);
+    const t = await makeTrade(prisma, ctx, { vatPayer: false });
+    const tpl = (kind: string) => BUILTIN_TEMPLATES.find((x) => x.id === `builtin:${kind}`)!.html;
+    const sup = await s.trade.create(ctx, { docType: 'SUPPLY', date: '2026-10-01', counterpartyId: t.supplier.id, storeId: t.s1.id, status: 'POSTED', lines: [{ productId: t.goods.id, qty: '10', price: '100' }] });
+    const order = await s.trade.create(ctx, { docType: 'CUSTOMER_ORDER', date: '2026-10-02', counterpartyId: t.customer.id, storeId: t.s1.id, shipDate: '2026-10-07', lines: [{ productId: t.goods.id, qty: '3', price: '250' }] } as any);
+
+    const d = await print.data(ctx, 'ORDER', order.id) as any;
+    expect(d).toMatchObject({ title: 'Заказ покупателя', order: { shipDate: '2026-10-07', shipLabel: 'Дата отгрузки' }, totals: { amount: '750.00', count: 1 } });
+    expect(d.order.responsible).toBeTruthy();
+    const html = render(tpl('ORDER'), d);
+    expect(html).toContain('Заказ покупателя №');
+    expect(html).toContain('07.10.2026');
+
+    const pick = render(tpl('PICK'), await print.data(ctx, 'PICK', order.id) as any);
+    expect(pick).toContain('Сборочный лист к заказу');
+    expect(pick).not.toContain('250');
+
+    const rec = render(tpl('RECEIPT'), await print.data(ctx, 'RECEIPT', sup.id) as any);
+    expect(rec).toContain('Приходная накладная №');
+    expect(rec).toContain('ТОО Поставщик');
+    expect(await code(print.data(ctx, 'RECEIPT', order.id))).toBe('WRONG_DOC_TYPE');
+  });
+});

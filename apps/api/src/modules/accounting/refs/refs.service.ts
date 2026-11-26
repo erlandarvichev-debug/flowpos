@@ -64,6 +64,20 @@ export class RefsService {
   }
 
   /** FP-026: договоры только своей организации (раньше — всех организаций клиента). */
+  /** Все договоры организации (CRM): с контрагентом, отсрочкой, сроком и числом документов; поиск и закрытые. */
+  async contractRegistry(ctx: OrgContext, q: { search?: string; active?: string }) {
+    const s = String(q.search ?? '').trim();
+    const rows = await this.prisma.contract.findMany({
+      where: {
+        organizationId: ctx.organizationId, ...(q.active === '1' ? { isActive: true } : q.active === '0' ? { isActive: false } : {}),
+        ...(s ? { OR: [{ number: { contains: s, mode: 'insensitive' } }, { name: { contains: s, mode: 'insensitive' } }, { counterparty: { name: { contains: s, mode: 'insensitive' } } }] } : {}),
+      },
+      include: { counterparty: { select: { id: true, name: true, inn: true } } }, orderBy: [{ isActive: 'desc' }, { date: 'desc' }], take: 500,
+    });
+    const counts = rows.length ? await this.prisma.document.groupBy({ by: ['contractId'], where: { contractId: { in: rows.map((r) => r.id) }, deleted: false }, _count: true, _max: { date: true } }) : [];
+    return rows.map((r) => ({ ...r, documents: counts.find((c) => c.contractId === r.id)?._count ?? 0, lastDocDate: counts.find((c) => c.contractId === r.id)?._max.date ?? null }));
+  }
+
   contracts(ctx: OrgContext, counterpartyId?: string) {
     return this.prisma.contract.findMany({
       where: { organizationId: ctx.organizationId, isActive: true, ...(counterpartyId ? { counterpartyId } : {}) },
@@ -209,10 +223,22 @@ export class RefsService {
     });
   }
 
-  async audit_log(ctx: OrgContext, q: { entity?: string; entityId?: string; limit?: number }) {
-    const rows = await this.prisma.auditLog.findMany({
-      where: { organizationId: ctx.organizationId, ...(q.entity ? { entity: q.entity } : {}), ...(q.entityId ? { entityId: q.entityId } : {}) },
+  /** Журнал действий: фильтры — объект, пользователь, действие, период (дни Казахстана); с именами пользователей. */
+  async audit_log(ctx: OrgContext, q: { entity?: string; entityId?: string; userId?: string; action?: string; from?: string; to?: string; limit?: number }) {
+    const day = (v: string) => (/^\d{4}-\d{2}-\d{2}$/.test(v) ? new Date(`${v}T00:00:00+05:00`) : null);
+    const from = q.from ? day(q.from) : null, to = q.to ? day(q.to) : null;
+    const raw = await this.prisma.auditLog.findMany({
+      where: {
+        organizationId: ctx.organizationId, ...(q.entity ? { entity: q.entity } : {}), ...(q.entityId ? { entityId: q.entityId } : {}),
+        ...(q.userId ? { userId: q.userId } : {}), ...(q.action ? { action: { contains: q.action, mode: 'insensitive' as const } } : {}),
+        ...(from || to ? { ts: { ...(from ? { gte: from } : {}), ...(to ? { lt: new Date(to.getTime() + 86400000) } : {}) } } : {}),
+      },
       orderBy: { ts: 'desc' }, take: Math.min(500, Number(q.limit) || 100),
+    });
+    const users = await this.prisma.user.findMany({ where: { id: { in: [...new Set(raw.map((r) => r.userId).filter(Boolean))] as string[] } }, select: { id: true, email: true, firstName: true, lastName: true } });
+    const rows = raw.map((r) => {
+      const u = users.find((x) => x.id === r.userId);
+      return { ...r, userName: u ? [u.lastName, u.firstName].filter(Boolean).join(' ') || u.email : r.userId ? null : 'Система' };
     });
     // Оклад и суммы в кадровых/зарплатных записях — только с payroll.read (FP-008); остальной журнал без изменений.
     if (ctx.can('payroll.read')) return rows;

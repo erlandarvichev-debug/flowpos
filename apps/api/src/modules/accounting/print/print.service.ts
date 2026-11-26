@@ -202,7 +202,16 @@ export class PrintService {
     const contract = (d as any).contractId ? await this.prisma.contract.findUnique({ where: { id: (d as any).contractId }, select: { number: true, date: true } }) : null;
     const supplierSide = ['SUPPLY', 'PURCHASE_ORDER', 'PURCHASE_RETURN'].includes(d.docType);
     const cp = await this.counterpartyData(d.counterpartyId);
+    // Заказ: дата отгрузки/поступления и ответственный (для бланка заказа и сборочного листа).
+    const a = ((d as any).attributes ?? {}) as any;
+    const resp = a.responsibleId ? await this.prisma.user.findUnique({ where: { id: a.responsibleId }, select: { firstName: true, lastName: true, email: true } }) : null;
+    const TITLES: Record<string, string> = { CUSTOMER_ORDER: 'Заказ покупателя', PURCHASE_ORDER: 'Заказ поставщику', DEMAND: 'Реализация', SUPPLY: 'Поступление' };
     return {
+      title: TITLES[d.docType] ?? k.title, docTitle: d.docType === 'DEMAND' ? 'реализации' : 'заказу',
+      order: {
+        shipDate: a.shipDate ?? '', shipLabel: d.docType === 'PURCHASE_ORDER' ? 'Дата поступления' : 'Дата отгрузки',
+        responsible: resp ? [resp.lastName, resp.firstName].filter(Boolean).join(' ') || resp.email : '',
+      },
       org, counterparty: cp, store: d.store?.name ?? '', contract: contract ? { number: contract.number, date: iso(contract.date) } : null,
       doc: { number: d.number ?? '', date: iso(d.date), type: d.docType, status: d.status, comment: (d as any).comment ?? '' },
       lines, vatPayer,

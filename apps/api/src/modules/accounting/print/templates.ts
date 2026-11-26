@@ -3,12 +3,15 @@
 // не имеют — по деловой практике РК.
 import { Z2, R1, KO1, KO2 } from './templates-primary';
 
-export type PrintKind = 'INVOICE' | 'Z2' | 'R1' | 'KO1' | 'KO2' | 'RECON' | 'PAYSLIP' | 'PAYROLL_SHEET';
+export type PrintKind = 'INVOICE' | 'ORDER' | 'PICK' | 'RECEIPT' | 'Z2' | 'R1' | 'KO1' | 'KO2' | 'RECON' | 'PAYSLIP' | 'PAYROLL_SHEET';
 export interface KindDef { kind: PrintKind; title: string; source: 'TRADE' | 'ACC' | 'RECON' | 'PAYROLL'; docTypes: string[]; lines?: 'GOODS' | 'SERVICES' | 'ALL' }
 export interface BuiltinTemplate { id: string; kind: PrintKind; name: string; html: string; primary: boolean; source: string }
 
 export const KINDS: KindDef[] = [
   { kind: 'INVOICE', title: 'Счёт на оплату', source: 'TRADE', docTypes: ['CUSTOMER_ORDER', 'DEMAND', 'INVOICE_OUT'], lines: 'ALL' },
+  { kind: 'ORDER', title: 'Бланк заказа', source: 'TRADE', docTypes: ['CUSTOMER_ORDER', 'PURCHASE_ORDER'], lines: 'ALL' },
+  { kind: 'PICK', title: 'Сборочный лист (для склада)', source: 'TRADE', docTypes: ['CUSTOMER_ORDER', 'DEMAND'], lines: 'GOODS' },
+  { kind: 'RECEIPT', title: 'Приходная накладная', source: 'TRADE', docTypes: ['SUPPLY'], lines: 'ALL' },
   { kind: 'Z2', title: 'Накладная на отпуск запасов на сторону (З-2)', source: 'TRADE', docTypes: ['DEMAND', 'PURCHASE_RETURN'], lines: 'GOODS' },
   { kind: 'R1', title: 'Акт выполненных работ (оказанных услуг) (Р-1)', source: 'TRADE', docTypes: ['DEMAND'], lines: 'SERVICES' },
   { kind: 'KO1', title: 'Приходный кассовый ордер (КО-1)', source: 'ACC', docTypes: ['CASH_IN'] },
@@ -44,6 +47,60 @@ const INVOICE = `${CSS}<div class="f">
 <p class="r"><b>Итого: {{totals.amount|money}}</b>{{#if vatPayer}}<br>В том числе НДС: {{totals.vat|money}}{{/if}}</p>
 <p>Всего наименований {{totals.count}}, на сумму {{totals.amount|money}} KZT<br><b>Всего к оплате: {{amountWords}}</b></p>
 <div class="sig"><div>Исполнитель <span class="line"></span> /{{org.director}}/</div></div>
+</div>`;
+
+const ORDER = `${CSS}<div class="f">
+<h1>{{title}} № {{doc.number}} от {{doc.date|date}}</h1>
+<table class="k">
+<tr><td>Поставщик:</td><td><b>{{supplier.name}}</b>, БИН / ИИН {{supplier.bin}}{{#if supplier.address}}, {{supplier.address}}{{/if}}</td></tr>
+<tr><td>Покупатель:</td><td><b>{{buyer.name}}</b>, БИН / ИИН {{buyer.bin}}{{#if buyer.address}}, {{buyer.address}}{{/if}}</td></tr>
+{{#if contract}}<tr><td>Договор:</td><td>№ {{contract.number}} от {{contract.date|date}}</td></tr>{{/if}}
+{{#if store}}<tr><td>Склад:</td><td>{{store}}</td></tr>{{/if}}
+{{#if order.shipDate}}<tr><td>{{order.shipLabel}}:</td><td><b>{{order.shipDate|date}}</b></td></tr>{{/if}}
+{{#if order.responsible}}<tr><td>Ответственный:</td><td>{{order.responsible}}</td></tr>{{/if}}
+</table>
+<table class="g">
+<tr><th>№</th><th>Код</th><th>Наименование</th><th>Кол-во</th><th>Ед.</th><th>Цена</th><th>Сумма</th></tr>
+{{#each lines}}<tr><td class="c">{{@n}}</td><td>{{code}}</td><td>{{name}}</td><td class="r">{{qty|qty}}</td><td>{{unit}}</td><td class="r">{{price|money}}</td><td class="r">{{amount|money}}</td></tr>{{/each}}
+</table>
+<p class="r"><b>Итого: {{totals.amount|money}}</b>{{#if vatPayer}}<br>В том числе НДС: {{totals.vat|money}}{{/if}}</p>
+<p>Всего наименований {{totals.count}}, на сумму {{totals.amount|money}} KZT ({{amountWords}})</p>
+{{#if doc.comment}}<p>Комментарий: {{doc.comment}}</p>{{/if}}
+<div class="sig"><div>От поставщика <span class="line"></span></div><div>От покупателя <span class="line"></span></div></div>
+</div>`;
+
+const PICK = `${CSS}<div class="f">
+<h1>Сборочный лист к {{docTitle}} № {{doc.number}} от {{doc.date|date}}</h1>
+<table class="k">
+<tr><td>Покупатель:</td><td><b>{{buyer.name}}</b></td></tr>
+{{#if store}}<tr><td>Склад:</td><td>{{store}}</td></tr>{{/if}}
+{{#if order.shipDate}}<tr><td>Отгрузка:</td><td><b>{{order.shipDate|date}}</b></td></tr>{{/if}}
+{{#if order.responsible}}<tr><td>Ответственный:</td><td>{{order.responsible}}</td></tr>{{/if}}
+</table>
+<table class="g">
+<tr><th>№</th><th>Код</th><th>Наименование</th><th>Ед.</th><th>Нужно</th><th>Собрано</th><th>Отметка</th></tr>
+{{#each lines}}<tr><td class="c">{{@n}}</td><td>{{code}}</td><td>{{name}}</td><td>{{unit}}</td><td class="r"><b>{{qty|qty}}</b></td><td style="min-width:70px"></td><td style="min-width:50px"></td></tr>{{/each}}
+</table>
+<p>Позиций: {{totals.count}}, всего единиц: {{totals.qty|qty}}</p>
+{{#if doc.comment}}<p>Комментарий: {{doc.comment}}</p>{{/if}}
+<div class="sig"><div>Собрал <span class="line"></span></div><div>Проверил <span class="line"></span></div></div>
+</div>`;
+
+const RECEIPT = `${CSS}<div class="f">
+<h1>Приходная накладная № {{doc.number}} от {{doc.date|date}}</h1>
+<table class="k">
+<tr><td>Поставщик:</td><td><b>{{supplier.name}}</b>, БИН / ИИН {{supplier.bin}}</td></tr>
+<tr><td>Получатель:</td><td><b>{{buyer.name}}</b>, БИН / ИИН {{buyer.bin}}</td></tr>
+{{#if store}}<tr><td>Склад:</td><td>{{store}}</td></tr>{{/if}}
+{{#if contract}}<tr><td>Договор:</td><td>№ {{contract.number}} от {{contract.date|date}}</td></tr>{{/if}}
+</table>
+<table class="g">
+<tr><th>№</th><th>Код</th><th>Наименование</th><th>Ед.</th><th>Кол-во</th><th>Цена</th><th>Сумма</th>{{#if vatPayer}}<th>НДС</th>{{/if}}</tr>
+{{#each lines}}<tr><td class="c">{{@n}}</td><td>{{code}}</td><td>{{name}}</td><td>{{unit}}</td><td class="r">{{qty|qty}}</td><td class="r">{{price|money}}</td><td class="r">{{amount|money}}</td>{{#if vat}}<td class="r">{{vat|money}}</td>{{/if}}</tr>{{/each}}
+</table>
+<p class="r"><b>Итого: {{totals.amount|money}}</b>{{#if vatPayer}}<br>В том числе НДС: {{totals.vat|money}}{{/if}}</p>
+<p>Всего наименований {{totals.count}}, на сумму {{totals.amount|money}} KZT ({{amountWords}})</p>
+<div class="sig"><div>Сдал <span class="line"></span></div><div>Принял <span class="line"></span></div></div>
 </div>`;
 
 const RECON = `${CSS}<div class="f">
@@ -96,6 +153,9 @@ const PAYROLL_SHEET = `${CSS}<div class="f">
 
 export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
   { id: 'builtin:INVOICE', kind: 'INVOICE', name: 'Счёт на оплату (стандартный)', html: INVOICE, primary: true, source: 'Обязательной формы нет; реквизиты платежа по Правилам безналичных платежей НБРК (Кбе, КНП)' },
+  { id: 'builtin:ORDER', kind: 'ORDER', name: 'Бланк заказа (стандартный)', html: ORDER, primary: true, source: 'Обязательной формы нет; по деловой практике' },
+  { id: 'builtin:PICK', kind: 'PICK', name: 'Сборочный лист (стандартный)', html: PICK, primary: true, source: 'Внутренний документ склада; обязательной формы нет' },
+  { id: 'builtin:RECEIPT', kind: 'RECEIPT', name: 'Приходная накладная (стандартная)', html: RECEIPT, primary: true, source: 'Внутренний документ; обязательной формы нет' },
   { id: 'builtin:Z2', kind: 'Z2', name: Z2.name, html: Z2.html, primary: true, source: Z2.source },
   { id: 'builtin:R1', kind: 'R1', name: R1.name, html: R1.html, primary: true, source: R1.source },
   { id: 'builtin:KO1', kind: 'KO1', name: KO1.name, html: KO1.html, primary: true, source: KO1.source },

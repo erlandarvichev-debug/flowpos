@@ -70,15 +70,56 @@ describe('Оплата реализаций в журнале и карточк�
     await s.trade.create(ctx, { docType: 'SUPPLY', date: '2026-10-01', counterpartyId: t.supplier.id, storeId: t.s1.id, status: 'POSTED', lines: [{ productId: t.goods.id, qty: '10', price: '100' }] });
     const sale = await s.trade.create(ctx, { docType: 'DEMAND', date: '2026-10-02', counterpartyId: t.customer.id, storeId: t.s1.id, status: 'POSTED', lines: [{ productId: t.goods.id, qty: '4', price: '250' }] });
     const state = async () => (await s.trade.list(ctx, { docType: 'DEMAND' })).items.find((i: any) => i.id === sale.id)!.payment;
-    expect(await state()).toEqual({ status: 'UNPAID', paid: '0.00', debt: '1000.00' });
+    expect(await state()).toMatchObject({ status: 'UNPAID', paid: '0.00', debt: '1000.00', dueDate: '2026-10-02', termSource: 'NONE' });
     const pay = (amount: string) => s.trade.create(ctx, { docType: 'PAYMENT_IN', date: '2026-10-03', counterpartyId: t.customer.id, bankAccountId: t.bank.id, amount, status: 'POSTED' } as any);
     await pay('400');
-    expect(await state()).toEqual({ status: 'PARTIAL', paid: '400.00', debt: '600.00' });
+    expect(await state()).toMatchObject({ status: 'PARTIAL', paid: '400.00', debt: '600.00' });
     await pay('600');
-    expect((await s.trade.get(ctx, sale.id) as any).payment).toEqual({ status: 'PAID', paid: '1000.00', debt: '0.00' });
+    expect((await s.trade.get(ctx, sale.id) as any).payment).toMatchObject({ status: 'PAID', paid: '1000.00', debt: '0.00', overdueDays: 0 });
     // фильтр журнала по периоду (даты Казахстана) и сумма по выборке
     const l = await s.trade.list(ctx, { docType: 'DEMAND', from: '2026-10-02', to: '2026-10-02' });
     expect([l.total, l.sum]).toEqual([1, '1000.00']);
     expect((await s.trade.list(ctx, { docType: 'DEMAND', from: '2026-10-03', to: '2026-10-05' })).total).toBe(0);
+  });
+});
+
+describe('Сроки оплаты и «Долги по срокам»', () => {
+  afterAll(() => prisma.$disconnect());
+  it('срок: документ → договор → контрагент → в день отгрузки; корзины просрочки; поставщики', async () => {
+    const ctx = await makeOrg(prisma);
+    const t = await makeTrade(prisma, ctx, { vatPayer: false });
+    await prisma.counterparty.update({ where: { id: t.customer.id }, data: { paymentDays: 10 } });
+    const k = await prisma.contract.create({ data: { organizationId: ctx.organizationId, counterpartyId: t.customer.id, number: `Д-${Date.now()}`, paymentDays: 30 } });
+    await s.trade.create(ctx, { docType: 'SUPPLY', date: '2026-10-01', counterpartyId: t.supplier.id, storeId: t.s1.id, status: 'POSTED', lines: [{ productId: t.goods.id, qty: '10', price: '100' }] });
+    const sale = (extra: any) => s.trade.create(ctx, { docType: 'DEMAND', date: '2026-10-02', counterpartyId: t.customer.id, storeId: t.s1.id, status: 'POSTED', lines: [{ productId: t.goods.id, qty: '1', price: '200' }], ...extra });
+    const a = await sale({});                          // отсрочка контрагента 10 → до 12.10
+    const b = await sale({ contractId: k.id });        // договор 30 → до 01.11
+    const c = await sale({ dueDate: '2026-08-01' });   // свой срок в документе
+
+    const pay = (id: string) => (s.trade.get(ctx, id) as any).then((d: any) => d.payment);
+    expect(await pay(a.id)).toMatchObject({ dueDate: '2026-10-12', termSource: 'COUNTERPARTY' });
+    expect(await pay(b.id)).toMatchObject({ dueDate: '2026-11-01', termSource: 'CONTRACT' });
+    expect(await pay(c.id)).toMatchObject({ dueDate: '2026-08-01', termSource: 'DOC' });
+
+    const r = await s.trade.debtAging(ctx, { side: 'customers', date: '2026-10-20' });
+    const line = r.lines.find((l: any) => l.counterpartyId === t.customer.id)!;
+    expect(line).toMatchObject({ total: '600.00', notDue: '200.00', d1_30: '200.00', d61_90: '200.00', overdue: '400.00', maxOverdueDays: 80 });
+    expect(line.docs.map((d: any) => [d.id, d.overdueDays])).toEqual([[c.id, 80], [a.id, 8], [b.id, 0]]);
+
+    // на дату до отгрузки долга нет; поставщику — 1000, просрочка с 01.10
+    expect((await s.trade.debtAging(ctx, { side: 'customers', date: '2026-10-01' })).lines).toHaveLength(0);
+    const sup = await s.trade.debtAging(ctx, { side: 'suppliers', date: '2026-10-20' });
+    expect(sup.lines[0]).toMatchObject({ counterpartyId: t.supplier.id, total: '1000.00', d1_30: '1000.00' });
+
+    // частичная оплата уменьшает долг по документу; «Оплатить до» меняется и в проведённом документе
+    await s.trade.create(ctx, { docType: 'PAYMENT_IN', date: '2026-10-03', counterpartyId: t.customer.id, bankAccountId: t.bank.id, amount: '200', status: 'POSTED' } as any);
+    const after = (await s.trade.debtAging(ctx, { side: 'customers', date: '2026-10-20' })).lines[0];
+    expect(after.total).toBe('400.00');
+    const moved = await s.trade.setDueDate(ctx, a.id, { dueDate: '2026-12-31' }) as any;
+    expect(moved.payment).toMatchObject({ dueDate: '2026-12-31', termSource: 'DOC' });
+    expect((await s.trade.setDueDate(ctx, a.id, { dueDate: null }) as any).payment.termSource).toBe('COUNTERPARTY');
+    await expect(s.trade.setDueDate(ctx, a.id, { dueDate: '31.12.2026' })).rejects.toMatchObject({ response: expect.objectContaining({ code: 'BAD_DATE' }) });
+    const order = await s.trade.create(ctx, { docType: 'CUSTOMER_ORDER', date: '2026-10-02', counterpartyId: t.customer.id, storeId: t.s1.id, lines: [{ productId: t.goods.id, qty: '1', price: '200' }] });
+    await expect(s.trade.setDueDate(ctx, order.id, { dueDate: '2026-12-31' })).rejects.toMatchObject({ response: expect.objectContaining({ code: 'NO_DUE_DATE' }) });
   });
 });

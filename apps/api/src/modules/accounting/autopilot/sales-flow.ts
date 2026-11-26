@@ -15,11 +15,11 @@ const D = Prisma.Decimal;
 
 /** Документ-основание → какие документы по нему исполняются (для лимитов и цен). */
 export const BASIS: Record<string, { base: string[]; what: string; prices: boolean; strictStore: boolean }> = {
-  DEMAND: { base: ['CUSTOMER_ORDER'], what: 'заказ покупателя', prices: true, strictStore: true },
+  DEMAND: { base: ['CUSTOMER_ORDER', 'INVOICE_OUT'], what: 'заказ или счёт покупателю', prices: true, strictStore: true },
   SALES_RETURN: { base: ['DEMAND'], what: 'реализация', prices: true, strictStore: false },
   RETAIL_RETURN: { base: ['RETAIL_DEMAND'], what: 'розничный чек', prices: true, strictStore: false },
   // FP-035: поступление по заказу поставщику — поставщик и товары заказа; цены — по накладной (могут отличаться).
-  SUPPLY: { base: ['PURCHASE_ORDER'], what: 'заказ поставщику', prices: false, strictStore: false },
+  SUPPLY: { base: ['PURCHASE_ORDER', 'INVOICE_IN'], what: 'заказ или счёт поставщика', prices: false, strictStore: false },
   PURCHASE_RETURN: { base: ['SUPPLY'], what: 'поступление', prices: true, strictStore: false },
 };
 export const RETURNS = ['SALES_RETURN', 'RETAIL_RETURN', 'PURCHASE_RETURN'];
@@ -39,7 +39,7 @@ interface DocIn {
 export async function snapshotOrder(tx: Tx, ctx: OrgContext, input: DocIn) {
   // Реализация без основания — так же: пустая цена берётся из прайс-листов, а не молча 0 (у реализации по заказу
   // цены и НДС приходят из заказа — applyBasis).
-  const directDemand = input.docType === 'DEMAND' && !input.baseId;
+  const directDemand = (input.docType === 'DEMAND' || input.docType === 'INVOICE_OUT') && !input.baseId;
   if (input.docType !== 'CUSTOMER_ORDER' && !directDemand) return;
   const lines = input.lines ?? [];
   const date = String(input.date).slice(0, 10);
@@ -51,9 +51,11 @@ export async function snapshotOrder(tx: Tx, ctx: OrgContext, input: DocIn) {
     const at = new Date(date + 'T00:00:00.000Z');
     const payload = await svc.compile(scope, input.storeId ?? null, at, at, tx as any);
     const res = evaluate(payload, { date, storeId: input.storeId ?? null, lines: need.map((l) => ({ productId: l.productId, qty: String(l.qty) })) });
+    const missing = res.lines.map((p, i) => (p.basePrice === null ? need[i].productId : null)).filter(Boolean) as string[];
+    const names = missing.length ? await tx.product.findMany({ where: { id: { in: missing } }, select: { id: true, name: true } }) : [];
     res.lines.forEach((p, i) => {
       const l = need[i];
-      if (p.basePrice === null) throw new AccError('PRICE_MISSING', `Нет цены «${l.productId}» в действующих прайс-листах на ${date}`, { fix: 'Укажите цену в строке или добавьте товар в прайс-лист.', details: { productId: l.productId } });
+      if (p.basePrice === null) throw new AccError('PRICE_MISSING', `Нет цены «${names.find((x) => x.id === l.productId)?.name ?? l.productId}» в действующих прайс-листах на ${date}`, { fix: 'Укажите цену в строке или добавьте товар в прайс-лист.', details: { productId: l.productId } });
       l.price = p.basePrice;
       const gross = new D(p.gross), disc = new D(p.discount);
       if (disc.gt(0) && gross.gt(0)) l.discount = disc.div(gross).times(100).toDecimalPlaces(2).toString();
