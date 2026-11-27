@@ -1,6 +1,6 @@
 <template>
   <div>
-    <div class="page-header">
+    <div class="page-header"><PageIcon />
       <h1>{{ t('autopilot') }}</h1>
       <div class="actions">
         <el-button @click="load" :loading="loading">Обновить</el-button>

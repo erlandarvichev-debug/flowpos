@@ -78,6 +78,7 @@ declare module 'vue' {
     FileList: typeof import('./src/components/files/FileList.vue')['default']
     GlobalSearch: typeof import('./src/components/layout/GlobalSearch.vue')['default']
     PageHeader: typeof import('./src/components/ui/PageHeader.vue')['default']
+    PageIcon: typeof import('./src/components/ui/PageIcon.vue')['default']
     PostingPreview: typeof import('./src/components/accounting/PostingPreview.vue')['default']
     PrintButton: typeof import('./src/components/print/PrintButton.vue')['default']
     PrintFrame: typeof import('./src/components/print/PrintFrame.vue')['default']

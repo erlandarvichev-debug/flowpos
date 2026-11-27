@@ -1,6 +1,6 @@
 <template>
   <div>
-    <div class="page-header">
+    <div class="page-header"><PageIcon />
       <h1>Закрытие месяца</h1>
       <div class="actions">
         <el-date-picker v-model="period" type="month" value-format="YYYY-MM" format="MM.YYYY" :clearable="false" style="width: 140px;" @change="load" />

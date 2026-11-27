@@ -2,7 +2,7 @@
   <!-- Расчёт зарплаты за месяц (законы РК 2026): отработанные дни, налоги и взносы, утверждение с проводками,
        расчётные листки и ведомость, выплата (черновики платёжных поручений). -->
   <div>
-    <div class="page-header">
+    <div class="page-header"><PageIcon />
       <h1>Расчёт зарплаты</h1>
       <div class="actions">
         <el-date-picker v-model="period" type="month" value-format="YYYY-MM" :clearable="false" style="width: 150px;" @change="load" />

@@ -1,6 +1,6 @@
 <template>
   <div>
-    <div class="page-header">
+    <div class="page-header"><PageIcon />
       <h1>Инвентаризации</h1>
       <el-button type="primary" :icon="Plus">Создать инвентаризацию</el-button>
     </div>

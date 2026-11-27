@@ -1,6 +1,6 @@
 <template>
   <div>
-    <div class="page-header">
+    <div class="page-header"><PageIcon />
       <h1>Расчёт заработной платы</h1>
       <el-button type="primary" :icon="Plus" @click="formVisible = true">Начислить</el-button>
     </div>

@@ -1,6 +1,6 @@
 <template>
   <div>
-    <div class="page-header"><h1>{{ t('bankImport') }}</h1></div>
+    <div class="page-header"><PageIcon /><h1>{{ t('bankImport') }}</h1></div>
     <el-card style="margin-bottom: 12px;">
       <el-form label-width="190px">
         <el-form-item :label="t('bankAccount')" required>

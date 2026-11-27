@@ -1,6 +1,6 @@
 <template>
   <div>
-    <div class="page-header">
+    <div class="page-header"><PageIcon />
       <h1>Аналитика</h1>
       <el-date-picker
         v-model="dateRange"

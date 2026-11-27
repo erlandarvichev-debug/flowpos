@@ -178,3 +178,22 @@ export function buildMenu(c: MenuCtx): MenuSection[] {
   ]
   return sections.filter((s) => s.items.length)
 }
+
+
+/** Иконка и цвет раздела для страницы по её адресу (шапки страниц). Учитывает все разделы, без прав. */
+export function findMenuIcon(path: string): { icon: string; tone: string; section: string } | null {
+  const all = buildMenu({ showTrade: true, showAcc: true, supervisor: true, can: () => true })
+  for (const s of all) {
+    const it = s.items.find((i) => i.path === path) ?? s.items.find((i) => path.startsWith(i.path + '/'))
+    if (it) return { icon: it.icon, tone: SECTION_TONES[s.key] ?? '#1769e0', section: s.key }
+  }
+  // Страницы вне меню (старые журналы, карточки) — иконка и цвет по разделу адреса, чтобы вид был один.
+  const BY_PREFIX: [string, string, string][] = [
+    ['/trade/purchases', 'ShoppingCart', 'purchases'], ['/trade/', 'Goods', 'sales'], ['/sales/', 'Sell', 'sales'], ['/purchases/', 'ShoppingCart', 'purchases'],
+    ['/hr/', 'User', 'hr'], ['/pos/', 'Monitor', 'pos'], ['/catalog/', 'Collection', 'refs'], ['/crm/', 'User', 'refs'], ['/warehouse/', 'Box', 'warehouse'],
+    ['/bank/', 'Wallet', 'bank'], ['/tax/', 'Coin', 'tax'], ['/field/', 'Location', 'field'], ['/reports/', 'DataAnalysis', 'reports'],
+    ['/assets', 'OfficeBuilding', 'assets'], ['/settings/', 'Setting', 'admin'], ['/accounting/reports/', 'DataAnalysis', 'reports'], ['/accounting/', 'Notebook', 'operations'],
+  ]
+  const hit = BY_PREFIX.find(([pre]) => path.startsWith(pre))
+  return hit ? { icon: hit[1], tone: SECTION_TONES[hit[2]] ?? '#1769e0', section: hit[2] } : null
+}

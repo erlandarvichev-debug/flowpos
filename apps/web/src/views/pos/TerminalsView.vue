@@ -1,6 +1,6 @@
 <template>
   <div>
-    <div class="page-header">
+    <div class="page-header"><PageIcon />
       <div>
         <h1>Кассы</h1>
         <div class="sub">Кассы магазинов: к какому складу привязаны и открыта ли смена</div>

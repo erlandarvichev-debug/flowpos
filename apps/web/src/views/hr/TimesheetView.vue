@@ -1,6 +1,6 @@
 <template>
   <div>
-    <div class="page-header">
+    <div class="page-header"><PageIcon />
       <h1>Табель учёта рабочего времени</h1>
       <div style="display: flex; gap: 12px; align-items: center;">
         <el-select v-model="month" @change="load" style="width: 130px;">

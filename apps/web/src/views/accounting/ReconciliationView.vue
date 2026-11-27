@@ -1,7 +1,7 @@
 <template>
   <!-- Акт сверки взаиморасчётов: контрагент, период → сальдо, обороты по документам, печать. -->
   <div>
-    <div class="page-header">
+    <div class="page-header"><PageIcon />
       <h1>Акт сверки</h1>
       <div class="actions">
         <el-select v-model="cp" filterable remote :remote-method="search" placeholder="Контрагент" style="width: 280px;" @change="load">

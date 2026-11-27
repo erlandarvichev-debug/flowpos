@@ -1,7 +1,7 @@
 <template>
   <!-- «Супервайзер»: посещения за день — где был представитель, на точке или удалённо, фото, заказы, задания. -->
   <div>
-    <div class="page-header"><h1>Посещения</h1></div>
+    <div class="page-header"><PageIcon /><h1>Посещения</h1></div>
     <el-card>
       <div class="filters">
         <el-date-picker v-model="date" value-format="YYYY-MM-DD" format="DD.MM.YYYY" :clearable="false" @change="load" />

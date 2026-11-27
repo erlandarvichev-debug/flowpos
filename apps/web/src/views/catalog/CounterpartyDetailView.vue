@@ -1,7 +1,7 @@
 <template>
   <!-- FP-026: карточка контрагента — реквизиты с датами действия и договоры текущей организации. -->
   <div v-loading="loading">
-    <div class="page-header">
+    <div class="page-header"><PageIcon />
       <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
         <el-button :icon="ArrowLeft" circle aria-label="Назад" @click="$router.back()" />
         <h1>{{ cp?.name }}</h1>

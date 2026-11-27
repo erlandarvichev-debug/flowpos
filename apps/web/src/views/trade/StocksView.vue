@@ -1,6 +1,6 @@
 <template>
   <div class="stocks">
-    <div class="page-header">
+    <div class="page-header"><PageIcon />
       <div>
         <h1>Остатки</h1>
         <div class="sub">Сколько товара на складах: факт, резерв под заказы, свободно и что едет от поставщиков</div>

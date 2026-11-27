@@ -1,6 +1,6 @@
 <template>
   <div>
-    <div class="page-header">
+    <div class="page-header"><PageIcon />
       <h1>Закупки</h1>
       <el-button type="primary" :icon="Plus" @click="openOrderForm">Создать заказ</el-button>
     </div>

@@ -1,7 +1,7 @@
 <template>
   <!-- FP-030: журнал складских движений (источник, количество, стоимость), сверка остатка и расхождения приёмки. -->
   <div>
-    <div class="page-header"><h1>Движения товаров</h1></div>
+    <div class="page-header"><PageIcon /><h1>Движения товаров</h1></div>
     <el-tabs v-model="tab" @tab-change="load">
       <el-tab-pane label="Журнал движений" name="MOVES" />
       <el-tab-pane label="Расхождения приёмки" name="DISCREPANCIES" />

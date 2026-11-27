@@ -2,7 +2,7 @@
   <!-- Отпуска и больничные: оформление, утверждение с расчётом среднего заработка (рабочие дни, ТК ст. 114, 133;
        Правила № 908), отмена с причиной; суммы входят в расчёт зарплаты месяца начисления. -->
   <div>
-    <div class="page-header">
+    <div class="page-header"><PageIcon />
       <h1>Отпуска и больничные</h1>
       <el-button v-if="org.can('hr.manage')" type="primary" :icon="Plus" @click="openCreate">Оформить</el-button>
     </div>

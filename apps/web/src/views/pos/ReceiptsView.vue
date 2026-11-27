@@ -1,6 +1,6 @@
 <template>
   <div>
-    <div class="page-header"><h1>Чеки</h1></div>
+    <div class="page-header"><PageIcon /><h1>Чеки</h1></div>
     <el-card>
       <el-table :data="receipts" v-loading="loading">
         <el-table-column prop="number" label="Номер" width="160" />

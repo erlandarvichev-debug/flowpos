@@ -1,7 +1,7 @@
 <template>
   <!-- Сотрудники (трудовые договоры): приём, кадровые изменения с даты, увольнение, разовые начисления. -->
   <div>
-    <div class="page-header">
+    <div class="page-header"><PageIcon />
       <h1>Сотрудники</h1>
       <div class="actions">
         <el-button v-if="org.can('acc.refs.manage')" @click="deptDlg = true">Подразделения</el-button>

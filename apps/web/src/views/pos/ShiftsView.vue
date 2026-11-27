@@ -1,6 +1,6 @@
 <template>
   <div>
-    <div class="page-header">
+    <div class="page-header"><PageIcon />
       <div>
         <h1>Кассовые смены</h1>
         <div class="sub">Открытые и закрытые смены касс; продажи смены считаются при закрытии</div>

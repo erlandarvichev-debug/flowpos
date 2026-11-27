@@ -1,7 +1,7 @@
 <template>
   <!-- FP-041: основные средства и НМА — список, карточка, принятие к учёту, выбытие, история амортизации. -->
   <div>
-    <div class="page-header">
+    <div class="page-header"><PageIcon />
       <h1>Основные средства и НМА</h1>
       <el-button v-if="org.can('acc.refs.manage')" type="primary" :icon="Plus" @click="openCreate">Добавить объект</el-button>
     </div>

@@ -9,6 +9,7 @@ import 'element-plus/dist/index.css'
 import 'element-plus/theme-chalk/dark/css-vars.css'
 import App from './App.vue'
 import router from './router'
+import PageIcon from './components/ui/PageIcon.vue'
 import './assets/main.css'
 import './assets/theme.css'
 import './utils/chartTheme'
@@ -25,5 +26,8 @@ app.use(ElementPlus, { locale: ru })
 for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
   app.component(key, component)
 }
+
+// Иконка раздела в старых шапках страниц (class="page-header") — без импорта на каждой странице.
+app.component('PageIcon', PageIcon)
 
 app.mount('#app')

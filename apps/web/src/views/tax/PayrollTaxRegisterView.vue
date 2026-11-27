@@ -1,7 +1,7 @@
 <template>
   <!-- Регистр по зарплатным налогам и взносам за квартал (основа 200.00): из утверждённых расчётов зарплаты. -->
   <div>
-    <div class="page-header">
+    <div class="page-header"><PageIcon />
       <h1>Налоги с зарплаты</h1>
       <div class="actions">
         <el-select v-model="year" style="width: 100px;" @change="load"><el-option v-for="y in years" :key="y" :value="y" :label="y" /></el-select>

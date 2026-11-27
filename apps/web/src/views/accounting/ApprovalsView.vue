@@ -1,7 +1,7 @@
 <template>
   <!-- FP-029: согласования проведения — ожидающие решения, история и правила организации. -->
   <div>
-    <div class="page-header"><h1>Согласования</h1></div>
+    <div class="page-header"><PageIcon /><h1>Согласования</h1></div>
     <el-alert type="info" :closable="false" show-icon style="margin-bottom: 12px;"
       title="Согласование относится к конкретной версии документа и сумме, действует ограниченное время и используется один раз. Любое изменение документа его отменяет. Согласует не тот, кто запросил." />
     <el-tabs v-model="tab" @tab-change="load">

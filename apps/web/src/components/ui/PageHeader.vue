@@ -21,21 +21,13 @@
  */
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
-import { SECTION_TONES as TONES, buildMenu } from '@/components/layout/menu'
+import { findMenuIcon } from '@/components/layout/menu'
 
 const props = defineProps<{ title: string; subtitle?: string; icon?: string }>()
 const route = useRoute()
-const found = computed(() => {
-  const all = buildMenu({ showTrade: true, showAcc: true, supervisor: true, can: () => true })
-  const path = route.path
-  for (const s of all) {
-    const it = s.items.find((i) => i.path === path) ?? s.items.find((i) => path.startsWith(`${i.path}/`))
-    if (it) return { icon: it.icon, section: s.key }
-  }
-  return null
-})
+const found = computed(() => findMenuIcon(route.path))
 const iconName = computed(() => props.icon ?? found.value?.icon ?? null)
-const tone = computed(() => TONES[found.value?.section ?? ''] ?? '#1769e0')
+const tone = computed(() => found.value?.tone ?? '#1769e0')
 </script>
 
 <style scoped>

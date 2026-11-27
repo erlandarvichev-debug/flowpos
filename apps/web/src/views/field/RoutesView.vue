@@ -1,7 +1,7 @@
 <template>
   <!-- «Супервайзер»: маршрут представителя на день — точки по порядку. -->
   <div>
-    <div class="page-header"><h1>Маршруты</h1></div>
+    <div class="page-header"><PageIcon /><h1>Маршруты</h1></div>
     <el-card>
       <div class="filters">
         <el-select v-model="repId" placeholder="Представитель" filterable style="width: 240px;" @change="load">

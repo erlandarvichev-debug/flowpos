@@ -1,7 +1,7 @@
 <template>
   <!-- FP-039: регистр НДС за квартал — обороты по ставкам, зачёт, к уплате; сверка с учётом; фиксация и перепроверка. -->
   <div>
-    <div class="page-header">
+    <div class="page-header"><PageIcon />
       <h1>Регистр НДС</h1>
       <div class="actions">
         <el-select v-model="year" style="width: 100px;" @change="load"><el-option v-for="y in years" :key="y" :value="y" :label="y" /></el-select>

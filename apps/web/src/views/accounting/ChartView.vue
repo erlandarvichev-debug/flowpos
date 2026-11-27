@@ -1,6 +1,6 @@
 <template>
   <div>
-    <div class="page-header">
+    <div class="page-header"><PageIcon />
       <h1>{{ t('chart') }}</h1>
       <el-button v-if="org.can('acc.chart.manage')" type="primary" :icon="Plus" @click="openSub()">Субсчёт</el-button>
     </div>

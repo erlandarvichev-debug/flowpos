@@ -1,6 +1,6 @@
 <template>
   <div>
-    <div class="page-header">
+    <div class="page-header"><PageIcon />
       <h1>Финансовая отчётность</h1>
       <div class="actions">
         <el-button :disabled="!data" :loading="busy.xlsx" @click="download('xlsx')">Excel</el-button>

@@ -1,7 +1,7 @@
 <template>
   <!-- «Супервайзер»: задания представителям — по точке или общие; выполняет представитель в агенте. -->
   <div>
-    <div class="page-header">
+    <div class="page-header"><PageIcon />
       <h1>Задания</h1>
       <el-button v-if="org.can('field.manage')" type="primary" :icon="Plus" @click="openEdit(null)">Новое задание</el-button>
     </div>

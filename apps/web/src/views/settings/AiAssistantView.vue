@@ -1,7 +1,7 @@
 <template>
   <!-- ИИ-помощник компании: свой адрес коннектора для Claude, включение, подключения. -->
   <div>
-    <div class="page-header"><h1>ИИ-помощник (Claude)</h1></div>
+    <div class="page-header"><PageIcon /><h1>ИИ-помощник (Claude)</h1></div>
 
     <el-card v-loading="loading" shadow="never">
       <template v-if="conn">

@@ -1,6 +1,6 @@
 <template>
   <div>
-    <div class="page-header"><h1>{{ t('refs') }}</h1></div>
+    <div class="page-header"><PageIcon /><h1>{{ t('refs') }}</h1></div>
     <el-card>
       <el-tabs v-model="tab" @tab-change="load">
         <el-tab-pane v-for="r in REFS" :key="r.kind" :label="r.title" :name="r.kind" />

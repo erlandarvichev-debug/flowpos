@@ -2,7 +2,7 @@
   <!-- Конструктор печатных форм: шаблон (HTML с полями), поля документа, живой предпросмотр на реальном документе,
        версии и шаблон по умолчанию; реквизиты для подписей. -->
   <div class="designer">
-    <div class="page-header">
+    <div class="page-header"><PageIcon />
       <h1>Печатные формы</h1>
       <el-segmented v-model="tab" :options="[{ label: 'Конструктор', value: 'design' }, { label: 'Реквизиты и подписи', value: 'settings' }]" />
     </div>

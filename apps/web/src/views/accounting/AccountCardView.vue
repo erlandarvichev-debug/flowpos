@@ -1,6 +1,6 @@
 <template>
   <div>
-    <div class="page-header"><h1>{{ t('accountCard') }} <span v-if="data" class="sub">{{ data.account.code }} {{ nm(data.account) }}</span></h1></div>
+    <div class="page-header"><PageIcon /><h1>{{ t('accountCard') }} <span v-if="data" class="sub">{{ data.account.code }} {{ nm(data.account) }}</span></h1></div>
     <el-card>
       <div class="filters">
         <AccountSelect v-model="account" :accounts="accountsAll" style="width: 280px;" />

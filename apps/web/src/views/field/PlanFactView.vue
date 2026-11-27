@@ -1,7 +1,7 @@
 <template>
   <!-- «Супервайзер»: план и факт по представителям за период. -->
   <div>
-    <div class="page-header"><h1>План и факт</h1></div>
+    <div class="page-header"><PageIcon /><h1>План и факт</h1></div>
     <el-card>
       <div class="filters">
         <el-date-picker v-model="range" type="daterange" value-format="YYYY-MM-DD" format="DD.MM.YYYY" range-separator="—" :clearable="false" @change="load" />

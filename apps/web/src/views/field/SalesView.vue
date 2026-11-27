@@ -1,7 +1,7 @@
 <template>
   <!-- «Супервайзер»: продажи торговых — заказы из агента за период, сравнение с прошлым периодом, разрезы. -->
   <div class="sales">
-    <div class="page-header bar">
+    <div class="page-header bar"><PageIcon />
       <div>
         <h1>Продажи торговых</h1>
         <div class="sub">Заказы, оформленные торговыми в агенте. Сравнение — с {{ fmtDate(r?.previous.from) }}–{{ fmtDate(r?.previous.to) }}.</div>
@@ -212,7 +212,7 @@ const dayOption = computed(() => {
     grid: { left: 60, right: 40, top: 36, bottom: 30 },
     xAxis: { type: 'category', data: days.map((d: any) => `${d.date.slice(8, 10)}.${d.date.slice(5, 7)}`), axisTick: { show: false } },
     yAxis: [
-      { type: 'value', axisLabel: { formatter: money }, splitLine: { lineStyle: { color: '#f1f5f9' } } },
+      { type: 'value', axisLabel: { formatter: money } },
       { type: 'value', minInterval: 1, splitLine: { show: false } },
     ],
     series: [
@@ -250,8 +250,8 @@ const timeOption = computed(() => {
       { gridIndex: 1, type: 'category', data: WEEKDAYS, axisTick: { show: false } },
     ],
     yAxis: [
-      { gridIndex: 0, type: 'value', minInterval: 1, splitLine: { lineStyle: { color: '#f1f5f9' } } },
-      { gridIndex: 1, type: 'value', minInterval: 1, splitLine: { lineStyle: { color: '#f1f5f9' } } },
+      { gridIndex: 0, type: 'value', minInterval: 1 },
+      { gridIndex: 1, type: 'value', minInterval: 1 },
     ],
     series: [
       { type: 'bar', xAxisIndex: 0, yAxisIndex: 0, data: hs.map((x: any) => x.count), itemStyle: { color: '#2563eb', borderRadius: [3, 3, 0, 0] } },
@@ -307,7 +307,7 @@ onMounted(async () => {
 
 <style scoped>
 .sales { display: flex; flex-direction: column; gap: 14px; }
-.bar { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; margin-bottom: 0; }
+.bar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 0; }
 .bar h1 { margin: 0; }
 .sub { color: var(--el-text-color-secondary); font-size: 12px; margin-top: 4px; }
 .tools { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
@@ -333,7 +333,7 @@ onMounted(async () => {
 .ok { color: #16a34a; } .warn { color: #d97706; font-weight: 600; } .bad { color: #dc2626; font-weight: 600; }
 .avatar { display: inline-flex; width: 24px; height: 24px; border-radius: 50%; color: #fff; font-size: 10px; font-weight: 700; align-items: center; justify-content: center; margin-right: 6px; vertical-align: middle; }
 :deep(.clickable) { cursor: pointer; }
-.bar-cell { background: #f1f5f9; border-radius: 4px; height: 10px; overflow: hidden; }
+.bar-cell { background: var(--el-fill-color); border-radius: 4px; height: 10px; overflow: hidden; }
 .bar-cell div { background: linear-gradient(90deg, #0f766e, #2563eb); height: 100%; border-radius: 4px; }
 
 @media (max-width: 1200px) { .kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); } }

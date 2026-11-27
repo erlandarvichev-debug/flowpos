@@ -1,7 +1,7 @@
 <template>
   <!-- «Супервайзер»: торговые точки (клиенты) и их место на карте. -->
   <div>
-    <div class="page-header">
+    <div class="page-header"><PageIcon />
       <h1>Точки</h1>
       <el-button v-if="org.can('field.manage')" type="primary" :icon="Plus" @click="openEdit(null)">Добавить точку</el-button>
     </div>

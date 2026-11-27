@@ -1,6 +1,6 @@
 <template>
   <div v-loading="loading">
-    <div class="page-header">
+    <div class="page-header"><PageIcon />
       <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
         <el-button :icon="ArrowLeft" @click="$router.back()" circle aria-label="Назад" />
         <h1>{{ item?.name }}</h1>

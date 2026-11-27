@@ -1,7 +1,7 @@
 <template>
   <!-- «Супервайзер»: карта торговых за день — все сразу или один торговый: где сейчас, путь, маршрут, посещения, заказы. -->
   <div class="live">
-    <div class="page-header bar">
+    <div class="page-header bar"><PageIcon />
       <div>
         <h1>Карта торговых</h1>
         <div class="sub">
@@ -333,7 +333,7 @@ onMounted(() => reload(false))
 
 <style scoped>
 .live { display: flex; flex-direction: column; gap: 14px; }
-.bar { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; margin-bottom: 0; }
+.bar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 0; }
 .bar h1 { margin: 0; }
 .sub { color: var(--el-text-color-secondary); font-size: 12px; margin-top: 4px; min-height: 16px; }
 .tools { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
@@ -373,15 +373,15 @@ onMounted(() => reload(false))
 .who { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; }
 .who-name { font-size: 17px; font-weight: 700; }
 .mini { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 8px; }
-.mini div { background: #f8fafc; border-radius: 8px; padding: 8px 4px; text-align: center; display: flex; flex-direction: column; }
+.mini div { background: var(--el-fill-color-light); border-radius: 8px; padding: 8px 4px; text-align: center; display: flex; flex-direction: column; }
 .mini b { font-size: 14px; } .mini span { font-size: 11px; color: var(--el-text-color-secondary); }
 .who-links { display: flex; gap: 14px; font-size: 13px; margin-bottom: 6px; }
-.who-links a { color: #2563eb; text-decoration: none; }
+.who-links a { color: var(--el-color-primary); text-decoration: none; }
 h4 { margin: 14px 0 8px; }
 .muted { color: var(--el-text-color-secondary); font-size: 12px; }
 .plan { list-style: none; padding: 0; margin: 0 0 6px; display: flex; flex-direction: column; gap: 4px; }
-.plan li { display: grid; grid-template-columns: 24px 1fr; grid-template-rows: auto auto; column-gap: 8px; padding: 6px 8px; border-radius: 8px; background: #f8fafc; cursor: pointer; font-size: 13px; }
-.plan li:hover { background: #eef2ff; }
+.plan li { display: grid; grid-template-columns: 24px 1fr; grid-template-rows: auto auto; column-gap: 8px; padding: 6px 8px; border-radius: 8px; background: var(--el-fill-color-light); cursor: pointer; font-size: 13px; }
+.plan li:hover { background: var(--el-color-primary-light-9); }
 .num { grid-row: span 2; width: 22px; height: 22px; border-radius: 50%; background: #409eff; color: #fff; font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
 .plan li.done.on_site .num { background: #67c23a; }
 .plan li.done.remote .num { background: #e6a23c; }

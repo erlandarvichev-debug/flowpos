@@ -1,6 +1,6 @@
 <template>
   <div>
-    <div class="page-header"><h1>{{ t('stockReport') }}</h1></div>
+    <div class="page-header"><PageIcon /><h1>{{ t('stockReport') }}</h1></div>
     <el-card>
       <div class="filters">
         <el-date-picker v-model="date" type="date" value-format="YYYY-MM-DD" format="DD.MM.YYYY" :clearable="false" />

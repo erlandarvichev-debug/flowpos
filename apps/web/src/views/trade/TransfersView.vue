@@ -1,6 +1,6 @@
 <template>
   <div>
-    <div class="page-header">
+    <div class="page-header"><PageIcon />
       <h1>Перемещения</h1>
       <el-button type="primary" :icon="Plus">Создать перемещение</el-button>
     </div>

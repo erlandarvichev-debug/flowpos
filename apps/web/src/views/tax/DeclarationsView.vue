@@ -1,7 +1,7 @@
 <template>
   <!-- FP-054: налоговые декларации — сборка из зафиксированного регистра, контрольные соотношения, готовность, сдача. -->
   <div>
-    <div class="page-header">
+    <div class="page-header"><PageIcon />
       <h1>Декларации</h1>
       <div class="actions">
         <el-select v-model="form" style="width: 230px;" @change="onForm">

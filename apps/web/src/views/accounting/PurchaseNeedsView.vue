@@ -1,7 +1,7 @@
 <template>
   <!-- FP-035: потребность по правилам пополнения → заказы поставщикам; правила; бюджет закупок. -->
   <div>
-    <div class="page-header"><h1>Потребность и закупки</h1></div>
+    <div class="page-header"><PageIcon /><h1>Потребность и закупки</h1></div>
     <el-tabs v-model="tab" @tab-change="load">
       <el-tab-pane label="Потребность" name="NEEDS" />
       <el-tab-pane label="Правила пополнения" name="RULES" />

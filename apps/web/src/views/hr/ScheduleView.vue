@@ -1,6 +1,6 @@
 <template>
   <div>
-    <div class="page-header">
+    <div class="page-header"><PageIcon />
       <h1>График смен</h1>
       <div style="display: flex; gap: 12px; align-items: center;">
         <el-date-picker v-model="dateRange" type="daterange" format="DD.MM.YYYY" value-format="YYYY-MM-DD" @change="load" />

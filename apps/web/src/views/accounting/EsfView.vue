@@ -1,6 +1,6 @@
 <template>
   <div>
-    <div class="page-header">
+    <div class="page-header"><PageIcon />
       <h1>{{ t('esf') }} <el-tag :type="settings?.environment === 'PROD' ? 'danger' : 'warning'" effect="plain" style="vertical-align: middle;">{{ settings?.environment === 'PROD' ? 'Боевая ИС ЭСФ' : 'Тестовый стенд КГД' }}</el-tag></h1>
       <div class="actions">
         <template v-if="settings?.session">

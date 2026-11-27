@@ -1,6 +1,6 @@
 <template>
   <div v-loading="loading" @keydown="onKey">
-    <div class="page-header">
+    <div class="page-header"><PageIcon />
       <h1>
         {{ DOC_TYPE_LABELS[docType] || docType }}
         <span v-if="doc.number" class="num">№ {{ doc.number }}</span>
