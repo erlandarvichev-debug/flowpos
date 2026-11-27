@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { ApiError, FlowPosApi } from './api.js';
 import { UNTRUSTED_NOTE, bal, explainPostings, money } from './format.js';
+import { registerBusinessTools } from './tools-business.js';
 
 const text = (t: string) => ({ content: [{ type: 'text' as const, text: t.trim() || '(пусто)' }] });
 const fail = (t: string) => ({ content: [{ type: 'text' as const, text: t }], isError: true });
@@ -409,4 +410,6 @@ export function registerTools(server: McpServer, api: FlowPosApi, webUrl: string
       ].join('\n');
     }),
   );
+
+  registerBusinessTools(server, api, link);
 }
