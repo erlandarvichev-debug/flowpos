@@ -171,9 +171,9 @@ onMounted(async () => {
 
 <style scoped>
 .card-head { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
-.hint { color: #909399; font-size: 12px; margin-left: 8px; }
+.hint { color: var(--el-text-color-secondary); font-size: 12px; margin-left: 8px; }
 .err { color: #f56c6c; font-size: 12px; }
 .map-grid { display: grid; grid-template-columns: 180px 1fr; gap: 6px 10px; align-items: center; margin-bottom: 8px; }
-:deep(.row-err) { background: #fef0f0; }
-:deep(.row-dup) { color: #a8abb2; }
+:deep(.row-err) { background: var(--el-color-danger-light-9); }
+:deep(.row-dup) { color: var(--el-text-color-secondary); }
 </style>

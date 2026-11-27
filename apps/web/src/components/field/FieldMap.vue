@@ -155,7 +155,7 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.field-map { width: 100%; border-radius: 8px; overflow: hidden; border: 1px solid #ebeef5; }
+.field-map { width: 100%; border-radius: 8px; overflow: hidden; border: 1px solid var(--el-border-color-lighter); }
 :deep(.fm-icon div) {
   width: 100%; height: 100%; border-radius: 50%; color: #fff; font-size: 12px; font-weight: 600; box-sizing: border-box;
   display: flex; align-items: center; justify-content: center; border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);

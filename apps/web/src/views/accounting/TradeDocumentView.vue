@@ -1021,8 +1021,8 @@ onMounted(async () => {
 .scan-msg.bad { color: var(--el-color-danger); }
 .lines { overflow-x: auto; }
 .line { display: flex; gap: 8px; align-items: center; padding: 6px 8px; border-bottom: 1px solid var(--fp-border-soft); min-width: 820px; }
-.line:not(.head):hover { background: #f8fafd; }
-.line.head { font-size: 12px; color: var(--fp-text-2); font-weight: 600; background: #f7f9fc; border-bottom: 1px solid var(--fp-border); border-radius: 8px 8px 0 0; padding: 9px 8px; }
+.line:not(.head):hover { background: var(--el-fill-color-light); }
+.line.head { font-size: 12px; color: var(--fp-text-2); font-weight: 600; background: var(--el-fill-color-light); border-bottom: 1px solid var(--fp-border); border-radius: 8px 8px 0 0; padding: 9px 8px; }
 .c-no { width: 28px; color: var(--fp-text-3); }
 .c-prod { flex: 1 1 0; min-width: 260px; }
 .c-num { width: 110px; }
@@ -1038,7 +1038,7 @@ onMounted(async () => {
 .c-date { width: 140px; }
 .book { text-align: right; color: var(--fp-text-2); font-variant-numeric: tabular-nums; }
 .diffcell { text-align: right; }
-.line.sub { padding-top: 0; border-bottom: 1px dashed #f0f0f0; font-size: 12px; }
+.line.sub { padding-top: 0; border-bottom: 1px dashed var(--el-border-color-lighter); font-size: 12px; }
 .diff { display: inline-flex; gap: 10px; min-width: 200px; }
 .neg { color: var(--el-color-danger); }
 .pos { color: var(--el-color-success); }

@@ -190,6 +190,6 @@ onMounted(load)
 
 <style scoped>
 .filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
-.hint { margin-top: 10px; color: #909399; font-size: 12px; }
-.perm { display: inline-block; font-size: 11px; background: #f4f4f5; border-radius: 3px; padding: 0 5px; margin: 1px 4px 1px 0; }
+.hint { margin-top: 10px; color: var(--el-text-color-secondary); font-size: 12px; }
+.perm { display: inline-block; font-size: 11px; background: var(--el-fill-color-light); border-radius: 3px; padding: 0 5px; margin: 1px 4px 1px 0; }
 </style>

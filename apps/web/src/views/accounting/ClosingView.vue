@@ -144,17 +144,17 @@ onMounted(load)
 <style scoped>
 .actions { display: flex; gap: 8px; }
 .card-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
-.step { display: flex; gap: 10px; align-items: flex-start; padding: 10px 0; border-bottom: 1px solid #f0f0f0; }
+.step { display: flex; gap: 10px; align-items: flex-start; padding: 10px 0; border-bottom: 1px solid var(--el-border-color-lighter); }
 .step:last-child { border-bottom: 0; }
 .ico { font-size: 20px; margin-top: 2px; flex: none; }
-.ico.ok { color: #67c23a; } .ico.warn { color: #e6a23c; } .ico.error { color: #f56c6c; } .ico.todo { color: #909399; }
+.ico.ok { color: #67c23a; } .ico.warn { color: #e6a23c; } .ico.error { color: #f56c6c; } .ico.todo { color: var(--el-text-color-secondary); }
 .body { flex: 1; }
 .title { font-weight: 600; }
-.msg { color: #606266; font-size: 13px; }
-.fix { color: #909399; font-size: 12px; margin-top: 2px; }
+.msg { color: var(--el-text-color-regular); font-size: 13px; }
+.fix { color: var(--el-text-color-secondary); font-size: 12px; margin-top: 2px; }
 .acts { padding-left: 18px; margin: 0 0 14px; line-height: 1.6; }
-.hint { color: #909399; font-size: 12px; margin-top: 10px; }
+.hint { color: var(--el-text-color-secondary); font-size: 12px; margin-top: 10px; }
 .sum { display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; margin: 0; }
-.sum dt { color: #606266; } .sum dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+.sum dt { color: var(--el-text-color-regular); } .sum dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
 .links { margin-top: 10px; display: flex; gap: 6px; flex-wrap: wrap; }
 </style>

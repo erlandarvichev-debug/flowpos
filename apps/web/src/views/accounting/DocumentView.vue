@@ -639,16 +639,16 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.num { font-weight: 400; margin-left: 8px; color: #606266; }
-.ver { font-size: 13px; font-weight: 400; color: #909399; margin-left: 8px; }
+.num { font-weight: 400; margin-left: 8px; color: var(--el-text-color-regular); }
+.ver { font-size: 13px; font-weight: 400; color: var(--el-text-color-secondary); margin-left: 8px; }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .head-form :deep(.el-form-item) { margin-bottom: 10px; }
 .card-head { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
-.totals { font-size: 14px; color: #606266; }
+.totals { font-size: 14px; color: var(--el-text-color-regular); }
 .lines { overflow-x: auto; }
-.line { display: flex; gap: 8px; align-items: flex-start; padding: 6px 0; border-bottom: 1px solid #f0f0f0; min-width: 900px; }
-.line.head { font-size: 12px; color: #909399; font-weight: 600; border-bottom: 1px solid #e4e7ed; }
-.c-no { width: 28px; padding-top: 4px; color: #909399; }
+.line { display: flex; gap: 8px; align-items: flex-start; padding: 6px 0; border-bottom: 1px solid var(--el-border-color-lighter); min-width: 900px; }
+.line.head { font-size: 12px; color: var(--el-text-color-secondary); font-weight: 600; border-bottom: 1px solid var(--el-border-color-lighter); }
+.c-no { width: 28px; padding-top: 4px; color: var(--el-text-color-secondary); }
 .c-side { flex: 1 1 0; min-width: 220px; }
 .c-side.wide { flex: 2 1 0; }
 .c-dc { width: 110px; }
@@ -659,8 +659,8 @@ onMounted(async () => {
 .sub { margin-top: 4px; }
 .sub.cur { display: flex; gap: 4px; }
 .amt :deep(input) { text-align: right; }
-.hint { color: #909399; font-size: 12px; margin-left: 10px; }
-.entry-meta { color: #909399; font-size: 12px; margin-bottom: 6px; }
+.hint { color: var(--el-text-color-secondary); font-size: 12px; margin-left: 10px; }
+.entry-meta { color: var(--el-text-color-secondary); font-size: 12px; margin-bottom: 6px; }
 .muted { color: var(--el-text-color-secondary); font-size: 12px; }
 .num-in :deep(input) { text-align: right; }
 .inv-note { width: 100%; margin-top: 6px; font-size: 12px; color: var(--fp-text-2); line-height: 1.4; }

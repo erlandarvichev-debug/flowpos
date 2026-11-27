@@ -114,7 +114,7 @@ onMounted(load)
 <style scoped>
 .actions { display: flex; gap: 8px; }
 .card-head { display: flex; justify-content: space-between; align-items: center; }
-.hint { color: #909399; font-size: 12px; margin-top: 6px; }
-.st-title { color: #909399; font-size: 12px; margin-bottom: 6px; }
-.fix { color: #606266; font-size: 12px; margin-top: 4px; }
+.hint { color: var(--el-text-color-secondary); font-size: 12px; margin-top: 6px; }
+.st-title { color: var(--el-text-color-secondary); font-size: 12px; margin-bottom: 6px; }
+.fix { color: var(--el-text-color-regular); font-size: 12px; margin-top: 4px; }
 </style>

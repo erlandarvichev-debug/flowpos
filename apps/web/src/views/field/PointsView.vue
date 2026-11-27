@@ -114,6 +114,6 @@ onMounted(load)
 
 <style scoped>
 .filters { display: flex; gap: 12px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
-.muted { color: #909399; font-size: 13px; margin-bottom: 8px; }
+.muted { color: var(--el-text-color-secondary); font-size: 13px; margin-bottom: 8px; }
 .coords { display: flex; gap: 8px; margin-top: 8px; align-items: center; }
 </style>

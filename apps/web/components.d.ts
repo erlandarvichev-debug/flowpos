@@ -9,6 +9,7 @@ declare module 'vue' {
   export interface GlobalComponents {
     AccountSelect: typeof import('./src/components/accounting/AccountSelect.vue')['default']
     AppLayout: typeof import('./src/components/layout/AppLayout.vue')['default']
+    BusinessPulse: typeof import('./src/components/dashboard/BusinessPulse.vue')['default']
     DataTable: typeof import('./src/components/ui/DataTable.vue')['default']
     DimSelect: typeof import('./src/components/accounting/DimSelect.vue')['default']
     ElAlert: typeof import('element-plus/es')['ElAlert']

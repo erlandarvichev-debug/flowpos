@@ -17,13 +17,13 @@
           <el-col :span="12">
             <el-card>
               <template #header><b>Продажи по дням</b></template>
-              <v-chart :option="salesChartOption" style="height: 300px;" />
+              <v-chart :theme="isDark ? 'fp-dark' : undefined" :key="isDark ? 'd' : 'l'" :option="salesChartOption" style="height: 300px;" />
             </el-card>
           </el-col>
           <el-col :span="12">
             <el-card>
               <template #header><b>Топ товаров по выручке</b></template>
-              <v-chart :option="topItemsChartOption" style="height: 300px;" />
+              <v-chart :theme="isDark ? 'fp-dark' : undefined" :key="isDark ? 'd' : 'l'" :option="topItemsChartOption" style="height: 300px;" />
             </el-card>
           </el-col>
         </el-row>
@@ -67,6 +67,8 @@
 </template>
 
 <script setup lang="ts">
+import { useTheme } from '@/composables/useTheme'
+const { isDark } = useTheme()
 import { ref, computed, onMounted } from 'vue'
 import { use } from 'echarts/core'
 import { BarChart, PieChart } from 'echarts/charts'

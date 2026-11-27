@@ -149,3 +149,13 @@ html.dark .el-table__footer-wrapper td.el-table__cell { background: #1a212c; }
 .kpi:has(.kpi-ic) .k-label { padding-right: 40px; }
 /* Пустые таблицы — мягче */
 .el-table__empty-text { color: var(--fp-text-3); line-height: 1.5; padding: 18px 0; }
+
+/* ── Тёмная тема: то, что выше задано светлыми значениями ── */
+html.dark .el-table .el-table__expanded-cell { background: #141a23; }
+html.dark * { scrollbar-color: #364152 transparent; }
+html.dark ::-webkit-scrollbar-thumb { background: #364152; }
+html.dark .el-button--primary { box-shadow: none; }
+html.dark .el-card__header { border-bottom-color: var(--fp-border); }
+html.dark .el-alert--info.is-light { background: #1b2230; }
+html.dark .el-tag { --el-tag-border-color: transparent; }
+html.dark body, html.dark .app-main { background: var(--fp-bg); }

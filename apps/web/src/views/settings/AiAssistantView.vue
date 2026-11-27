@@ -120,13 +120,13 @@ watch(() => (org as any).currentId, () => load())
 <style scoped>
 .state { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .ml { margin-left: auto; }
-.lead { margin: 14px 0 6px; color: #374151; line-height: 1.55; }
+.lead { margin: 14px 0 6px; color: var(--el-text-color-regular); line-height: 1.55; }
 h3 { margin: 18px 0 8px; font-size: 15px; }
 .url { display: flex; gap: 8px; }
 .url-input { flex: 1; min-width: 0; }
 .url-input :deep(input) { font-family: ui-monospace, Consolas, monospace; }
-.steps { margin: 0; padding-left: 20px; line-height: 1.8; color: #374151; }
+.steps { margin: 0; padding-left: 20px; line-height: 1.8; color: var(--el-text-color-regular); }
 .danger { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 18px; padding-top: 14px; border-top: 1px solid #f1f5f9; }
-.muted { color: #909399; font-size: 12px; }
+.muted { color: var(--el-text-color-secondary); font-size: 12px; }
 .block { margin-top: 14px; }
 </style>

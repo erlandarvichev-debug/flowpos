@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { profitability } from './profitability';
+import { pulse } from './pulse';
 import { moneyFlow, stockTurnover } from './flows';
 import { reconciliation } from './reconciliation';
 import { Prisma } from '@prisma/client';
@@ -288,6 +289,7 @@ export class ReportsService {
 
   /** Прибыльность (см. profitability.ts). */
   profitability(ctx: OrgContext, q: any) { return profitability(this.prisma, ctx, q); }
+  pulse(ctx: OrgContext, q: any) { return pulse(this.prisma, ctx, q); }
   stockTurnover(ctx: OrgContext, q: any) { return stockTurnover(this.prisma, ctx, q); }
   moneyFlow(ctx: OrgContext, q: any) { return moneyFlow(this.prisma, ctx, q); }
 

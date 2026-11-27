@@ -96,7 +96,7 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.sub { font-weight: 400; color: #606266; margin-left: 8px; }
+.sub { font-weight: 400; color: var(--el-text-color-regular); margin-left: 8px; }
 .filters { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 14px; }
-.saldo { margin: 10px 0; color: #303133; }
+.saldo { margin: 10px 0; color: var(--el-text-color-primary); }
 </style>

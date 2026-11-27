@@ -1,6 +1,14 @@
 <!DOCTYPE html>
 <html lang="ru">
   <head>
+    <script>
+      // Тема до загрузки приложения (без белой вспышки). Вход, регистрация и лендинг — всегда светлые.
+      try {
+        var t = localStorage.getItem('fp_theme');
+        var pub = /^\/(login|signup|welcome)(\/|$)/.test(location.pathname);
+        if (!pub && (t === 'dark' || (!t && matchMedia('(prefers-color-scheme: dark)').matches))) document.documentElement.classList.add('dark');
+      } catch (e) {}
+    </script>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/png" href="/brand/flowpos-icon-64.png" />
     <link rel="apple-touch-icon" href="/brand/apple-touch-icon.png" />

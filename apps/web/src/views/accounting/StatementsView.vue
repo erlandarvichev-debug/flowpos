@@ -95,7 +95,7 @@ onMounted(load)
 .filters { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; align-items: center; }
 .checks { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
 .check { white-space: normal; height: auto; line-height: 1.4; padding: 4px 8px; }
-.hint { color: #909399; font-size: 12px; margin-top: 8px; line-height: 1.5; }
-:deep(.row-header td) { background: #f5f7fa; font-weight: 600; }
+.hint { color: var(--el-text-color-secondary); font-size: 12px; margin-top: 8px; line-height: 1.5; }
+:deep(.row-header td) { background: var(--el-fill-color-light); font-weight: 600; }
 :deep(.row-total td) { font-weight: 600; }
 </style>

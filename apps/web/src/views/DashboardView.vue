@@ -45,12 +45,14 @@
         </div>
       </div>
 
+      <BusinessPulse :from="range[0]" :to="range[1]" />
+
       <div class="row">
         <el-card shadow="never" class="chart-card">
           <template #header>
             <div class="card-head"><b><el-icon class="ch-ic"><TrendCharts /></el-icon>Продажи по дням</b><span class="muted">оптом и в розницу, ₸</span></div>
           </template>
-          <v-chart v-if="data?.byDay.length" class="chart" :option="chartOption" autoresize />
+          <v-chart :theme="isDark ? 'fp-dark' : undefined" :key="isDark ? 'd' : 'l'" v-if="data?.byDay.length" class="chart" :option="chartOption" autoresize />
           <el-empty v-else description="Продаж за период нет" :image-size="70" />
         </el-card>
 
@@ -127,6 +129,8 @@
 </template>
 
 <script setup lang="ts">
+import { useTheme } from '@/composables/useTheme'
+const { isDark } = useTheme()
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { use } from 'echarts/core'
@@ -136,6 +140,7 @@ import { CanvasRenderer } from 'echarts/renderers'
 import VChart from 'vue-echarts'
 import { Bell, Finished, Goods, HomeFilled, Monitor, RemoveFilled, Tickets, Timer, TrendCharts, User, Warning } from '@element-plus/icons-vue'
 import TaskList from '@/components/tasks/TaskList.vue'
+import BusinessPulse from '@/components/dashboard/BusinessPulse.vue'
 import { useOrgStore } from '@/stores/org'
 import { useAuthStore } from '@/stores/auth'
 import { useSolutionsStore } from '@/stores/solutions'

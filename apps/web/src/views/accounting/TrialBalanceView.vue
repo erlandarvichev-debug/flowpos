@@ -108,6 +108,6 @@ onMounted(load)
 
 <style scoped>
 .filters { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 14px; }
-.hint { margin-top: 10px; color: #909399; font-size: 12px; }
-:deep(.group-row) { background: #f5f7fa; font-weight: 600; }
+.hint { margin-top: 10px; color: var(--el-text-color-secondary); font-size: 12px; }
+:deep(.group-row) { background: var(--el-fill-color-light); font-weight: 600; }
 </style>

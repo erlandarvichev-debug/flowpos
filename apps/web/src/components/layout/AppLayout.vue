@@ -73,6 +73,16 @@
               </el-dropdown-menu>
             </template>
           </el-dropdown>
+          <el-dropdown trigger="click" @command="(m: any) => setMode(m)">
+            <el-button circle :icon="isDark ? Moon : Sunny" :title="isDark ? 'Тёмная тема' : 'Светлая тема'" class="theme-btn" />
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="light" :class="{ 'is-on': mode === 'light' }"><el-icon><Sunny /></el-icon>Светлая</el-dropdown-item>
+                <el-dropdown-item command="dark" :class="{ 'is-on': mode === 'dark' }"><el-icon><Moon /></el-icon>Тёмная</el-dropdown-item>
+                <el-dropdown-item command="system" :class="{ 'is-on': mode === 'system' }"><el-icon><Monitor /></el-icon>Как в системе</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
           <el-tooltip :content="taskHint" placement="bottom">
             <el-badge :value="taskSum.overdue || taskSum.today || ''" :hidden="!taskSum.overdue && !taskSum.today" :type="taskSum.overdue ? 'danger' : 'warning'" class="bell">
               <el-button circle :icon="Bell" @click="router.push('/tasks')" />
@@ -149,7 +159,8 @@ import { useAuthStore } from '@/stores/auth'
 import { useOrgStore } from '@/stores/org'
 import { useSolutionsStore } from '@/stores/solutions'
 import { useI18n } from '@/composables/useI18n'
-import { Bell, Plus } from '@element-plus/icons-vue'
+import { Bell, Monitor, Moon, Plus, Sunny } from '@element-plus/icons-vue'
+import { apply as applyTheme, useTheme } from '@/composables/useTheme'
 import { ElMessage } from 'element-plus'
 import api from '@/api/client'
 import { signChallengeCms, NcaLayerError, NCALAYER_DOWNLOAD } from '@/utils/ncalayer'
@@ -158,6 +169,7 @@ import GlobalSearch from './GlobalSearch.vue'
 import { Menu } from '@element-plus/icons-vue'
 
 const route = useRoute()
+const { mode, isDark, setMode } = useTheme()
 const router = useRouter()
 const auth = useAuthStore()
 const org = useOrgStore()
@@ -263,6 +275,7 @@ watch(() => org.currentId, () => { loadAutopilotIssues(); loadTasks(); solutions
 watch(() => route.path, () => { if (route.path === '/tasks') loadTasks() })
 
 onMounted(() => {
+  applyTheme()
   org.load()
   solutions.load()
   loadAutopilotIssues()
@@ -270,7 +283,7 @@ onMounted(() => {
   autopilotTimer = setInterval(() => { loadAutopilotIssues(); loadTasks() }, 60_000)
 })
 let autopilotTimer: ReturnType<typeof setInterval> | undefined
-onBeforeUnmount(() => clearInterval(autopilotTimer))
+onBeforeUnmount(() => { clearInterval(autopilotTimer); document.documentElement.classList.remove('dark') })
 </script>
 
 <style scoped>
@@ -367,4 +380,5 @@ onBeforeUnmount(() => clearInterval(autopilotTimer))
 .bell :deep(.el-badge__content) { top: 6px; right: 8px; }
 :global(.quick-menu .el-dropdown-menu__item) { gap: 4px; padding: 7px 16px; }
 @media (max-width: 900px) { .quick-btn { padding: 8px; } .quick-btn :deep(span:not(.el-icon)) { display: none; } }
+:global(.el-dropdown-menu__item.is-on) { color: var(--el-color-primary); font-weight: 600; }
 </style>

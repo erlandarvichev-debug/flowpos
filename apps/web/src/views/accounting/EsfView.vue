@@ -487,9 +487,9 @@ onMounted(load)
 <style scoped>
 .actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .card-head { display: flex; justify-content: space-between; align-items: center; }
-.muted { color: #909399; font-size: 12px; }
+.muted { color: var(--el-text-color-secondary); font-size: 12px; }
 .mono { font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
-.hint { color: #909399; font-size: 12px; line-height: 1.4; margin-top: 4px; }
+.hint { color: var(--el-text-color-secondary); font-size: 12px; line-height: 1.4; margin-top: 4px; }
 .errors { color: #f56c6c; font-size: 13px; padding: 4px 12px; }
 .warn { color: #e6a23c; font-size: 13px; padding: 4px 12px; }
 .filters { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }

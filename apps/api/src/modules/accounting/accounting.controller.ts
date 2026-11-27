@@ -449,6 +449,13 @@ export class AccountingController {
   reconciliation(@Org() ctx: OrgContext, @Query() q: any) { return this.reports.reconciliation(ctx, q); }
 
   /** Прибыльность: выручка, возвраты, себестоимость, прибыль, маржа по товарам / группам / покупателям / сотрудникам / складам / документам. */
+  /** «Пульс бизнеса»: деньги, выручка, прибыль, расходы, запасы и долги за период со сравнением с прошлым. */
+  @Get('reports/pulse') @RequirePermission('acc.reports.read')
+  async pulse(@Org() ctx: OrgContext, @Query() q: any) {
+    const [base, cust, sup] = await Promise.all([this.reports.pulse(ctx, q), this.trade.debtAging(ctx, { side: 'customers' }), this.trade.debtAging(ctx, { side: 'suppliers' })]);
+    return { ...base, receivable: { total: cust.totals.total, overdue: cust.totals.overdue, count: cust.lines.length }, payable: { total: sup.totals.total, overdue: sup.totals.overdue, count: sup.lines.length } };
+  }
+
   /** Обороты товаров: на начало, приход, расход, на конец (количество и себестоимость). */
   @Get('reports/stock-turnover') @RequirePermission('acc.reports.read')
   stockTurnover(@Org() ctx: OrgContext, @Query() q: any) { return this.reports.stockTurnover(ctx, q); }

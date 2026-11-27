@@ -66,5 +66,5 @@ onMounted(load)
 
 <style scoped>
 .filters { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
-.hint { color: #909399; font-size: 12px; margin-top: 8px; margin-left: 6px; }
+.hint { color: var(--el-text-color-secondary); font-size: 12px; margin-top: 8px; margin-left: 6px; }
 </style>

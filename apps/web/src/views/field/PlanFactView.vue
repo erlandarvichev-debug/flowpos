@@ -60,7 +60,7 @@ onMounted(load)
 
 <style scoped>
 .filters { display: flex; gap: 12px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
-.muted { color: #909399; font-size: 12px; }
+.muted { color: var(--el-text-color-secondary); font-size: 12px; }
 .bad { color: #f56c6c; font-weight: 600; }
 .warn { color: #e6a23c; font-weight: 600; }
 </style>

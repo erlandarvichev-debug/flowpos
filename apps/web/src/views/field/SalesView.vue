@@ -38,15 +38,15 @@
       <div class="charts">
         <el-card shadow="never" class="chart wide">
           <template #header><b>По дням</b> <span class="muted">сумма заказов и их количество</span></template>
-          <v-chart :option="dayOption" autoresize style="height: 280px;" />
+          <v-chart :theme="isDark ? 'fp-dark' : undefined" :key="isDark ? 'd' : 'l'" :option="dayOption" autoresize style="height: 280px;" />
         </el-card>
         <el-card shadow="never" class="chart">
           <template #header><b>Торговые</b> <span class="muted">сумма за период</span></template>
-          <v-chart :option="repOption" autoresize :style="{ height: Math.max(220, (r?.byRep.length ?? 0) * 34 + 40) + 'px' }" @click="onRepChartClick" />
+          <v-chart :theme="isDark ? 'fp-dark' : undefined" :key="isDark ? 'd' : 'l'" :option="repOption" autoresize :style="{ height: Math.max(220, (r?.byRep.length ?? 0) * 34 + 40) + 'px' }" @click="onRepChartClick" />
         </el-card>
         <el-card shadow="never" class="chart">
           <template #header><b>Когда заказывают</b> <span class="muted">по часам и дням недели</span></template>
-          <v-chart :option="timeOption" autoresize style="height: 260px;" />
+          <v-chart :theme="isDark ? 'fp-dark' : undefined" :key="isDark ? 'd' : 'l'" :option="timeOption" autoresize style="height: 260px;" />
         </el-card>
       </div>
 
@@ -120,6 +120,8 @@
 </template>
 
 <script setup lang="ts">
+import { useTheme } from '@/composables/useTheme'
+const { isDark } = useTheme()
 import { computed, defineComponent, h, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { Download } from '@element-plus/icons-vue'
@@ -307,23 +309,23 @@ onMounted(async () => {
 .sales { display: flex; flex-direction: column; gap: 14px; }
 .bar { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; margin-bottom: 0; }
 .bar h1 { margin: 0; }
-.sub { color: #909399; font-size: 12px; margin-top: 4px; }
+.sub { color: var(--el-text-color-secondary); font-size: 12px; margin-top: 4px; }
 .tools { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .content { display: flex; flex-direction: column; gap: 14px; }
 
 .kpis { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }
-.kpi { background: #fff; border: 1px solid #ebeef5; border-radius: 10px; padding: 12px 16px; display: flex; flex-direction: column; gap: 4px; }
+.kpi { background: var(--el-bg-color); border: 1px solid var(--el-border-color-lighter); border-radius: 10px; padding: 12px 16px; display: flex; flex-direction: column; gap: 4px; }
 .kpi.accent { background: linear-gradient(135deg, #0f766e, #2563eb); color: #fff; border: none; }
 .kpi.accent .k-label, .kpi.accent .muted { color: rgba(255, 255, 255, .85); }
 .kpi.accent .up, .kpi.accent .down { color: #fff; font-weight: 700; }
-.k-label { font-size: 12px; color: #909399; }
+.k-label { font-size: 12px; color: var(--el-text-color-secondary); }
 .k-value { font-size: 22px; font-weight: 700; line-height: 1.2; }
 .k-hint { font-size: 12px; display: flex; gap: 6px; flex-wrap: wrap; }
 
 .charts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .chart.wide { grid-column: span 2; }
 .chart :deep(.el-card__header) { padding: 10px 16px; }
-.muted { color: #909399; font-size: 12px; }
+.muted { color: var(--el-text-color-secondary); font-size: 12px; }
 .gap { margin: 0; }
 .gap-sm { margin: 0 0 10px; }
 .up { color: #16a34a; font-weight: 600; }

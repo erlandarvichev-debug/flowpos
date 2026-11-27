@@ -143,7 +143,7 @@ onMounted(load)
 </script>
 
 <style scoped>
-.dim { display: inline-block; font-size: 12px; color: #606266; background: #f4f4f5; border-radius: 3px; padding: 0 6px; margin: 1px 4px 1px 0; }
-.dim.req { font-weight: 700; color: #303133; }
-.hint { margin-top: 10px; color: #909399; font-size: 12px; }
+.dim { display: inline-block; font-size: 12px; color: var(--el-text-color-regular); background: var(--el-fill-color-light); border-radius: 3px; padding: 0 6px; margin: 1px 4px 1px 0; }
+.dim.req { font-weight: 700; color: var(--el-text-color-primary); }
+.hint { margin-top: 10px; color: var(--el-text-color-secondary); font-size: 12px; }
 </style>

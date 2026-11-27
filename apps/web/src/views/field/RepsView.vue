@@ -134,7 +134,7 @@ onMounted(load)
 </script>
 
 <style scoped>
-.muted { color: #909399; font-size: 13px; }
+.muted { color: var(--el-text-color-secondary); font-size: 13px; }
 .device { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .code-box { text-align: center; }
 .code { font-size: 44px; font-weight: 700; letter-spacing: 6px; margin: 16px 0; font-variant-numeric: tabular-nums; }

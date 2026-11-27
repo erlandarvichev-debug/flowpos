@@ -7,7 +7,7 @@
   >
     <el-option v-for="a in filtered" :key="a.code" :value="a.code" :disabled="a.isGroup" :label="`${a.code} ${nm(a)}`">
       <span style="font-weight: 600; margin-right: 8px;">{{ a.code }}</span>
-      <span style="color: #606266;">{{ nm(a) }}</span>
+      <span style="color: var(--el-text-color-regular);">{{ nm(a) }}</span>
     </el-option>
   </el-select>
 </template>

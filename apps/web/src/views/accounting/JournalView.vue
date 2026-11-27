@@ -67,7 +67,7 @@ onMounted(load)
 
 <style scoped>
 .filters { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 14px; }
-.entry { border: 1px solid #ebeef5; border-radius: 4px; margin-bottom: 10px; }
-.entry-head { display: flex; gap: 12px; flex-wrap: wrap; padding: 6px 10px; background: #f5f7fa; cursor: pointer; }
-.meta { color: #909399; font-size: 12px; margin-left: auto; }
+.entry { border: 1px solid var(--el-border-color-lighter); border-radius: 4px; margin-bottom: 10px; }
+.entry-head { display: flex; gap: 12px; flex-wrap: wrap; padding: 6px 10px; background: var(--el-fill-color-light); cursor: pointer; }
+.meta { color: var(--el-text-color-secondary); font-size: 12px; margin-left: auto; }
 </style>
